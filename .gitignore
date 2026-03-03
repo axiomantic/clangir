@@ -74,3 +74,6 @@ site/
 
 # Git worktrees
 .worktrees/
+
+# Claude Code local workspace (worktrees, settings, etc.)
+.claude/
