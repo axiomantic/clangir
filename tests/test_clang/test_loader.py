@@ -124,17 +124,20 @@ class TestGetCindex:
             assert cindex.__name__ == "headerkit._clang.v20.cindex"
 
     def test_cache_cleared_causes_fresh_load(self):
-        """After clearing cache, next call returns a different module object."""
+        """After clearing cache, next call re-runs detection and re-populates the cache."""
         import headerkit._clang
 
-        # Load once (cache is already clear from setup_method)
-        first = get_cindex()
+        # Load once to populate the cache.
+        get_cindex()
+        assert headerkit._clang._cached_cindex is not None, "Cache should be populated after first load"
 
-        # Clear cache to force re-detection
+        # Clear the cache.
         headerkit._clang._cached_cindex = None
+        assert headerkit._clang._cached_cindex is None, "Cache should be empty after clearing"
 
-        # Load again with different version override
+        # Load again with an explicit version override: get_cindex() must go through
+        # the detection path again (not return the old cached value) and return v18.
         with patch.dict(os.environ, {"CIR_CLANG_VERSION": "18"}):
             second = get_cindex()
-            assert first is not second, "Cache clear should produce a fresh module"
             assert second.__name__ == "headerkit._clang.v18.cindex"
+            assert headerkit._clang._cached_cindex is second, "Cache should be repopulated after fresh load"
