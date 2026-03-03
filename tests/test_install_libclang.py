@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 from unittest.mock import MagicMock, call, patch
 
 from headerkit.install_libclang import (
@@ -42,8 +44,8 @@ class TestInstallLinux:
         assert result is True
         assert mock_run.call_count == 2
         calls = mock_run.call_args_list
-        assert calls[0].args[0][:2] == ["apt-get", "update"]
-        assert calls[1].args[0][:3] == ["apt-get", "install", "-y"]
+        assert calls[0] == call(["apt-get", "update", "-qq"], check=False, text=True)
+        assert calls[1] == call(["apt-get", "install", "-y", "libclang-dev"], check=False, text=True)
 
     @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
     @patch("headerkit.install_libclang.shutil.which")
@@ -84,8 +86,8 @@ class TestInstallLinux:
             result = install_linux()
             assert result is True
             calls = mock_run.call_args_list
-            apt_update = [c for c in calls if c.args[0][0:2] == ["apt-get", "update"]]
-            apt_install = [c for c in calls if c.args[0][0:2] == ["apt-get", "install"]]
+            apt_update = [c for c in calls if c.args[0] == ["apt-get", "update", "-qq"]]
+            apt_install = [c for c in calls if c.args[0] == ["apt-get", "install", "-y", "libclang-dev"]]
             assert len(apt_update) == 1, "Expected one apt-get update call"
             assert len(apt_install) == 1, "Expected one apt-get install call"
 
@@ -144,6 +146,7 @@ class TestInstallWindows:
         result = install_windows(version)
 
         assert result is True
+        expected_installer = os.path.join(tempfile.gettempdir(), "llvm-installer.exe")
         # First call: curl download
         curl_call = mock_run.call_args_list[0]
         assert curl_call == call(
@@ -151,7 +154,7 @@ class TestInstallWindows:
                 "curl",
                 "-sSL",
                 "-o",
-                mock_run.call_args_list[0][0][0][3],  # dynamic temp path
+                expected_installer,
                 f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/LLVM-{version}-woa64.exe",
             ],
             check=False,
@@ -159,12 +162,20 @@ class TestInstallWindows:
         )
         # Second call: powershell install
         powershell_call = mock_run.call_args_list[1]
-        assert powershell_call[0][0][0] == "powershell"
+        assert powershell_call == call(
+            [
+                "powershell",
+                "-Command",
+                f"Start-Process '{expected_installer}' -ArgumentList '/S' -Wait",
+            ],
+            check=False,
+            text=True,
+        )
+        mock_remove.assert_called_once_with(expected_installer)
 
 
 class TestVerifyLibclang:
-    @patch("headerkit.install_libclang.is_system_libclang_available", create=True)
-    def test_verify_libclang_success(self, mock_available: MagicMock) -> None:
+    def test_verify_libclang_success(self) -> None:
         """When is_system_libclang_available returns True, verify_libclang returns True."""
         # Patch the import inside verify_libclang
         mock_module = MagicMock()
@@ -173,6 +184,7 @@ class TestVerifyLibclang:
             result = verify_libclang()
 
         assert result is True
+        mock_module.is_system_libclang_available.assert_called_once_with()
 
     def test_verify_libclang_failure(self) -> None:
         """When is_system_libclang_available returns False, verify_libclang returns False."""
@@ -182,6 +194,7 @@ class TestVerifyLibclang:
             result = verify_libclang()
 
         assert result is False
+        mock_module.is_system_libclang_available.assert_called_once_with()
 
 
 class TestMain:
@@ -194,7 +207,8 @@ class TestMain:
         # argparse uses sys.argv if argv is None, but we pass [] explicitly
         result = main([])
 
-        mock_install.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 0
 
     @patch("headerkit.install_libclang.verify_libclang", return_value=True)
@@ -205,7 +219,8 @@ class TestMain:
         mock_sys.platform = "darwin"
         result = main([])
 
-        mock_install.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 0
 
     @patch("headerkit.install_libclang.sys")
@@ -226,8 +241,8 @@ class TestMain:
         mock_sys.platform = "linux"
         result = main([])
 
-        mock_install.assert_called_once()
-        mock_verify.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 1
 
     @patch("headerkit.install_libclang.verify_libclang")
@@ -238,6 +253,6 @@ class TestMain:
         mock_sys.platform = "linux"
         result = main(["--skip-verify"])
 
-        mock_install.assert_called_once()
+        mock_install.assert_called_once_with()
         mock_verify.assert_not_called()
         assert result == 0

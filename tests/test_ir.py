@@ -50,7 +50,7 @@ class TestPointer:
         assert str(p) == "int**"
 
     def test_pointer_with_qualifiers(self):
-        """Pointer with qualifiers represents 'int * const'."""
+        """Pointer with qualifiers ['const'] prepends qualifiers: 'const int*'."""
         p = Pointer(CType("int"), ["const"])
         assert str(p) == "const int*"
         assert p.qualifiers == ["const"]
@@ -117,7 +117,7 @@ class TestFunctionPointer:
     def test_calling_convention(self):
         fp = FunctionPointer(CType("void"), [], calling_convention="stdcall")
         assert fp.calling_convention == "stdcall"
-        assert "stdcall" in str(fp)
+        assert str(fp) == "void ( __stdcall__*)()"
 
     def test_calling_convention_default_none(self):
         fp = FunctionPointer(CType("int"), [])
@@ -150,6 +150,10 @@ class TestField:
         assert f.anonymous_struct is not None
         assert f.anonymous_struct.is_union
         assert len(f.anonymous_struct.fields) == 2
+        assert f.anonymous_struct.fields[0].name == "i"
+        assert str(f.anonymous_struct.fields[0].type) == "int"
+        assert f.anonymous_struct.fields[1].name == "f"
+        assert str(f.anonymous_struct.fields[1].type) == "float"
 
 
 class TestEnum:
@@ -236,7 +240,7 @@ class TestStruct:
     def test_packed_struct(self):
         s = Struct("Packed", [Field("x", CType("int"))], is_packed=True)
         assert s.is_packed
-        assert "packed" in str(s)
+        assert str(s) == "struct Packed __attribute__((packed))"
 
     def test_packed_default_false(self):
         s = Struct("Normal", [])
@@ -268,7 +272,7 @@ class TestFunction:
     def test_calling_convention(self):
         f = Function("WinMain", CType("int"), [], calling_convention="stdcall")
         assert f.calling_convention == "stdcall"
-        assert "stdcall" in str(f)
+        assert str(f) == "int __stdcall__ WinMain()"
 
     def test_calling_convention_default_none(self):
         f = Function("main", CType("int"), [])
@@ -304,11 +308,13 @@ class TestVariable:
         var = Variable("ptr", Pointer(CType("void")))
         assert var.name == "ptr"
         assert isinstance(var.type, Pointer)
+        assert str(var) == "void* ptr"
 
     def test_variable_with_array(self):
         var = Variable("buf", Array(CType("char"), 256))
         assert var.name == "buf"
         assert isinstance(var.type, Array)
+        assert str(var) == "char[256] buf"
 
 
 class TestConstant:
@@ -337,12 +343,15 @@ class TestHeader:
         )
         assert h.path == "test.h"
         assert len(h.declarations) == 2
+        assert isinstance(h.declarations[0], Struct)
+        assert h.declarations[0].name == "Point"
+        assert isinstance(h.declarations[1], Function)
+        assert h.declarations[1].name == "get_point"
         assert str(h) == "Header(test.h, 2 declarations)"
 
     def test_header_included_headers(self):
         h = Header(path="test.h", declarations=[], included_headers={"stdio.h", "stdlib.h"})
-        assert "stdio.h" in h.included_headers
-        assert len(h.included_headers) == 2
+        assert h.included_headers == {"stdio.h", "stdlib.h"}
 
     def test_header_has_included_headers_attribute(self):
         """Header should always have included_headers attribute.
@@ -368,9 +377,7 @@ class TestHeader:
         """
         header = Header(path="test.h", declarations=[])
         header.included_headers = {"stdio.h", "stdlib.h", "stdint.h"}
-        assert "stdio.h" in header.included_headers
-        assert "stdlib.h" in header.included_headers
-        assert len(header.included_headers) == 3
+        assert header.included_headers == {"stdio.h", "stdlib.h", "stdint.h"}
 
     def test_header_constructor_accepts_included_headers(self):
         """Header constructor should accept included_headers parameter.
@@ -441,11 +448,14 @@ class TestParserBackendProtocol:
 
         sig = inspect.signature(ParserBackend.parse)
         param_names = list(sig.parameters.keys())
-        assert "code" in param_names
-        assert "filename" in param_names
-        assert "include_dirs" in param_names
-        assert "extra_args" in param_names
-        assert "use_default_includes" in param_names
-        assert "recursive_includes" in param_names
-        assert "max_depth" in param_names
-        assert "project_prefixes" in param_names
+        assert param_names == [
+            "self",
+            "code",
+            "filename",
+            "include_dirs",
+            "extra_args",
+            "use_default_includes",
+            "recursive_includes",
+            "max_depth",
+            "project_prefixes",
+        ]
