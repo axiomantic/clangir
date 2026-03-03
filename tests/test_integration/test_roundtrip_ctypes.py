@@ -13,6 +13,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+# The `backend` fixture is provided by tests/test_integration/conftest.py.
+
+
 def parse_and_ctypes(backend, code: str, lib_name: str = "_lib") -> str:
     """Parse C code and convert to ctypes binding string."""
     header = backend.parse(code, "test.h")

@@ -134,7 +134,9 @@ def _typedef_compact(decl: Typedef) -> str:
     ):
         # Function pointer typedef -> CALLBACK
         # libclang represents `typedef void (*fn)(int);` as
-        # Typedef(underlying=Pointer(FunctionPointer(...)))
+        # Typedef(underlying=Pointer(FunctionPointer(...))). Hand-constructed
+        # IR or other backends may use Typedef(underlying=FunctionPointer(...))
+        # directly. Both forms are handled by the outer isinstance check.
         fp = decl.underlying_type.pointee if isinstance(decl.underlying_type, Pointer) else decl.underlying_type
         assert isinstance(fp, FunctionPointer)
         params_parts = [_param_compact(p) for p in fp.parameters]

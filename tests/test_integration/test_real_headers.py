@@ -1,7 +1,7 @@
 """End-to-end tests with real-world C/C++ library headers.
 
 Downloads actual library headers and tests the full parse -> IR -> write
-pipeline for both CFFI and JSON writers.
+pipeline for all writers: CFFI, JSON, ctypes, Cython, Lua, prompt, and diff.
 """
 
 from __future__ import annotations
