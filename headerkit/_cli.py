@@ -178,7 +178,7 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
     Returns (code, filename, project_prefixes).
 
     - code: '#include "/abs/path/a.h"\\n#include "/abs/path/b.h"\\n...'
-    - filename: basename for single file, "<multiple>" for multiple files
+    - filename: basename for single file, "_umbrella.h" for multiple files
     - project_prefixes: tuple of unique parent directories of resolved input paths
 
     CRITICAL: project_prefixes contains PARENT DIRECTORIES, not file paths.
@@ -196,7 +196,7 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
         project_prefixes = (str(p.parent),)
     else:
         code = "".join(f'#include "{p}"\n' for p in resolved)
-        filename = "<multiple>"
+        filename = "_umbrella.h"
         project_prefixes = tuple(dict.fromkeys(str(p.parent) for p in resolved))
 
     return code, filename, project_prefixes

@@ -181,7 +181,7 @@ class TestBuildUmbrella:
         assert project_prefixes == (str(tmp_path.resolve()),)
 
     def test_multi_file_umbrella(self, tmp_path: Path) -> None:
-        """Multiple files produce umbrella includes, filename='<multiple>', and parent dirs."""
+        """Multiple files produce umbrella includes, filename='_umbrella.h', and parent dirs."""
         sub_a = tmp_path / "a"
         sub_b = tmp_path / "b"
         sub_a.mkdir()
@@ -191,7 +191,7 @@ class TestBuildUmbrella:
         header_a.write_text("// a\n")
         header_b.write_text("// b\n")
         code, filename, project_prefixes = _build_umbrella([str(header_a), str(header_b)])
-        assert filename == "<multiple>"
+        assert filename == "_umbrella.h"
         assert f'#include "{header_a.resolve()}"' in code
         assert f'#include "{header_b.resolve()}"' in code
         assert str(sub_a.resolve()) in project_prefixes
