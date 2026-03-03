@@ -71,3 +71,6 @@ logs/
 
 # MkDocs
 site/
+
+# Git worktrees
+.worktrees/
