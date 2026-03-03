@@ -150,11 +150,10 @@ class TestParseWriterSpecs:
         )
         assert specs[0].options == {"exclude_patterns": ["^__", "^_internal"]}
 
-    def test_parse_writer_opt_unscoped_exits(self) -> None:
-        """Unscoped --writer-opt (no colon) causes sys.exit(1)."""
-        with pytest.raises(SystemExit) as exc_info:
+    def test_parse_writer_opt_unscoped_raises(self) -> None:
+        """Unscoped --writer-opt (no colon) raises ValueError."""
+        with pytest.raises(ValueError, match="unscoped"):
             _parse_writer_specs(["cffi"], ["key=value"])
-        assert exc_info.value.code == 1
 
     def test_parse_orphaned_opt_skipped(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--writer-opt for a writer not in the writer list warns to stderr and is skipped."""

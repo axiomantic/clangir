@@ -22,6 +22,12 @@ except ImportError:
     except ImportError:
         tomllib = None  # type: ignore[assignment]
 
+# TOMLDecodeError for narrowed exception handling in both branches.
+if tomllib is not None:
+    _TOML_DECODE_ERROR: type[Exception] = tomllib.TOMLDecodeError  # type: ignore[attr-defined]
+else:
+    _TOML_DECODE_ERROR = Exception  # placeholder; unreachable when tomllib is None
+
 
 @dataclass
 class WriterConfig:
@@ -82,7 +88,7 @@ def find_config_file(start: Path | None = None) -> Path | None:
         if pyproject.exists() and tomllib is not None:
             try:
                 raw = _parse_toml(pyproject.read_bytes())
-            except Exception:
+            except _TOML_DECODE_ERROR:
                 raw = {}
             tool = raw.get("tool", {})
             if isinstance(tool, dict) and "headerkit" in tool:
@@ -195,7 +201,7 @@ def load_config(path: Path) -> HeaderkitConfig:
 
     try:
         raw = _parse_toml(path.read_bytes())
-    except Exception as exc:
+    except _TOML_DECODE_ERROR as exc:
         print(f"headerkit: config parse error in {path}: {exc}", file=sys.stderr)
         sys.exit(1)
 

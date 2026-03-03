@@ -122,7 +122,7 @@ def _parse_writer_specs(
 ) -> list[WriterSpec]:
     """Parse -w and --writer-opt arguments into WriterSpec objects.
 
-    Raises SystemExit(1) on:
+    Raises ValueError on:
     - --writer-opt without WRITER: scope prefix
     - Malformed --writer-opt (missing KEY=VALUE)
     """
@@ -144,20 +144,12 @@ def _parse_writer_specs(
     for item in raw_opts:
         colon_pos = item.find(":")
         if colon_pos == -1:
-            print(
-                f"headerkit: unscoped --writer-opt: {item!r}; use WRITER:KEY=VALUE format",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise ValueError(f"unscoped --writer-opt: {item!r}; use WRITER:KEY=VALUE format")
         writer_name = item[:colon_pos]
         rest = item[colon_pos + 1 :]
         eq_pos = rest.find("=")
         if eq_pos == -1:
-            print(
-                f"headerkit: malformed --writer-opt: {item!r}; expected WRITER:KEY=VALUE",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise ValueError(f"malformed --writer-opt: {item!r}; expected WRITER:KEY=VALUE")
         key = rest[:eq_pos]
         value = rest[eq_pos + 1 :]
         if writer_name not in spec_by_name:
@@ -205,12 +197,7 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
     else:
         code = "".join(f'#include "{p}"\n' for p in resolved)
         filename = "<multiple>"
-        seen: list[str] = []
-        for p in resolved:
-            parent = str(p.parent)
-            if parent not in seen:
-                seen.append(parent)
-        project_prefixes = tuple(seen)
+        project_prefixes = tuple(dict.fromkeys(str(p.parent) for p in resolved))
 
     return code, filename, project_prefixes
 
@@ -218,9 +205,8 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
 def _instantiate_writer(spec: WriterSpec) -> WriterBackend:
     """Instantiate a writer from a WriterSpec.
 
-    Raises SystemExit(1) on:
-    - Unknown writer name (ValueError from get_writer)
-    - Constructor type error (TypeError from get_writer)
+    Raises ValueError for unknown writer name, TypeError for bad constructor args.
+    Callers are responsible for catching and formatting error messages.
     """
     kwargs: dict[str, object] = {}
     for key, values in spec.options.items():
@@ -233,14 +219,7 @@ def _instantiate_writer(spec: WriterSpec) -> WriterBackend:
             file=sys.stderr,
         )
 
-    try:
-        return get_writer(spec.name, **kwargs)
-    except ValueError as exc:
-        print(f"headerkit: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except TypeError as exc:
-        print(f"headerkit: {exc}", file=sys.stderr)
-        sys.exit(1)
+    return get_writer(spec.name, **kwargs)
 
 
 def _write_output(spec: WriterSpec, content: str) -> None:
@@ -283,7 +262,7 @@ def _merge_config_writer_opts(
             wc = config.writer_options[spec.name]
             for key, val in wc.options.items():
                 if key not in spec.options:  # CLI wins
-                    spec.options[key] = val if isinstance(val, list) else [str(val)]
+                    spec.options[key] = [str(item) for item in val] if isinstance(val, list) else [str(val)]
     return specs
 
 
@@ -339,7 +318,11 @@ def main() -> int:
         _load_explicit_plugins(config.plugins)
 
     # Parse writer specs
-    specs = _parse_writer_specs(writers_raw, writer_opts_raw)
+    try:
+        specs = _parse_writer_specs(writers_raw, writer_opts_raw)
+    except ValueError as exc:
+        print(f"headerkit: {exc}", file=sys.stderr)
+        return 1
     if not specs:
         specs = [WriterSpec(name="default", output_path=None, options={})]
 
@@ -385,7 +368,11 @@ def main() -> int:
 
     # Write outputs
     for spec in specs:
-        writer = _instantiate_writer(spec)  # exits on error
+        try:
+            writer = _instantiate_writer(spec)
+        except (ValueError, TypeError) as exc:
+            print(f"headerkit: {exc}", file=sys.stderr)
+            return 1
         content = writer.write(header)
         _write_output(spec, content)
 
