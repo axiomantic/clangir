@@ -91,9 +91,7 @@ class TestEmptyAndIdentical:
         assert report.breaking_count == 0
         assert report.non_breaking_count == 3
         kinds = {e.kind for e in report.entries}
-        assert "function_added" in kinds
-        assert "struct_added" in kinds
-        assert "enum_added" in kinds
+        assert kinds == {"function_added", "struct_added", "enum_added"}
 
     def test_populated_to_empty(self) -> None:
         """All declarations in baseline show as removals (breaking)."""
@@ -106,8 +104,7 @@ class TestEmptyAndIdentical:
         assert report.breaking_count == 2
         assert report.non_breaking_count == 0
         kinds = {e.kind for e in report.entries}
-        assert "function_removed" in kinds
-        assert "struct_removed" in kinds
+        assert kinds == {"function_removed", "struct_removed"}
 
     def test_identical_headers(self) -> None:
         """No changes when baseline and target are the same."""
@@ -153,7 +150,7 @@ class TestFunctionDiff:
         breaking = [e for e in report.entries if e.severity == "breaking"]
         assert len(breaking) == 1
         assert breaking[0].kind == "function_signature_changed"
-        assert "return type" in breaking[0].detail
+        assert breaking[0].detail == "return type changed from 'int' to 'void'"
 
     def test_parameter_added(self) -> None:
         baseline = _header_with(Function("f", CType("int"), []))
@@ -162,7 +159,7 @@ class TestFunctionDiff:
         breaking = [e for e in report.entries if e.severity == "breaking"]
         assert len(breaking) == 1
         assert breaking[0].kind == "function_signature_changed"
-        assert "parameter count" in breaking[0].detail
+        assert breaking[0].detail == "parameter count changed from 0 to 1"
 
     def test_parameter_type_changed(self) -> None:
         baseline = _header_with(Function("f", CType("void"), [Parameter("x", CType("int"))]))
@@ -171,7 +168,7 @@ class TestFunctionDiff:
         breaking = [e for e in report.entries if e.severity == "breaking"]
         assert len(breaking) == 1
         assert breaking[0].kind == "function_signature_changed"
-        assert "parameter 0 type" in breaking[0].detail
+        assert breaking[0].detail == "parameter 0 type changed from 'int' to 'float'"
 
     def test_parameter_renamed_is_non_breaking(self) -> None:
         baseline = _header_with(Function("f", CType("void"), [Parameter("x", CType("int"))]))
@@ -202,7 +199,7 @@ class TestFunctionDiff:
         report = diff_headers(baseline, target)
         breaking = [e for e in report.entries if e.severity == "breaking"]
         assert len(breaking) == 1
-        assert "variadic" in breaking[0].detail
+        assert breaking[0].detail == "variadic changed from False to True"
 
     def test_calling_convention_changed(self) -> None:
         baseline = _header_with(Function("f", CType("int"), [], calling_convention=None))
@@ -210,7 +207,7 @@ class TestFunctionDiff:
         report = diff_headers(baseline, target)
         breaking = [e for e in report.entries if e.severity == "breaking"]
         assert len(breaking) == 1
-        assert "calling convention" in breaking[0].detail
+        assert breaking[0].detail == "calling convention changed from 'None' to 'stdcall'"
 
 
 # =============================================================================
@@ -262,8 +259,7 @@ class TestStructDiff:
         changed = [e for e in report.entries if e.kind == "struct_field_type_changed"]
         assert len(changed) == 1
         assert changed[0].severity == "breaking"
-        assert "int" in changed[0].detail
-        assert "float" in changed[0].detail
+        assert changed[0].detail == "field 'x' type changed from 'int' to 'float'"
 
     def test_field_reordered(self) -> None:
         baseline = _header_with(Struct("S", [Field("x", CType("int")), Field("y", CType("float"))]))
@@ -338,8 +334,7 @@ class TestEnumDiff:
         changed = [e for e in report.entries if e.kind == "enum_value_changed"]
         assert len(changed) == 1
         assert changed[0].severity == "breaking"
-        assert "0" in changed[0].detail
-        assert "42" in changed[0].detail
+        assert changed[0].detail == "enum value 'A' changed from 0 to 42"
 
 
 # =============================================================================
@@ -458,8 +453,8 @@ class TestJsonOutput:
         output = diff_to_json(report)
         parsed = json.loads(output)
         assert isinstance(parsed, dict)
-        assert "schema_version" in parsed
-        assert "entries" in parsed
+        assert parsed["schema_version"] == "1.0"
+        assert isinstance(parsed["entries"], list)
 
     def test_schema_version(self) -> None:
         report = DiffReport("a.h", "b.h", [])
@@ -490,10 +485,13 @@ class TestJsonOutput:
         parsed = json.loads(diff_to_json(report))
         assert len(parsed["entries"]) == 1
         entry = parsed["entries"][0]
-        assert "kind" in entry
-        assert "severity" in entry
-        assert "name" in entry
-        assert "detail" in entry
+        assert entry == {
+            "kind": "function_added",
+            "severity": "non_breaking",
+            "name": "f",
+            "detail": "function 'f' added",
+            "target": "int f()",
+        }
 
     def test_baseline_target_paths(self) -> None:
         report = DiffReport("old.h", "new.h", [])
@@ -513,7 +511,8 @@ class TestMarkdownOutput:
     def test_has_title(self) -> None:
         report = DiffReport("a.h", "b.h", [])
         md = diff_to_markdown(report)
-        assert "# API Diff: a.h -> b.h" in md
+        lines = md.splitlines()
+        assert lines[0] == "# API Diff: a.h -> b.h"
 
     def test_has_summary_table(self) -> None:
         report = diff_headers(
@@ -525,9 +524,25 @@ class TestMarkdownOutput:
             ),
         )
         md = diff_to_markdown(report)
-        assert "## Summary" in md
-        assert "| Breaking |" in md
-        assert "| Non-breaking |" in md
+        expected = (
+            "# API Diff: a.h -> b.h\n"
+            "\n"
+            "## Summary\n"
+            "\n"
+            "| Category | Count |\n"
+            "|----------|-------|\n"
+            "| Breaking | 0 |\n"
+            "| Non-breaking | 1 |\n"
+            "| Total | 1 |\n"
+            "\n"
+            "## Non-Breaking Changes\n"
+            "\n"
+            "### function_added\n"
+            "\n"
+            "- **g**: function 'g' added\n"
+            "  - Target: `void g()`\n"
+        )
+        assert md == expected
 
     def test_breaking_section(self) -> None:
         report = diff_headers(
@@ -535,8 +550,25 @@ class TestMarkdownOutput:
             _empty_header("b.h"),
         )
         md = diff_to_markdown(report)
-        assert "## Breaking Changes" in md
-        assert "function_removed" in md
+        expected = (
+            "# API Diff: a.h -> b.h\n"
+            "\n"
+            "## Summary\n"
+            "\n"
+            "| Category | Count |\n"
+            "|----------|-------|\n"
+            "| Breaking | 1 |\n"
+            "| Non-breaking | 0 |\n"
+            "| Total | 1 |\n"
+            "\n"
+            "## Breaking Changes\n"
+            "\n"
+            "### function_removed\n"
+            "\n"
+            "- **f**: function 'f' removed\n"
+            "  - Baseline: `int f()`\n"
+        )
+        assert md == expected
 
     def test_non_breaking_section(self) -> None:
         report = diff_headers(
@@ -544,13 +576,43 @@ class TestMarkdownOutput:
             _header_with(Function("f", CType("int"), []), path="b.h"),
         )
         md = diff_to_markdown(report)
-        assert "## Non-Breaking Changes" in md
-        assert "function_added" in md
+        expected = (
+            "# API Diff: a.h -> b.h\n"
+            "\n"
+            "## Summary\n"
+            "\n"
+            "| Category | Count |\n"
+            "|----------|-------|\n"
+            "| Breaking | 0 |\n"
+            "| Non-breaking | 1 |\n"
+            "| Total | 1 |\n"
+            "\n"
+            "## Non-Breaking Changes\n"
+            "\n"
+            "### function_added\n"
+            "\n"
+            "- **f**: function 'f' added\n"
+            "  - Target: `int f()`\n"
+        )
+        assert md == expected
 
     def test_no_changes_message(self) -> None:
         report = DiffReport("a.h", "b.h", [])
         md = diff_to_markdown(report)
-        assert "No changes detected." in md
+        expected = (
+            "# API Diff: a.h -> b.h\n"
+            "\n"
+            "## Summary\n"
+            "\n"
+            "| Category | Count |\n"
+            "|----------|-------|\n"
+            "| Breaking | 0 |\n"
+            "| Non-breaking | 0 |\n"
+            "| Total | 0 |\n"
+            "\n"
+            "No changes detected.\n"
+        )
+        assert md == expected
 
 
 # =============================================================================
@@ -589,7 +651,9 @@ class TestDiffWriter:
         writer = DiffWriter(baseline=baseline, format="markdown")
         target = _header_with(Function("f", CType("void"), []))
         output = writer.write(target)
-        assert "## Breaking Changes" in output
+        lines = output.splitlines()
+        breaking_section_lines = [line for line in lines if line.startswith("## ")]
+        assert breaking_section_lines == ["## Summary", "## Breaking Changes"]
 
     def test_no_baseline_all_additions(self) -> None:
         writer = DiffWriter(baseline=None, format="json")
@@ -615,7 +679,9 @@ class TestDiffWriter:
         assert isinstance(writer, DiffWriter)
         target = _header_with(Function("f", CType("void"), []))
         output = writer.write(target)
-        assert "## Breaking Changes" in output
+        lines = output.splitlines()
+        breaking_section_lines = [line for line in lines if line.startswith("## ")]
+        assert breaking_section_lines == ["## Summary", "## Breaking Changes"]
 
     def test_anonymous_declarations_skipped(self) -> None:
         anon_struct = Struct(None, [Field("x", CType("int"))])

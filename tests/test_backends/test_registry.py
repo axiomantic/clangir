@@ -73,7 +73,7 @@ class TestBackendRegistry:
 
         b._BACKENDS_LOADED = True
         names = list_backends()
-        assert "mock" in names
+        assert names == ["mock"]
 
     def test_is_backend_available(self):
         register_backend("mock", MockBackend)
@@ -111,15 +111,14 @@ class TestBackendRegistry:
 
         b._BACKENDS_LOADED = True
         info = get_backend_info()
-        assert isinstance(info, list)
-        assert len(info) == 1
-        entry = info[0]
-        assert entry["name"] == "mock"
-        assert entry["available"] is True
-        # "mock" is the only backend registered and becomes the default
-        assert entry["default"] is True
-        # MockBackend is not in the descriptions dict, so description is ""
-        assert entry["description"] == ""
+        assert info == [
+            {
+                "name": "mock",
+                "available": True,
+                "default": True,
+                "description": "",
+            }
+        ]
 
     def test_first_registered_becomes_default(self):
         register_backend("first", MockBackend)

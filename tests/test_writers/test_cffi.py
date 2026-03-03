@@ -1,5 +1,7 @@
 """Tests for the CFFI cdef writer."""
 
+import textwrap
+
 from headerkit.ir import (
     Array,
     Constant,
@@ -198,10 +200,12 @@ class TestHeaderToCffi:
             ],
         )
         result = header_to_cffi(header)
-        assert "struct Point" in result
-        assert "get_point" in result
-        assert "int x;" in result
-        assert "int y;" in result
+        assert result == textwrap.dedent("""\
+            struct Point {
+                int x;
+                int y;
+            };
+            struct Point * get_point(void);""")
 
     def test_exclude_patterns(self):
         header = Header(
@@ -212,8 +216,7 @@ class TestHeaderToCffi:
             ],
         )
         result = header_to_cffi(header, exclude_patterns=[r"_private_"])
-        assert "public_func" in result
-        assert "_private_func" not in result
+        assert result == "void public_func(void);"
 
     def test_opaque_struct_with_typedef_dedup(self):
         """Opaque struct + matching typedef should emit only the typedef."""
@@ -225,11 +228,7 @@ class TestHeaderToCffi:
             ],
         )
         result = header_to_cffi(header)
-        assert "typedef" in result
-        # Should NOT have "struct nng_socket { ...; };" separately
-        lines = result.split("\n")
-        struct_lines = [line for line in lines if line.startswith("struct nng_socket")]
-        assert len(struct_lines) == 0
+        assert result == "typedef struct nng_socket nng_socket;"
 
     def test_enum_typedef_pair_combined(self):
         """Enum + matching typedef should be combined into typedef enum."""
@@ -241,9 +240,11 @@ class TestHeaderToCffi:
             ],
         )
         result = header_to_cffi(header)
-        assert "typedef enum {" in result
-        assert "NNG_PIPE_EV_ADD" in result
-        assert "} nng_pipe_ev;" in result
+        assert result == textwrap.dedent("""\
+            typedef enum {
+                NNG_PIPE_EV_ADD = 0,
+                NNG_PIPE_EV_REM = 1,
+            } nng_pipe_ev;""")
 
     def test_tag_kind_qualification(self):
         """Bare struct name in typedef should get 'struct' prefix."""
@@ -255,8 +256,11 @@ class TestHeaderToCffi:
             ],
         )
         result = header_to_cffi(header)
-        # The typedef should qualify "inner_s" as "struct inner_s"
-        assert "typedef struct inner_s outer_t;" in result
+        assert result == textwrap.dedent("""\
+            struct inner_s {
+                int x;
+            };
+            typedef struct inner_s outer_t;""")
 
 
 class TestBitfieldFormatting:
@@ -282,18 +286,13 @@ class TestAnonymousStructField:
         anon = Struct(None, [Field("x", CType("int")), Field("y", CType("int"))])
         f = Field("pos", CType("int"), anonymous_struct=anon)
         result = _format_field(f)
-        assert "struct {" in result
-        assert "    int x;" in result
-        assert "    int y;" in result
-        assert result.endswith("    };")
+        assert result == "    struct {\n        int x;\n        int y;\n    };"
 
     def test_anonymous_union_inline(self):
         anon = Struct(None, [Field("i", CType("int")), Field("f", CType("float"))], is_union=True)
         f = Field("data", CType("int"), anonymous_struct=anon)
         result = _format_field(f)
-        assert "union {" in result
-        assert "    int i;" in result
-        assert "    float f;" in result
+        assert result == "    union {\n        int i;\n        float f;\n    };"
 
 
 class TestPackedStruct:
@@ -346,10 +345,12 @@ class TestCffiWriter:
         )
         writer = CffiWriter()
         result = writer.write(header)
-        assert "struct Point" in result
-        assert "int x;" in result
-        assert "int y;" in result
-        assert "int get_point(float x);" in result
+        assert result == textwrap.dedent("""\
+            int get_point(float x);
+            struct Point {
+                int x;
+                int y;
+            };""")
 
     def test_writer_with_exclude_patterns(self):
         """CffiWriter should forward exclude_patterns to header_to_cffi."""
@@ -364,8 +365,7 @@ class TestCffiWriter:
         )
         writer = CffiWriter(exclude_patterns=[r"_private_"])
         result = writer.write(header)
-        assert "public_func" in result
-        assert "_private_func" not in result
+        assert result == "void public_func(void);"
 
     def test_writer_protocol_compliance(self):
         """CffiWriter should satisfy the WriterBackend protocol."""
@@ -374,9 +374,9 @@ class TestCffiWriter:
         writer = CffiWriter()
         # Verify required attributes exist and have correct types
         assert isinstance(writer.name, str)
-        assert len(writer.name) > 0
+        assert writer.name == "cffi"
         assert isinstance(writer.format_description, str)
-        assert len(writer.format_description) > 0
+        assert writer.format_description == "CFFI cdef declarations for ffibuilder.cdef()"
         # Verify write() produces string output
         header = Header(
             path="test.h",
@@ -385,8 +385,7 @@ class TestCffiWriter:
             ],
         )
         result = writer.write(header)
-        assert isinstance(result, str)
-        assert "void foo(void);" in result
+        assert result == "void foo(void);"
 
     def test_writer_name(self):
         from headerkit.writers.cffi import CffiWriter

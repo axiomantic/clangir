@@ -29,9 +29,7 @@ class TestHeaderToJson:
 
         header = Header("test.h", [])
         result = json.loads(header_to_json(header))
-        assert result["path"] == "test.h"
-        assert result["declarations"] == []
-        assert "included_headers" not in result
+        assert result == {"path": "test.h", "declarations": []}
 
     def test_function_declaration(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -42,13 +40,13 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "function"
-        assert decl["name"] == "foo"
-        assert decl["return_type"] == {"kind": "ctype", "name": "int"}
-        assert len(decl["parameters"]) == 1
-        assert decl["parameters"][0]["name"] == "x"
-        assert decl["parameters"][0]["type"] == {"kind": "ctype", "name": "int"}
-        assert decl["is_variadic"] is False
+        assert decl == {
+            "kind": "function",
+            "name": "foo",
+            "return_type": {"kind": "ctype", "name": "int"},
+            "parameters": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "is_variadic": False,
+        }
 
     def test_struct_with_fields(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -59,11 +57,14 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "struct"
-        assert decl["name"] == "Point"
-        assert len(decl["fields"]) == 2
-        assert decl["fields"][0] == {"name": "x", "type": {"kind": "ctype", "name": "int"}}
-        assert decl["fields"][1] == {"name": "y", "type": {"kind": "ctype", "name": "int"}}
+        assert decl == {
+            "kind": "struct",
+            "name": "Point",
+            "fields": [
+                {"name": "x", "type": {"kind": "ctype", "name": "int"}},
+                {"name": "y", "type": {"kind": "ctype", "name": "int"}},
+            ],
+        }
 
     def test_union(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -74,7 +75,11 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "union"
+        assert decl == {
+            "kind": "union",
+            "name": "Data",
+            "fields": [{"name": "i", "type": {"kind": "ctype", "name": "int"}}],
+        }
 
     def test_enum_with_values(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -85,12 +90,14 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "enum"
-        assert decl["name"] == "Color"
-        assert decl["values"] == [
-            {"name": "RED", "value": 0},
-            {"name": "GREEN", "value": 1},
-        ]
+        assert decl == {
+            "kind": "enum",
+            "name": "Color",
+            "values": [
+                {"name": "RED", "value": 0},
+                {"name": "GREEN", "value": 1},
+            ],
+        }
 
     def test_enum_value_auto_increment(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -101,10 +108,14 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["values"] == [
-            {"name": "A"},
-            {"name": "B", "value": 5},
-        ]
+        assert decl == {
+            "kind": "enum",
+            "name": "Flags",
+            "values": [
+                {"name": "A"},
+                {"name": "B", "value": 5},
+            ],
+        }
 
     def test_typedef(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -115,12 +126,14 @@ class TestHeaderToJson:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "typedef"
-        assert decl["name"] == "myint"
-        assert decl["underlying_type"] == {
-            "kind": "ctype",
-            "name": "int",
-            "qualifiers": ["unsigned"],
+        assert decl == {
+            "kind": "typedef",
+            "name": "myint",
+            "underlying_type": {
+                "kind": "ctype",
+                "name": "int",
+                "qualifiers": ["unsigned"],
+            },
         }
 
     def test_variable(self) -> None:
@@ -129,9 +142,11 @@ class TestHeaderToJson:
         header = Header("test.h", [Variable("count", CType("int"))])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "variable"
-        assert decl["name"] == "count"
-        assert decl["type"] == {"kind": "ctype", "name": "int"}
+        assert decl == {
+            "kind": "variable",
+            "name": "count",
+            "type": {"kind": "ctype", "name": "int"},
+        }
 
     def test_constant(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -139,10 +154,12 @@ class TestHeaderToJson:
         header = Header("test.h", [Constant("SIZE", 100, is_macro=True)])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "constant"
-        assert decl["name"] == "SIZE"
-        assert decl["value"] == 100
-        assert decl["is_macro"] is True
+        assert decl == {
+            "kind": "constant",
+            "name": "SIZE",
+            "value": 100,
+            "is_macro": True,
+        }
 
     def test_constant_with_type(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -150,7 +167,12 @@ class TestHeaderToJson:
         header = Header("test.h", [Constant("MAX", 255, type=CType("int"))])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["type"] == {"kind": "ctype", "name": "int"}
+        assert decl == {
+            "kind": "constant",
+            "name": "MAX",
+            "value": 255,
+            "type": {"kind": "ctype", "name": "int"},
+        }
 
     def test_constant_no_value(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -158,9 +180,7 @@ class TestHeaderToJson:
         header = Header("test.h", [Constant("UNKNOWN", None)])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["kind"] == "constant"
-        assert decl["name"] == "UNKNOWN"
-        assert "value" not in decl
+        assert decl == {"kind": "constant", "name": "UNKNOWN"}
 
     def test_constant_not_macro_omits_is_macro(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -168,7 +188,7 @@ class TestHeaderToJson:
         header = Header("test.h", [Constant("VAL", 42)])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert "is_macro" not in decl
+        assert decl == {"kind": "constant", "name": "VAL", "value": 42}
 
     def test_constant_with_location(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -233,7 +253,11 @@ class TestHeaderToJson:
         header = Header("test.h", [Variable("buf", Array(CType("char"), "BUFFER_SIZE"))])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["type"]["size"] == "BUFFER_SIZE"
+        assert decl["type"] == {
+            "kind": "array",
+            "element_type": {"kind": "ctype", "name": "char"},
+            "size": "BUFFER_SIZE",
+        }
 
     def test_function_pointer_type(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -242,9 +266,12 @@ class TestHeaderToJson:
         header = Header("test.h", [Variable("cb", fp)])
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["type"]["kind"] == "function_pointer"
-        assert decl["type"]["return_type"] == {"kind": "ctype", "name": "void"}
-        assert decl["type"]["is_variadic"] is False
+        assert decl["type"] == {
+            "kind": "function_pointer",
+            "return_type": {"kind": "ctype", "name": "void"},
+            "parameters": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "is_variadic": False,
+        }
 
     def test_nested_pointer(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -281,7 +308,7 @@ class TestHeaderToJson:
         result = header_to_json(header, indent=4)
         # Should be valid JSON with 4-space indent
         parsed = json.loads(result)
-        assert parsed["path"] == "test.h"
+        assert parsed == {"path": "test.h", "declarations": []}
         # Verify 4-space indent in raw output
         assert "    " in result
 
@@ -414,7 +441,15 @@ class TestHeaderToJsonDict:
         result = header_to_json_dict(header)
         assert isinstance(result, dict)
         assert result["path"] == "test.h"
-        assert len(result["declarations"]) == 1
+        assert result["declarations"] == [
+            {
+                "kind": "function",
+                "name": "foo",
+                "return_type": {"kind": "ctype", "name": "void"},
+                "parameters": [],
+                "is_variadic": False,
+            }
+        ]
 
     def test_dict_has_expected_structure(self) -> None:
         """header_to_json_dict returns a dict with correct top-level structure."""
@@ -427,14 +462,18 @@ class TestHeaderToJsonDict:
             ],
         )
         result = header_to_json_dict(header)
-        assert isinstance(result, dict)
-        assert result["path"] == "test.h"
-        assert "declarations" in result
-        assert len(result["declarations"]) == 1
-        decl = result["declarations"][0]
-        assert decl["kind"] == "function"
-        assert decl["name"] == "foo"
-        assert decl["return_type"]["name"] == "void"
+        assert result == {
+            "path": "test.h",
+            "declarations": [
+                {
+                    "kind": "function",
+                    "name": "foo",
+                    "return_type": {"kind": "ctype", "name": "void"},
+                    "parameters": [],
+                    "is_variadic": False,
+                }
+            ],
+        }
 
 
 class TestJsonWriter:
@@ -466,7 +505,13 @@ class TestJsonWriter:
         writer = JsonWriter()
         result = writer.write(header)
         parsed = json.loads(result)
-        assert parsed["declarations"][0]["name"] == "foo"
+        assert parsed["declarations"][0] == {
+            "kind": "function",
+            "name": "foo",
+            "return_type": {"kind": "ctype", "name": "void"},
+            "parameters": [],
+            "is_variadic": False,
+        }
         # Default indent=2 means 2-space indentation is present
         assert "  " in result
 
@@ -485,7 +530,13 @@ class TestJsonWriter:
         header = Header("test.h", [Function("bar", CType("int"), [])])
         result = writer.write(header)
         parsed = json.loads(result)
-        assert parsed["declarations"][0]["name"] == "bar"
+        assert parsed["declarations"][0] == {
+            "kind": "function",
+            "name": "bar",
+            "return_type": {"kind": "ctype", "name": "int"},
+            "parameters": [],
+            "is_variadic": False,
+        }
 
     def test_via_registry_with_kwargs(self) -> None:
         from headerkit.writers import get_writer
@@ -508,7 +559,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["location"] == {"file": "test.h", "line": 10, "column": 5}
+        assert decl == {
+            "kind": "struct",
+            "name": "S",
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "location": {"file": "test.h", "line": 10, "column": 5},
+        }
 
     def test_struct_with_location_no_column(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -519,7 +575,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["location"] == {"file": "test.h", "line": 10}
+        assert decl == {
+            "kind": "struct",
+            "name": "S",
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "location": {"file": "test.h", "line": 10},
+        }
 
     def test_cppclass(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -530,7 +591,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["is_cppclass"] is True
+        assert decl == {
+            "kind": "struct",
+            "name": "Widget",
+            "fields": [],
+            "is_cppclass": True,
+        }
 
     def test_struct_with_methods(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -547,9 +613,20 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert len(decl["methods"]) == 1
-        assert decl["methods"][0]["kind"] == "function"
-        assert decl["methods"][0]["name"] == "get"
+        assert decl == {
+            "kind": "struct",
+            "name": "Obj",
+            "fields": [{"name": "val", "type": {"kind": "ctype", "name": "int"}}],
+            "methods": [
+                {
+                    "kind": "function",
+                    "name": "get",
+                    "return_type": {"kind": "ctype", "name": "int"},
+                    "parameters": [],
+                    "is_variadic": False,
+                }
+            ],
+        }
 
     def test_struct_with_namespace(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -560,7 +637,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["namespace"] == "ns"
+        assert decl == {
+            "kind": "struct",
+            "name": "Foo",
+            "fields": [],
+            "namespace": "ns",
+        }
 
     def test_struct_with_template_params(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -571,7 +653,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["template_params"] == ["T"]
+        assert decl == {
+            "kind": "struct",
+            "name": "Vec",
+            "fields": [],
+            "template_params": ["T"],
+        }
 
     def test_struct_with_cpp_name(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -582,7 +669,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["cpp_name"] == "std::vector"
+        assert decl == {
+            "kind": "struct",
+            "name": "Vec",
+            "fields": [],
+            "cpp_name": "std::vector",
+        }
 
     def test_struct_with_notes(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -593,7 +685,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["notes"] == ["opaque type"]
+        assert decl == {
+            "kind": "struct",
+            "name": "S",
+            "fields": [],
+            "notes": ["opaque type"],
+        }
 
     def test_struct_with_inner_typedefs(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -604,7 +701,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["inner_typedefs"] == {"value_type": "int"}
+        assert decl == {
+            "kind": "struct",
+            "name": "S",
+            "fields": [],
+            "inner_typedefs": {"value_type": "int"},
+        }
 
     def test_struct_omits_empty_optional_fields(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -615,15 +717,7 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        # These should NOT be present when empty/None/False
-        assert "methods" not in decl
-        assert "is_cppclass" not in decl
-        assert "namespace" not in decl
-        assert "template_params" not in decl
-        assert "cpp_name" not in decl
-        assert "notes" not in decl
-        assert "inner_typedefs" not in decl
-        assert "location" not in decl
+        assert decl == {"kind": "struct", "name": "S", "fields": []}
 
     def test_struct_is_typedef(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -634,7 +728,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["is_typedef"] is True
+        assert decl == {
+            "kind": "struct",
+            "name": "S",
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "is_typedef": True,
+        }
 
     def test_struct_anonymous(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -645,7 +744,11 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["name"] is None
+        assert decl == {
+            "kind": "struct",
+            "name": None,
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+        }
 
     def test_struct_is_packed(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -656,7 +759,12 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert decl["is_packed"] is True
+        assert decl == {
+            "kind": "struct",
+            "name": "Packed",
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+            "is_packed": True,
+        }
 
     def test_struct_not_packed_omits_is_packed(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -667,7 +775,11 @@ class TestStructSerialization:
         )
         result = json.loads(header_to_json(header))
         decl = result["declarations"][0]
-        assert "is_packed" not in decl
+        assert decl == {
+            "kind": "struct",
+            "name": "Normal",
+            "fields": [{"name": "x", "type": {"kind": "ctype", "name": "int"}}],
+        }
 
 
 class TestFieldSerialization:
@@ -682,8 +794,11 @@ class TestFieldSerialization:
         )
         result = json.loads(header_to_json(header))
         field = result["declarations"][0]["fields"][0]
-        assert field["name"] == "flags"
-        assert field["bit_width"] == 4
+        assert field == {
+            "name": "flags",
+            "type": {"kind": "ctype", "name": "unsigned int"},
+            "bit_width": 4,
+        }
 
     def test_field_without_bit_width_omits_key(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -694,7 +809,7 @@ class TestFieldSerialization:
         )
         result = json.loads(header_to_json(header))
         field = result["declarations"][0]["fields"][0]
-        assert "bit_width" not in field
+        assert field == {"name": "x", "type": {"kind": "ctype", "name": "int"}}
 
     def test_field_with_anonymous_struct(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -706,12 +821,18 @@ class TestFieldSerialization:
         )
         result = json.loads(header_to_json(header))
         field = result["declarations"][0]["fields"][0]
-        assert "anonymous_struct" in field
-        anon_dict = field["anonymous_struct"]
-        assert anon_dict["kind"] == "struct"
-        assert len(anon_dict["fields"]) == 2
-        assert anon_dict["fields"][0]["name"] == "a"
-        assert anon_dict["fields"][1]["name"] == "b"
+        assert field == {
+            "name": "inner",
+            "type": {"kind": "ctype", "name": "int"},
+            "anonymous_struct": {
+                "kind": "struct",
+                "name": None,
+                "fields": [
+                    {"name": "a", "type": {"kind": "ctype", "name": "int"}},
+                    {"name": "b", "type": {"kind": "ctype", "name": "float"}},
+                ],
+            },
+        }
 
     def test_field_with_anonymous_union(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -723,8 +844,18 @@ class TestFieldSerialization:
         )
         result = json.loads(header_to_json(header))
         field = result["declarations"][0]["fields"][0]
-        anon_dict = field["anonymous_struct"]
-        assert anon_dict["kind"] == "union"
+        assert field == {
+            "name": "u",
+            "type": {"kind": "ctype", "name": "int"},
+            "anonymous_struct": {
+                "kind": "union",
+                "name": None,
+                "fields": [
+                    {"name": "i", "type": {"kind": "ctype", "name": "int"}},
+                    {"name": "f", "type": {"kind": "ctype", "name": "float"}},
+                ],
+            },
+        }
 
     def test_field_without_anonymous_struct_omits_key(self) -> None:
         from headerkit.writers.json import header_to_json
@@ -735,7 +866,7 @@ class TestFieldSerialization:
         )
         result = json.loads(header_to_json(header))
         field = result["declarations"][0]["fields"][0]
-        assert "anonymous_struct" not in field
+        assert field == {"name": "x", "type": {"kind": "ctype", "name": "int"}}
 
 
 class TestUnknownDeclarationFallback:

@@ -343,12 +343,15 @@ class TestHeader:
         )
         assert h.path == "test.h"
         assert len(h.declarations) == 2
+        assert isinstance(h.declarations[0], Struct)
+        assert h.declarations[0].name == "Point"
+        assert isinstance(h.declarations[1], Function)
+        assert h.declarations[1].name == "get_point"
         assert str(h) == "Header(test.h, 2 declarations)"
 
     def test_header_included_headers(self):
         h = Header(path="test.h", declarations=[], included_headers={"stdio.h", "stdlib.h"})
-        assert "stdio.h" in h.included_headers
-        assert len(h.included_headers) == 2
+        assert h.included_headers == {"stdio.h", "stdlib.h"}
 
     def test_header_has_included_headers_attribute(self):
         """Header should always have included_headers attribute.
@@ -374,9 +377,7 @@ class TestHeader:
         """
         header = Header(path="test.h", declarations=[])
         header.included_headers = {"stdio.h", "stdlib.h", "stdint.h"}
-        assert "stdio.h" in header.included_headers
-        assert "stdlib.h" in header.included_headers
-        assert len(header.included_headers) == 3
+        assert header.included_headers == {"stdio.h", "stdlib.h", "stdint.h"}
 
     def test_header_constructor_accepts_included_headers(self):
         """Header constructor should accept included_headers parameter.
@@ -447,11 +448,14 @@ class TestParserBackendProtocol:
 
         sig = inspect.signature(ParserBackend.parse)
         param_names = list(sig.parameters.keys())
-        assert "code" in param_names
-        assert "filename" in param_names
-        assert "include_dirs" in param_names
-        assert "extra_args" in param_names
-        assert "use_default_includes" in param_names
-        assert "recursive_includes" in param_names
-        assert "max_depth" in param_names
-        assert "project_prefixes" in param_names
+        assert param_names == [
+            "self",
+            "code",
+            "filename",
+            "include_dirs",
+            "extra_args",
+            "use_default_includes",
+            "recursive_includes",
+            "max_depth",
+            "project_prefixes",
+        ]

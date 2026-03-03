@@ -162,7 +162,15 @@ class TestInstallWindows:
         )
         # Second call: powershell install
         powershell_call = mock_run.call_args_list[1]
-        assert powershell_call[0][0][0] == "powershell"
+        assert powershell_call == call(
+            [
+                "powershell",
+                "-Command",
+                f"Start-Process '{expected_installer}' -ArgumentList '/S' -Wait",
+            ],
+            check=False,
+            text=True,
+        )
         mock_remove.assert_called_once_with(expected_installer)
 
 
@@ -176,7 +184,7 @@ class TestVerifyLibclang:
             result = verify_libclang()
 
         assert result is True
-        mock_module.is_system_libclang_available.assert_called_once()
+        mock_module.is_system_libclang_available.assert_called_once_with()
 
     def test_verify_libclang_failure(self) -> None:
         """When is_system_libclang_available returns False, verify_libclang returns False."""
@@ -186,7 +194,7 @@ class TestVerifyLibclang:
             result = verify_libclang()
 
         assert result is False
-        mock_module.is_system_libclang_available.assert_called_once()
+        mock_module.is_system_libclang_available.assert_called_once_with()
 
 
 class TestMain:
@@ -199,8 +207,8 @@ class TestMain:
         # argparse uses sys.argv if argv is None, but we pass [] explicitly
         result = main([])
 
-        mock_install.assert_called_once()
-        mock_verify.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 0
 
     @patch("headerkit.install_libclang.verify_libclang", return_value=True)
@@ -211,8 +219,8 @@ class TestMain:
         mock_sys.platform = "darwin"
         result = main([])
 
-        mock_install.assert_called_once()
-        mock_verify.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 0
 
     @patch("headerkit.install_libclang.sys")
@@ -233,8 +241,8 @@ class TestMain:
         mock_sys.platform = "linux"
         result = main([])
 
-        mock_install.assert_called_once()
-        mock_verify.assert_called_once()
+        mock_install.assert_called_once_with()
+        mock_verify.assert_called_once_with()
         assert result == 1
 
     @patch("headerkit.install_libclang.verify_libclang")
@@ -245,6 +253,6 @@ class TestMain:
         mock_sys.platform = "linux"
         result = main(["--skip-verify"])
 
-        mock_install.assert_called_once()
+        mock_install.assert_called_once_with()
         mock_verify.assert_not_called()
         assert result == 0

@@ -95,14 +95,18 @@ class TestVendor:
         setup_existing_versions: None,
         mock_download: bytes,
     ) -> None:
-        """Mock download, verify all files created."""
+        """Mock download, verify all files created with correct content."""
         vendor_clang.vendor("22", "22.1.0", repo_root)
 
         version_dir = clang_dir / "v22"
         assert version_dir.is_dir()
-        assert (version_dir / "cindex.py").is_file()
-        assert (version_dir / "__init__.py").is_file()
-        assert (version_dir / "PROVENANCE").is_file()
+        # Verify the exact set of files created (no pyi stubs since v21 had none)
+        created_names = {f.name for f in version_dir.iterdir()}
+        assert created_names == {"cindex.py", "__init__.py", "PROVENANCE"}
+        # cindex.py content matches what the downloader returned
+        assert (version_dir / "cindex.py").read_bytes() == mock_download
+        # __init__.py is created empty
+        assert (version_dir / "__init__.py").read_text() == ""
 
     def test_creates_provenance(
         self,
@@ -162,9 +166,6 @@ class TestVendor:
         match = re.search(r"VENDORED_VERSIONS\s*=\s*\((.*?)\)", content, re.DOTALL)
         assert match is not None
         versions = [v.strip().strip('"') for v in match.group(1).split(",") if v.strip()]
-        assert "20" in versions
-        assert "21" in versions
-        assert "22" in versions
         assert versions == ["20", "21", "22"]
 
     def test_updates_latest_vendored(

@@ -41,14 +41,11 @@ class TestGetCindex:
         with patch.dict(os.environ, {"CIR_CLANG_VERSION": "18"}):
             cindex = get_cindex()
             assert inspect.isclass(cindex.Config)
-            assert "v18" in cindex.__name__
+            assert cindex.__name__ == "headerkit._clang.v18.cindex"
 
     def test_vendored_versions_tuple(self):
         assert isinstance(VENDORED_VERSIONS, tuple)
-        assert "18" in VENDORED_VERSIONS
-        assert "19" in VENDORED_VERSIONS
-        assert "20" in VENDORED_VERSIONS
-        assert "21" in VENDORED_VERSIONS
+        assert VENDORED_VERSIONS == ("18", "19", "20", "21")
 
     def test_latest_is_newer_than_oldest(self):
         """LATEST_VENDORED and OLDEST_VENDORED should be consistent with VENDORED_VERSIONS."""
@@ -64,10 +61,13 @@ class TestGetCindex:
         ):
             warnings.simplefilter("always")
             cindex = get_cindex()
-            assert f"v{LATEST_VENDORED}" in cindex.__name__
+            assert cindex.__name__ == f"headerkit._clang.v{LATEST_VENDORED}.cindex"
             user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
             assert len(user_warnings) == 1
-            assert "Could not detect LLVM version" in str(user_warnings[0].message)
+            assert str(user_warnings[0].message) == (
+                f"Could not detect LLVM version. Using vendored cindex for LLVM {LATEST_VENDORED}. "
+                f"Set CIR_CLANG_VERSION to override."
+            )
 
     def test_fallback_to_oldest_for_old_version(self):
         """When detected version is below oldest, emit exactly one warning and fall back to oldest."""
@@ -77,10 +77,13 @@ class TestGetCindex:
         ):
             warnings.simplefilter("always")
             cindex = get_cindex()
-            assert f"v{OLDEST_VENDORED}" in cindex.__name__
+            assert cindex.__name__ == f"headerkit._clang.v{OLDEST_VENDORED}.cindex"
             user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
             assert len(user_warnings) == 1
-            assert "older than oldest vendored" in str(user_warnings[0].message)
+            assert str(user_warnings[0].message) == (
+                f"LLVM 15 is older than oldest vendored version ({OLDEST_VENDORED}). "
+                f"Using {OLDEST_VENDORED}. Set CIR_CLANG_VERSION to override."
+            )
 
     def test_fallback_to_latest_for_new_version(self):
         """When detected version is above latest, emit exactly one warning and fall back to latest."""
@@ -90,10 +93,13 @@ class TestGetCindex:
         ):
             warnings.simplefilter("always")
             cindex = get_cindex()
-            assert f"v{LATEST_VENDORED}" in cindex.__name__
+            assert cindex.__name__ == f"headerkit._clang.v{LATEST_VENDORED}.cindex"
             user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
             assert len(user_warnings) == 1
-            assert "newer than latest vendored" in str(user_warnings[0].message)
+            assert str(user_warnings[0].message) == (
+                f"LLVM 25 is newer than latest vendored version ({LATEST_VENDORED}). "
+                f"Using {LATEST_VENDORED}. Set CIR_CLANG_VERSION to override."
+            )
 
     def test_each_vendored_version_loads(self):
         """Every vendored version can be imported and has required classes."""
@@ -115,7 +121,7 @@ class TestGetCindex:
         ):
             warnings.simplefilter("error")  # Turn warnings into errors
             cindex = get_cindex()
-            assert "v20" in cindex.__name__
+            assert cindex.__name__ == "headerkit._clang.v20.cindex"
 
     def test_cache_cleared_causes_fresh_load(self):
         """After clearing cache, next call returns a different module object."""
@@ -131,4 +137,4 @@ class TestGetCindex:
         with patch.dict(os.environ, {"CIR_CLANG_VERSION": "18"}):
             second = get_cindex()
             assert first is not second, "Cache clear should produce a fresh module"
-            assert "v18" in second.__name__
+            assert second.__name__ == "headerkit._clang.v18.cindex"

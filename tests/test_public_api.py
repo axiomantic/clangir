@@ -84,7 +84,7 @@ def test_writer_symbols_in_all():
     """All writer symbols should be listed in headerkit.__all__."""
     import headerkit
 
-    writer_names = [
+    expected_writer_symbols = {
         "WriterBackend",
         "get_default_writer",
         "get_writer",
@@ -92,10 +92,12 @@ def test_writer_symbols_in_all():
         "is_writer_available",
         "list_writers",
         "register_writer",
-    ]
+    }
     all_set = set(headerkit.__all__)
-    for name in writer_names:
-        assert name in all_set, f"{name!r} missing from headerkit.__all__"
+    # Subset check: test_all_matches_module_exports enforces that __all__ contains
+    # no extra symbols beyond what the module exports, so together the two tests
+    # enforce full exact coverage.
+    assert expected_writer_symbols <= all_set, f"Missing from headerkit.__all__: {expected_writer_symbols - all_set}"
 
 
 def test_writer_functions_match_direct_import():

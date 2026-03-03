@@ -1,5 +1,7 @@
 """Tests for the ctypes binding writer."""
 
+import textwrap
+
 from headerkit.ir import (
     Array,
     Constant,
@@ -234,10 +236,24 @@ class TestStructToCtypes:
             [Struct("Point", [Field("x", CType("int")), Field("y", CType("int"))])],
         )
         result = header_to_ctypes(header)
-        assert "class Point(ctypes.Structure):" in result
-        assert '("x", ctypes.c_int),' in result
-        assert '("y", ctypes.c_int),' in result
-        assert "_fields_ = [" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Point(ctypes.Structure):
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                    ("y", ctypes.c_int),
+                ]
+            """)
+        assert result == expected
 
     def test_struct_with_bitfields(self) -> None:
         """Bitfields should use the 3-tuple format."""
@@ -254,8 +270,24 @@ class TestStructToCtypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert '("a", ctypes.c_uint, 4),' in result
-        assert '("b", ctypes.c_uint, 1),' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Flags(ctypes.Structure):
+                _fields_ = [
+                    ("a", ctypes.c_uint, 4),
+                    ("b", ctypes.c_uint, 1),
+                ]
+            """)
+        assert result == expected
 
     def test_packed_struct(self) -> None:
         """Packed structs should have _pack_ = 1."""
@@ -264,8 +296,24 @@ class TestStructToCtypes:
             [Struct("Packed", [Field("x", CType("int"))], is_packed=True)],
         )
         result = header_to_ctypes(header)
-        assert "_pack_ = 1" in result
-        assert "class Packed(ctypes.Structure):" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Packed(ctypes.Structure):
+                _pack_ = 1
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                ]
+            """)
+        assert result == expected
 
     def test_non_packed_struct_no_pack(self) -> None:
         header = Header(
@@ -273,7 +321,23 @@ class TestStructToCtypes:
             [Struct("Normal", [Field("x", CType("int"))])],
         )
         result = header_to_ctypes(header)
-        assert "_pack_" not in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Normal(ctypes.Structure):
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                ]
+            """)
+        assert result == expected
 
     def test_union(self) -> None:
         header = Header(
@@ -287,23 +351,63 @@ class TestStructToCtypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "class Data(ctypes.Union):" in result
-        assert '("i", ctypes.c_int),' in result
-        assert '("f", ctypes.c_float),' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Data(ctypes.Union):
+                _fields_ = [
+                    ("i", ctypes.c_int),
+                    ("f", ctypes.c_float),
+                ]
+            """)
+        assert result == expected
 
     def test_opaque_struct(self) -> None:
         """Opaque struct (no fields) should use 'pass'."""
         header = Header("test.h", [Struct("Opaque", [])])
         result = header_to_ctypes(header)
-        assert "class Opaque(ctypes.Structure):" in result
-        assert "    pass" in result
-        assert "_fields_" not in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Opaque(ctypes.Structure):
+                pass
+            """)
+        assert result == expected
 
     def test_opaque_union(self) -> None:
         header = Header("test.h", [Struct("OpaqueU", [], is_union=True)])
         result = header_to_ctypes(header)
-        assert "class OpaqueU(ctypes.Union):" in result
-        assert "    pass" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class OpaqueU(ctypes.Union):
+                pass
+            """)
+        assert result == expected
 
     def test_array_field(self) -> None:
         header = Header(
@@ -311,7 +415,23 @@ class TestStructToCtypes:
             [Struct("Buf", [Field("data", Array(CType("char"), 64))])],
         )
         result = header_to_ctypes(header)
-        assert '("data", ctypes.c_char * 64),' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Buf(ctypes.Structure):
+                _fields_ = [
+                    ("data", ctypes.c_char * 64),
+                ]
+            """)
+        assert result == expected
 
     def test_pointer_field(self) -> None:
         header = Header(
@@ -319,17 +439,35 @@ class TestStructToCtypes:
             [Struct("Node", [Field("next", Pointer(CType("Node")))])],
         )
         result = header_to_ctypes(header)
-        assert '("next", ctypes.POINTER(Node)),' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Node(ctypes.Structure):
+                _fields_ = [
+                    ("next", ctypes.POINTER(Node)),
+                ]
+            """)
+        assert result == expected
 
     def test_anonymous_struct_skipped(self) -> None:
         header = Header("test.h", [Struct(None, [Field("x", CType("int"))])])
         result = header_to_ctypes(header)
-        assert "_fields_" not in result
-        assert "ctypes.Structure" not in result
-        assert "# Structures and Unions" not in result
-        # Boilerplate (docstring, imports) should still be present
-        assert '"""ctypes bindings generated from test.h."""' in result
-        assert "import ctypes" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+            """)
+        assert result == expected
 
 
 class TestEnumToCtypes:
@@ -344,10 +482,23 @@ class TestEnumToCtypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "# enum Color" in result
-        assert "RED = 0" in result
-        assert "GREEN = 1" in result
-        assert "BLUE = 2" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Enums
+            # ============================================================
+
+            # enum Color
+            RED = 0
+            GREEN = 1
+            BLUE = 2
+            """)
+        assert result == expected
 
     def test_anonymous_enum(self) -> None:
         header = Header(
@@ -355,20 +506,54 @@ class TestEnumToCtypes:
             [Enum(None, [EnumValue("FLAG_A", 1), EnumValue("FLAG_B", 2)])],
         )
         result = header_to_ctypes(header)
-        assert "# enum anonymous" in result
-        assert "FLAG_A = 1" in result
-        assert "FLAG_B = 2" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Enums
+            # ============================================================
+
+            # enum anonymous
+            FLAG_A = 1
+            FLAG_B = 2
+            """)
+        assert result == expected
 
     def test_enum_auto_value(self) -> None:
         enum = Enum("AutoEnum", [EnumValue("FIRST", None), EnumValue("SECOND", 1)])
         result = header_to_ctypes(Header("test.h", [enum]))
-        assert "# FIRST = <auto>" in result
-        assert "SECOND = 1" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Enums
+            # ============================================================
+
+            # enum AutoEnum
+            # FIRST = <auto>
+            SECOND = 1
+            """)
+        assert result == expected
 
     def test_empty_enum_skipped(self) -> None:
         header = Header("test.h", [Enum("Empty", [])])
         result = header_to_ctypes(header)
-        assert "Empty" not in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+            """)
+        assert result == expected
 
 
 class TestFunctionPrototypes:
@@ -384,8 +569,21 @@ class TestFunctionPrototypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "_lib.add.argtypes = [ctypes.c_int, ctypes.c_int]" in result
-        assert "_lib.add.restype = ctypes.c_int" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.add.argtypes = [ctypes.c_int, ctypes.c_int]
+            _lib.add.restype = ctypes.c_int
+            """)
+        assert result == expected
 
     def test_void_return(self) -> None:
         header = Header(
@@ -393,7 +591,21 @@ class TestFunctionPrototypes:
             [Function("init", CType("void"), [])],
         )
         result = header_to_ctypes(header)
-        assert "_lib.init.restype = None" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.init.argtypes = []
+            _lib.init.restype = None
+            """)
+        assert result == expected
 
     def test_no_args(self) -> None:
         header = Header(
@@ -401,7 +613,21 @@ class TestFunctionPrototypes:
             [Function("get_count", CType("int"), [])],
         )
         result = header_to_ctypes(header)
-        assert "_lib.get_count.argtypes = []" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.get_count.argtypes = []
+            _lib.get_count.restype = ctypes.c_int
+            """)
+        assert result == expected
 
     def test_variadic_function(self) -> None:
         """Variadic functions should only annotate fixed args."""
@@ -417,8 +643,21 @@ class TestFunctionPrototypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "_lib.printf.argtypes = [ctypes.c_char_p]" in result
-        assert "_lib.printf.restype = ctypes.c_int" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.printf.argtypes = [ctypes.c_char_p]
+            _lib.printf.restype = ctypes.c_int
+            """)
+        assert result == expected
 
     def test_const_char_pointer_param(self) -> None:
         header = Header(
@@ -432,7 +671,21 @@ class TestFunctionPrototypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "_lib.puts.argtypes = [ctypes.c_char_p]" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.puts.argtypes = [ctypes.c_char_p]
+            _lib.puts.restype = ctypes.c_int
+            """)
+        assert result == expected
 
     def test_pointer_param(self) -> None:
         header = Header(
@@ -446,7 +699,21 @@ class TestFunctionPrototypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "_lib.process.argtypes = [ctypes.POINTER(ctypes.c_int)]" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.process.argtypes = [ctypes.POINTER(ctypes.c_int)]
+            _lib.process.restype = None
+            """)
+        assert result == expected
 
     def test_custom_lib_name(self) -> None:
         header = Header(
@@ -454,8 +721,21 @@ class TestFunctionPrototypes:
             [Function("foo", CType("void"), [])],
         )
         result = header_to_ctypes(header, lib_name="mylib")
-        assert "mylib.foo.argtypes = []" in result
-        assert "mylib.foo.restype = None" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            mylib.foo.argtypes = []
+            mylib.foo.restype = None
+            """)
+        assert result == expected
 
     def test_calling_convention_comment(self) -> None:
         header = Header(
@@ -463,8 +743,22 @@ class TestFunctionPrototypes:
             [Function("WinMain", CType("int"), [], calling_convention="stdcall")],
         )
         result = header_to_ctypes(header)
-        assert "# calling convention: stdcall" in result
-        assert "_lib.WinMain.restype = ctypes.c_int" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            # calling convention: stdcall
+            _lib.WinMain.argtypes = []
+            _lib.WinMain.restype = ctypes.c_int
+            """)
+        assert result == expected
 
 
 class TestFunctionPointerTypedef:
@@ -485,7 +779,20 @@ class TestFunctionPointerTypedef:
             ],
         )
         result = header_to_ctypes(header)
-        assert "Callback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            Callback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+            """)
+        assert result == expected
 
     def test_direct_function_pointer_typedef(self) -> None:
         """Direct FunctionPointer typedef (without wrapping Pointer) should also work."""
@@ -502,7 +809,20 @@ class TestFunctionPointerTypedef:
             ],
         )
         result = header_to_ctypes(header)
-        assert "Handler = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            Handler = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)
+            """)
+        assert result == expected
 
 
 class TestTypedefToCtypes:
@@ -515,7 +835,29 @@ class TestTypedefToCtypes:
             ],
         )
         result = header_to_ctypes(header)
-        assert "Point_t = Point" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Point(ctypes.Structure):
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                ]
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            Point_t = Point
+            """)
+        assert result == expected
 
     def test_simple_type_alias_comment(self) -> None:
         header = Header(
@@ -523,7 +865,20 @@ class TestTypedefToCtypes:
             [Typedef("myint", CType("int"))],
         )
         result = header_to_ctypes(header)
-        assert "# typedef int -> myint" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            # typedef int -> myint
+            """)
+        assert result == expected
 
     def test_pointer_typedef(self) -> None:
         header = Header(
@@ -531,7 +886,20 @@ class TestTypedefToCtypes:
             [Typedef("intptr", Pointer(CType("int")))],
         )
         result = header_to_ctypes(header)
-        assert "intptr = ctypes.POINTER(ctypes.c_int)" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            intptr = ctypes.POINTER(ctypes.c_int)
+            """)
+        assert result == expected
 
     def test_array_typedef(self) -> None:
         header = Header(
@@ -539,48 +907,132 @@ class TestTypedefToCtypes:
             [Typedef("Buffer", Array(CType("char"), 256))],
         )
         result = header_to_ctypes(header)
-        assert "Buffer = ctypes.c_char * 256" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            Buffer = ctypes.c_char * 256
+            """)
+        assert result == expected
 
 
 class TestConstants:
     def test_integer_constant(self) -> None:
         header = Header("test.h", [Constant("SIZE", 100, is_macro=True)])
         result = header_to_ctypes(header)
-        assert "SIZE = 100" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Constants
+            # ============================================================
+
+            SIZE = 100
+            """)
+        assert result == expected
 
     def test_float_constant(self) -> None:
         header = Header("test.h", [Constant("PI", 3.14, is_macro=True)])
         result = header_to_ctypes(header)
-        assert "PI = 3.14" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Constants
+            # ============================================================
+
+            PI = 3.14
+            """)
+        assert result == expected
 
     def test_string_constant(self) -> None:
         header = Header("test.h", [Constant("VERSION", '"1.0.0"', is_macro=True)])
         result = header_to_ctypes(header)
-        assert 'VERSION = b"1.0.0"' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Constants
+            # ============================================================
+
+            VERSION = b"1.0.0"
+            """)
+        assert result == expected
 
     def test_string_constant_unquoted(self) -> None:
         header = Header("test.h", [Constant("NAME", "hello", is_macro=True)])
         result = header_to_ctypes(header)
-        assert 'NAME = b"hello"' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Constants
+            # ============================================================
+
+            NAME = b"hello"
+            """)
+        assert result == expected
 
     def test_none_value_skipped(self) -> None:
         header = Header("test.h", [Constant("UNKNOWN", None, is_macro=True)])
         result = header_to_ctypes(header)
-        assert "UNKNOWN" not in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+            """)
+        assert result == expected
 
 
 class TestModuleStructure:
     def test_docstring_contains_path(self) -> None:
         header = Header("myheader.h", [])
         result = header_to_ctypes(header)
-        assert '"""ctypes bindings generated from myheader.h."""' in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from myheader.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+            """)
+        assert result == expected
 
     def test_imports(self) -> None:
         header = Header("test.h", [])
         result = header_to_ctypes(header)
-        assert "import ctypes" in result
-        assert "import ctypes.util" in result
-        assert "import sys" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+            """)
+        assert result == expected
 
     def test_section_headers_present(self) -> None:
         header = Header(
@@ -594,20 +1046,49 @@ class TestModuleStructure:
             ],
         )
         result = header_to_ctypes(header)
-        assert "# Constants" in result
-        assert "# Enums" in result
-        assert "# Structures and Unions" in result
-        assert "# Typedefs" in result
-        assert "# Function Prototypes" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
 
-        # Verify sections appear in correct order
-        section_positions = []
-        for section in ["Constants", "Enums", "Structures and Unions", "Typedefs", "Function Prototypes"]:
-            header_text = f"# {section}"
-            if header_text in result:
-                section_positions.append((result.index(header_text), section))
-        positions_only = [pos for pos, _ in section_positions]
-        assert positions_only == sorted(positions_only), f"Sections out of order: {[s for _, s in section_positions]}"
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Constants
+            # ============================================================
+
+            SIZE = 10
+
+            # ============================================================
+            # Enums
+            # ============================================================
+
+            # enum Color
+            RED = 0
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Point(ctypes.Structure):
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                ]
+
+            # ============================================================
+            # Typedefs
+            # ============================================================
+
+            # typedef int -> myint
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.foo.argtypes = []
+            _lib.foo.restype = None
+            """)
+        assert result == expected
 
 
 class TestCtypesWriter:
@@ -623,11 +1104,31 @@ class TestCtypesWriter:
         )
         writer = CtypesWriter()
         result = writer.write(header)
-        assert "class Point(ctypes.Structure):" in result
-        assert '("x", ctypes.c_int),' in result
-        assert '("y", ctypes.c_int),' in result
-        assert "_lib.get_point.argtypes = []" in result
-        assert "_lib.get_point.restype = ctypes.POINTER(Point)" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Structures and Unions
+            # ============================================================
+
+            class Point(ctypes.Structure):
+                _fields_ = [
+                    ("x", ctypes.c_int),
+                    ("y", ctypes.c_int),
+                ]
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.get_point.argtypes = []
+            _lib.get_point.restype = ctypes.POINTER(Point)
+            """)
+        assert result == expected
 
     def test_writer_custom_lib_name(self) -> None:
         header = Header(
@@ -636,8 +1137,21 @@ class TestCtypesWriter:
         )
         writer = CtypesWriter(lib_name="mylib")
         result = writer.write(header)
-        assert "mylib.foo.argtypes" in result
-        assert "mylib.foo.restype = None" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            mylib.foo.argtypes = []
+            mylib.foo.restype = None
+            """)
+        assert result == expected
 
     def test_writer_protocol_compliance(self) -> None:
         writer = CtypesWriter()
@@ -653,7 +1167,21 @@ class TestCtypesWriter:
         )
         result = writer.write(header)
         assert isinstance(result, str)
-        assert "_lib.foo.restype = None" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Function Prototypes
+            # ============================================================
+
+            _lib.foo.argtypes = []
+            _lib.foo.restype = None
+            """)
+        assert result == expected
 
     def test_writer_name(self) -> None:
         writer = CtypesWriter()
@@ -679,4 +1207,17 @@ class TestVariables:
     def test_variable_as_comment(self) -> None:
         header = Header("test.h", [Variable("count", CType("int"))])
         result = header_to_ctypes(header)
-        assert "# _lib.count: ctypes.c_int" in result
+        expected = textwrap.dedent("""\
+            \"\"\"ctypes bindings generated from test.h.\"\"\"
+
+            import ctypes
+            import ctypes.util
+            import sys
+
+            # ============================================================
+            # Global Variables
+            # ============================================================
+
+            # _lib.count: ctypes.c_int
+            """)
+        assert result == expected

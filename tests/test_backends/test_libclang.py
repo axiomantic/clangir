@@ -89,8 +89,11 @@ class TestHelperFunctions:
 
         paths = _get_libclang_search_paths()
         assert isinstance(paths, list)
-        # On all supported platforms (macOS, Linux, Windows), search paths should be non-empty
-        assert len(paths) > 0, "Expected at least one libclang search path"
+        # _get_libclang_search_paths() returns hardcoded candidate paths derived from
+        # platform-specific install conventions (Homebrew, APT, LLVM releases, etc.).
+        # Exact paths vary by OS and installed LLVM versions, so we cannot enumerate
+        # the complete expected set. We assert count >=1 and verify each entry's structure.
+        assert len(paths) >= 1, "Expected at least one libclang search path"
         for path in paths:
             assert isinstance(path, str)
             assert len(path) > 0, "Search path should not be empty"
@@ -824,9 +827,15 @@ class TestHeaderInclusionTracking:
         # stdio.h typically includes other headers transitively
         code = "#include <stdio.h>\nvoid test(void);\n"
         header = backend.parse(code, "test.h")
-        # Should have stdio.h plus its transitive includes
+        # stdio.h must be present.
         assert any("stdio.h" in h for h in header.included_headers)
-        assert len(header.included_headers) > 1
+        # stdio.h on every supported platform (Linux, macOS, Windows) transitively
+        # pulls in at least one additional system header (e.g. stddef.h, bits/types.h,
+        # _stdio.h, corecrt.h, etc.). The exact set is environment-dependent, so we
+        # only assert the count is >=2 rather than enumerating specific transitive files.
+        assert len(header.included_headers) >= 2, (
+            f"Expected transitive includes beyond stdio.h, got: {header.included_headers}"
+        )
 
 
 @libclang

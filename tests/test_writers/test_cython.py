@@ -1,5 +1,7 @@
 """Tests for the Cython .pxd writer."""
 
+import textwrap
+
 from headerkit.ir import (
     Array,
     Constant,
@@ -33,10 +35,7 @@ class TestSimpleStruct:
             ],
         )
         result = write_pxd(header)
-        assert 'cdef extern from "test.h":' in result
-        assert "cdef struct Point:" in result
-        assert "    int x" in result
-        assert "    int y" in result
+        assert result == 'cdef extern from "test.h":\n\n    cdef struct Point:\n        int x\n        int y\n'
 
     def test_opaque_struct(self) -> None:
         header = Header("test.h", [Struct("Opaque", [])])
@@ -56,8 +55,7 @@ class TestSimpleStruct:
             ],
         )
         result = write_pxd(header)
-        assert "ctypedef struct Point:" in result
-        assert "    int x" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef struct Point:\n        int x\n'
 
     def test_union(self) -> None:
         header = Header(
@@ -74,9 +72,7 @@ class TestSimpleStruct:
             ],
         )
         result = write_pxd(header)
-        assert "cdef union Data:" in result
-        assert "    int i" in result
-        assert "    float f" in result
+        assert result == 'cdef extern from "test.h":\n\n    cdef union Data:\n        int i\n        float f\n'
 
 
 class TestEnum:
@@ -97,15 +93,8 @@ class TestEnum:
             ],
         )
         result = write_pxd(header)
-        assert "cdef enum Color:" in result
-        assert "    RED" in result
-        assert "    GREEN" in result
-        assert "    BLUE" in result
-        # Verify members appear in source order
-        red_pos = result.index("RED")
-        green_pos = result.index("GREEN")
-        blue_pos = result.index("BLUE")
-        assert red_pos < green_pos < blue_pos
+        expected = 'cdef extern from "test.h":\n\n    cdef enum Color:\n        RED\n        GREEN\n        BLUE\n'
+        assert result == expected
 
     def test_typedef_enum(self) -> None:
         header = Header(
@@ -119,13 +108,12 @@ class TestEnum:
             ],
         )
         result = write_pxd(header)
-        assert "ctypedef enum Status:" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef enum Status:\n        OK\n        ERR\n'
 
     def test_empty_enum(self) -> None:
         header = Header("test.h", [Enum("Empty", [])])
         result = write_pxd(header)
-        assert "cdef enum Empty:" in result
-        assert "    pass" in result
+        assert result == 'cdef extern from "test.h":\n\n    cdef enum Empty:\n        pass\n'
 
 
 class TestFunction:
@@ -146,7 +134,7 @@ class TestFunction:
             ],
         )
         result = write_pxd(header)
-        assert "int add(int a, int b)" in result
+        assert result == 'cdef extern from "test.h":\n\n    int add(int a, int b)\n'
 
     def test_variadic_function(self) -> None:
         header = Header(
@@ -163,7 +151,7 @@ class TestFunction:
             ],
         )
         result = write_pxd(header)
-        assert "int printf(const char* fmt, ...)" in result
+        assert result == 'cdef extern from "test.h":\n\n    int printf(const char* fmt, ...)\n'
 
     def test_void_return(self) -> None:
         header = Header(
@@ -171,7 +159,7 @@ class TestFunction:
             [Function("init", CType("void"), [])],
         )
         result = write_pxd(header)
-        assert "void init()" in result
+        assert result == 'cdef extern from "test.h":\n\n    void init()\n'
 
 
 class TestTypedef:
@@ -183,7 +171,7 @@ class TestTypedef:
             [Typedef("myint", CType("int"))],
         )
         result = write_pxd(header)
-        assert "ctypedef int myint" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef int myint\n'
 
     def test_typedef_unsigned_long(self) -> None:
         header = Header(
@@ -191,7 +179,7 @@ class TestTypedef:
             [Typedef("size_type", CType("long", ["unsigned"]))],
         )
         result = write_pxd(header)
-        assert "ctypedef unsigned long size_type" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef unsigned long size_type\n'
 
 
 class TestConstant:
@@ -203,7 +191,7 @@ class TestConstant:
             [Constant("SIZE", 100, type=CType("int"))],
         )
         result = write_pxd(header)
-        assert "int SIZE" in result
+        assert result == 'cdef extern from "test.h":\n\n    int SIZE\n'
 
     def test_float_constant(self) -> None:
         header = Header(
@@ -211,7 +199,7 @@ class TestConstant:
             [Constant("PI", 3.14, type=CType("double"))],
         )
         result = write_pxd(header)
-        assert "double PI" in result
+        assert result == 'cdef extern from "test.h":\n\n    double PI\n'
 
     def test_macro_default_int(self) -> None:
         """Macro without detected type defaults to int."""
@@ -220,7 +208,7 @@ class TestConstant:
             [Constant("MAX", 255, is_macro=True)],
         )
         result = write_pxd(header)
-        assert "int MAX" in result
+        assert result == 'cdef extern from "test.h":\n\n    int MAX\n'
 
     def test_string_constant(self) -> None:
         header = Header(
@@ -234,7 +222,7 @@ class TestConstant:
             ],
         )
         result = write_pxd(header)
-        assert "const char* VERSION" in result
+        assert result == 'cdef extern from "test.h":\n\n    const char* VERSION\n'
 
 
 class TestCppClass:
@@ -262,15 +250,14 @@ class TestCppClass:
             ],
         )
         result = write_pxd(header)
-        assert "cdef cppclass Widget:" in result
-        assert "    int width" in result
-        assert "    void resize(int w, int h)" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "widget.h":
 
-        lines = result.strip().split("\n")
-        cppclass_line = next(i for i, ln in enumerate(lines) if "cdef cppclass Widget:" in ln)
-        method_line = next(i for i, ln in enumerate(lines) if "void resize" in ln)
-        assert method_line > cppclass_line, "Method should come after class declaration"
-        assert lines[method_line].startswith("        "), "Method should be indented with 8 spaces (2 levels)"
+                cdef cppclass Widget:
+                    int width
+                    void resize(int w, int h)
+            """)
+        assert result == expected
 
     def test_cppclass_with_cpp_name(self) -> None:
         header = Header(
@@ -285,7 +272,7 @@ class TestCppClass:
             ],
         )
         result = write_pxd(header)
-        assert '"my_ns::MyClass"' in result
+        assert result == 'cdef extern from "lib.h":\n\n    cdef cppclass MyClass "my_ns::MyClass":\n        int val\n'
 
 
 class TestCppNamespaceGrouping:
@@ -305,10 +292,17 @@ class TestCppNamespaceGrouping:
             ],
         )
         result = write_pxd(header)
-        assert 'cdef extern from "ns.h":' in result
-        assert 'cdef extern from "ns.h" namespace "ui":' in result
-        assert "void global_fn()" in result
-        assert "cdef cppclass Widget:" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "ns.h":
+
+                void global_fn()
+
+            cdef extern from "ns.h" namespace "ui":
+
+                cdef cppclass Widget:
+                    int x
+            """)
+        assert result == expected
 
     def test_multiple_namespaces(self) -> None:
         header = Header(
@@ -329,8 +323,18 @@ class TestCppNamespaceGrouping:
             ],
         )
         result = write_pxd(header)
-        assert 'namespace "ns1"' in result
-        assert 'namespace "ns2"' in result
+        expected = textwrap.dedent("""\
+            cdef extern from "multi.h" namespace "ns1":
+
+                cdef cppclass A:
+                    int a
+
+            cdef extern from "multi.h" namespace "ns2":
+
+                cdef cppclass B:
+                    int b
+            """)
+        assert result == expected
 
 
 class TestCppTemplateParameters:
@@ -349,7 +353,7 @@ class TestCppTemplateParameters:
             ],
         )
         result = write_pxd(header)
-        assert "cdef cppclass Container[T]:" in result
+        assert result == 'cdef extern from "container.h":\n\n    cdef cppclass Container[T]:\n        T* data\n'
 
     def test_multi_template_params(self) -> None:
         header = Header(
@@ -371,7 +375,7 @@ class TestCppTemplateParameters:
             ],
         )
         result = write_pxd(header)
-        assert "cdef cppclass Map[K, V]:" in result
+        assert result == 'cdef extern from "map.h":\n\n    cdef cppclass Map[K, V]:\n        V get(K key)\n'
 
 
 class TestFunctionPointerTypedef:
@@ -393,7 +397,7 @@ class TestFunctionPointerTypedef:
             ],
         )
         result = write_pxd(header)
-        assert "ctypedef void (*Callback)(void* data)" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef void (*Callback)(void* data)\n'
 
     def test_fnptr_typedef_no_params(self) -> None:
         header = Header(
@@ -406,7 +410,7 @@ class TestFunctionPointerTypedef:
             ],
         )
         result = write_pxd(header)
-        assert "ctypedef void (*VoidFn)()" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef void (*VoidFn)()\n'
 
     def test_direct_fnptr_typedef(self) -> None:
         """FunctionPointer directly as underlying_type (not wrapped in Pointer)."""
@@ -423,7 +427,7 @@ class TestFunctionPointerTypedef:
             ],
         )
         result = write_pxd(header)
-        assert "ctypedef int (*Handler)(int code)" in result
+        assert result == 'cdef extern from "test.h":\n\n    ctypedef int (*Handler)(int code)\n'
 
 
 class TestBitfield:
@@ -444,13 +448,15 @@ class TestBitfield:
             ],
         )
         result = write_pxd(header)
-        assert "unsigned int active" in result
-        assert "# bitfield: 1 bits" in result
-        assert "unsigned int mode" in result
-        assert "# bitfield: 3 bits" in result
-        # Normal field should NOT have bitfield comment
-        normal_line = [ln for ln in result.split("\n") if "int normal" in ln][0]
-        assert "bitfield" not in normal_line
+        expected = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Flags:
+                    unsigned int active  # bitfield: 1 bits
+                    unsigned int mode  # bitfield: 3 bits
+                    int normal
+            """)
+        assert result == expected
 
 
 class TestPackedStruct:
@@ -468,8 +474,14 @@ class TestPackedStruct:
             ],
         )
         result = write_pxd(header)
-        assert "# NOTE: packed struct" in result
-        assert "cdef struct Packed:" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                # NOTE: packed struct (Cython does not support __attribute__((packed)))
+                cdef struct Packed:
+                    int x
+            """)
+        assert result == expected
 
     def test_non_packed_no_comment(self) -> None:
         header = Header(
@@ -479,7 +491,7 @@ class TestPackedStruct:
             ],
         )
         result = write_pxd(header)
-        assert "packed" not in result.lower()
+        assert result == 'cdef extern from "test.h":\n\n    cdef struct Normal:\n        int x\n'
 
 
 class TestWriterProtocol:
@@ -498,8 +510,7 @@ class TestWriterProtocol:
             [Function("foo", CType("void"), [])],
         )
         result = writer.write(header)
-        assert isinstance(result, str)
-        assert "void foo()" in result
+        assert result == 'cdef extern from "test.h":\n\n    void foo()\n'
 
     def test_name(self) -> None:
         writer = CythonWriter()
@@ -522,11 +533,16 @@ class TestWriterProtocol:
         )
         writer = CythonWriter()
         result = writer.write(header)
-        assert 'cdef extern from "test.h":' in result
-        assert "cdef struct Point:" in result
-        assert "    int x" in result
-        assert "    int y" in result
-        assert "Point* get_point()" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Point:
+                    int x
+                    int y
+
+                Point* get_point()
+            """)
+        assert result == expected
 
 
 class TestKeywordEscaping:
@@ -546,9 +562,14 @@ class TestKeywordEscaping:
             ],
         )
         result = write_pxd(header)
-        # Should be escaped with C name alias
-        assert 'class_ "class"' in result
-        assert "    int value" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Node:
+                    int class_ "class"
+                    int value
+            """)
+        assert result == expected
 
     def test_function_named_import(self) -> None:
         header = Header(
@@ -556,7 +577,7 @@ class TestKeywordEscaping:
             [Function("import", CType("void"), [])],
         )
         result = write_pxd(header)
-        assert 'import_ "import"' in result
+        assert result == 'cdef extern from "test.h":\n\n    void import_ "import"()\n'
 
     def test_enum_value_keyword(self) -> None:
         header = Header(
@@ -572,8 +593,14 @@ class TestKeywordEscaping:
             ],
         )
         result = write_pxd(header)
-        assert 'lambda_ "lambda"' in result
-        assert "NORMAL" in result
+        expected = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef enum Tokens:
+                    lambda_ "lambda"
+                    NORMAL
+            """)
+        assert result == expected
 
     def test_parameter_keyword_escaping(self) -> None:
         header = Header(
@@ -587,7 +614,7 @@ class TestKeywordEscaping:
             ],
         )
         result = write_pxd(header)
-        assert "int class_" in result
+        assert result == 'cdef extern from "test.h":\n\n    void foo(int class_)\n'
 
 
 class TestVariable:
@@ -597,7 +624,7 @@ class TestVariable:
             [Variable("count", CType("int"))],
         )
         result = write_pxd(header)
-        assert "int count" in result
+        assert result == 'cdef extern from "test.h":\n\n    int count\n'
 
     def test_array_variable(self) -> None:
         header = Header(
@@ -605,7 +632,7 @@ class TestVariable:
             [Variable("table", Array(CType("int"), 256))],
         )
         result = write_pxd(header)
-        assert "int table[256]" in result
+        assert result == 'cdef extern from "test.h":\n\n    int table[256]\n'
 
 
 class TestCimports:
@@ -623,7 +650,7 @@ class TestCimports:
             ],
         )
         result = write_pxd(header)
-        assert "from libc.stdint cimport uint32_t" in result
+        assert result == 'from libc.stdint cimport uint32_t\n\ncdef extern from "test.h":\n\n    uint32_t get_size()\n'
 
     def test_stdio_cimport(self) -> None:
         header = Header(
@@ -637,7 +664,7 @@ class TestCimports:
             ],
         )
         result = write_pxd(header)
-        assert "from libc.stdio cimport FILE" in result
+        assert result == 'from libc.stdio cimport FILE\n\ncdef extern from "test.h":\n\n    FILE* get_file()\n'
 
 
 class TestCallingConvention:
@@ -656,8 +683,7 @@ class TestCallingConvention:
             ],
         )
         result = write_pxd(header)
-        assert "int WinMain()" in result
-        assert "# calling convention: __stdcall__" in result
+        assert result == 'cdef extern from "test.h":\n\n    int WinMain()  # calling convention: __stdcall__\n'
 
     def test_no_calling_convention(self) -> None:
         header = Header(
@@ -665,7 +691,7 @@ class TestCallingConvention:
             [Function("normal", CType("void"), [])],
         )
         result = write_pxd(header)
-        assert "calling convention" not in result
+        assert result == 'cdef extern from "test.h":\n\n    void normal()\n'
 
 
 class TestRegistration:
@@ -699,9 +725,10 @@ class TestCircularTypedef:
             ],
         )
         result = write_pxd(header)
-        # Should have the ctypedef struct, not a duplicate "ctypedef Point Point"
-        assert "ctypedef struct Point:" in result
-        assert "ctypedef Point Point" not in result
+        # Should have the ctypedef struct, not a duplicate "ctypedef Point Point".
+        # The skipped circular typedef still contributes a blank-line separator,
+        # so two blank lines appear between the extern clause and the struct.
+        assert result == 'cdef extern from "test.h":\n\n\n\n    ctypedef struct Point:\n        int x\n'
 
 
 class TestBoolType:
@@ -719,7 +746,7 @@ class TestBoolType:
             ],
         )
         result = write_pxd(header)
-        assert "bint is_valid(int x)" in result
+        assert result == 'cdef extern from "test.h":\n\n    bint is_valid(int x)\n'
 
 
 class TestExternBlock:
@@ -728,8 +755,7 @@ class TestExternBlock:
     def test_empty_header_has_pass(self) -> None:
         header = Header("empty.h", [])
         result = write_pxd(header)
-        assert 'cdef extern from "empty.h":' in result
-        assert "    pass" in result
+        assert result == 'cdef extern from "empty.h":\n    pass\n'
 
 
 class TestFullOutputFormat:
@@ -915,8 +941,16 @@ class TestCimportAdditions:
             ],
         )
         result = write_pxd(header)
-        assert "from libc.stdint cimport" in result
-        assert "from libc.stdio cimport" in result
+        # cimports are sorted alphabetically by module name: stdint < stdio
+        expected = (
+            "from libc.stdint cimport uint32_t\n"
+            "from libc.stdio cimport FILE\n"
+            "\n"
+            'cdef extern from "test.h":\n'
+            "\n"
+            "    uint32_t test(FILE* f)\n"
+        )
+        assert result == expected
 
     def test_cimports_before_extern(self) -> None:
         """Cimport statements appear before extern from block."""
@@ -927,9 +961,7 @@ class TestCimportAdditions:
             ],
         )
         result = write_pxd(header)
-        cimport_pos = result.find("from libc.stdint cimport")
-        extern_pos = result.find('cdef extern from "test.h"')
-        assert cimport_pos < extern_pos, "cimport should precede extern from"
+        assert result == 'from libc.stdint cimport uint32_t\n\ncdef extern from "test.h":\n\n    uint32_t test()\n'
 
     def test_no_duplicate_cimports(self) -> None:
         """Same type used multiple times generates single cimport."""
@@ -945,9 +977,16 @@ class TestCimportAdditions:
             ],
         )
         result = write_pxd(header)
-        cimport_lines = [line for line in result.split("\n") if "from libc.stdint cimport" in line]
-        assert len(cimport_lines) == 1
-        assert cimport_lines[0].count("uint32_t") == 1
+        expected = (
+            "from libc.stdint cimport uint32_t\n"
+            "\n"
+            'cdef extern from "test.h":\n'
+            "\n"
+            "    uint32_t func1()\n"
+            "\n"
+            "    uint32_t func2(uint32_t x)\n"
+        )
+        assert result == expected
 
     def test_size_t_no_cimport(self) -> None:
         """size_t is a Cython built-in, so no cimport needed."""
@@ -956,8 +995,7 @@ class TestCimportAdditions:
             [Struct("Data", [Field("val", CType("size_t"))])],
         )
         result = write_pxd(header)
-        assert "cimport" not in result
-        assert "size_t val" in result
+        assert result == 'cdef extern from "test.h":\n\n    cdef struct Data:\n        size_t val\n'
 
     def test_stdint_in_function_param(self) -> None:
         """stdint type in function parameter generates cimport."""
@@ -1051,8 +1089,7 @@ class TestStubCimportPrefix:
             ],
         )
         result = write_pxd(header)
-        assert "cimport" not in result
-        assert "va_list args" in result
+        assert result == 'cdef extern from "test.h":\n\n    void vprintf_wrapper(va_list args)\n'
 
     def test_stub_cimport_prefix_emits_cimport(self) -> None:
         """With prefix, emits 'from prefix.stdarg cimport va_list'."""
@@ -1067,7 +1104,14 @@ class TestStubCimportPrefix:
             ],
         )
         result = write_pxd(header, stub_cimport_prefix="test.stubs")
-        assert "from test.stubs.stdarg cimport va_list" in result
+        expected = (
+            "from test.stubs.stdarg cimport va_list\n"
+            "\n"
+            'cdef extern from "test.h":\n'
+            "\n"
+            "    void vprintf_wrapper(va_list args)\n"
+        )
+        assert result == expected
 
     def test_stub_cimport_prefix_multiple_types(self) -> None:
         """Multiple stub types from different modules emit separate cimport lines."""
@@ -1087,8 +1131,17 @@ class TestStubCimportPrefix:
             ],
         )
         result = write_pxd(header, stub_cimport_prefix="test.stubs")
-        assert "from test.stubs.stdarg cimport va_list" in result
-        assert "from test.stubs.sys_socket cimport sockaddr" in result
+        expected = (
+            "from test.stubs.stdarg cimport va_list\n"
+            "from test.stubs.sys_socket cimport sockaddr\n"
+            "\n"
+            'cdef extern from "test.h":\n'
+            "\n"
+            "    void fn1(va_list args)\n"
+            "\n"
+            "    void fn2(sockaddr* addr)\n"
+        )
+        assert result == expected
 
     def test_stub_cimport_prefix_via_pxd_writer(self) -> None:
         """PxdWriter accepts stub_cimport_prefix directly."""
@@ -1104,4 +1157,7 @@ class TestStubCimportPrefix:
         )
         writer = PxdWriter(header, stub_cimport_prefix="my.pkg.stubs")
         result = writer.write()
-        assert "from my.pkg.stubs.stdarg cimport va_list" in result
+        expected = (
+            'from my.pkg.stubs.stdarg cimport va_list\n\ncdef extern from "test.h":\n\n    void fn(va_list args)\n'
+        )
+        assert result == expected

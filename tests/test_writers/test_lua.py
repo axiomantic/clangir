@@ -1,5 +1,7 @@
 """Tests for the LuaJIT FFI writer."""
 
+import textwrap
+
 from headerkit.ir import (
     Array,
     Constant,
@@ -149,7 +151,7 @@ class TestFormatField:
     def test_no_bitwidth_omits_suffix(self) -> None:
         f = Field("count", CType("int"))
         result = _format_field(f)
-        assert ":" not in result
+        assert result == "    int count;"
 
 
 class TestAnonymousStructField:
@@ -157,15 +159,7 @@ class TestAnonymousStructField:
         anon = Struct(None, [Field("x", CType("int")), Field("y", CType("int"))])
         f = Field("pos", CType("int"), anonymous_struct=anon)
         result = _format_field(f)
-        assert "struct {" in result
-        assert "int x;" in result
-        assert "int y;" in result
-        assert result.endswith("};")
-        # Verify indentation: outer fields at 4 spaces, inner at 8
-        assert "    struct {" in result
-        assert "        int x;" in result
-        assert "        int y;" in result
-        assert "    };" in result
+        assert result == "    struct {\n        int x;\n        int y;\n    };"
 
     def test_anonymous_union_inline(self) -> None:
         anon = Struct(
@@ -175,9 +169,7 @@ class TestAnonymousStructField:
         )
         f = Field("data", CType("int"), anonymous_struct=anon)
         result = _format_field(f)
-        assert "union {" in result
-        assert "int i;" in result
-        assert "float f;" in result
+        assert result == "    union {\n        int i;\n        float f;\n    };"
 
 
 class TestConstantToCdef:
@@ -242,19 +234,21 @@ class TestEnumToCdef:
             [EnumValue("RED", 0), EnumValue("GREEN", 1), EnumValue("BLUE", 2)],
         )
         result = _enum_to_cdef(e)
-        assert result is not None
-        assert "typedef enum {" in result
-        assert "RED = 0," in result
-        assert "GREEN = 1," in result
-        assert "BLUE = 2," in result
-        assert "} Color;" in result
+        assert result == textwrap.dedent("""\
+            typedef enum {
+                RED = 0,
+                GREEN = 1,
+                BLUE = 2,
+            } Color;""")
 
     def test_enum_with_auto_values(self) -> None:
         e = Enum("Status", [EnumValue("OK", None), EnumValue("ERROR", None)])
         result = _enum_to_cdef(e)
-        assert result is not None
-        assert "OK," in result
-        assert "ERROR," in result
+        assert result == textwrap.dedent("""\
+            typedef enum {
+                OK,
+                ERROR,
+            } Status;""")
 
     def test_empty_enum_returns_none(self) -> None:
         e = Enum("Empty", [])
@@ -264,21 +258,22 @@ class TestEnumToCdef:
     def test_anonymous_enum(self) -> None:
         e = Enum(None, [EnumValue("FLAG_A", 1), EnumValue("FLAG_B", 2)])
         result = _enum_to_cdef(e)
-        assert result is not None
-        assert "typedef enum {" in result
-        assert "FLAG_A = 1," in result
-        assert result.strip().endswith("};")
+        assert result == textwrap.dedent("""\
+            typedef enum {
+                FLAG_A = 1,
+                FLAG_B = 2,
+            };""")
 
 
 class TestStructToCdef:
     def test_simple_struct(self) -> None:
         s = Struct("Point", [Field("x", CType("int")), Field("y", CType("int"))])
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "struct {" in result
-        assert "    int x;" in result
-        assert "    int y;" in result
-        assert "} Point;" in result
+        assert result == textwrap.dedent("""\
+            struct {
+                int x;
+                int y;
+            } Point;""")
 
     def test_typedef_struct(self) -> None:
         s = Struct(
@@ -287,9 +282,11 @@ class TestStructToCdef:
             is_typedef=True,
         )
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "typedef struct {" in result
-        assert "} Point;" in result
+        assert result == textwrap.dedent("""\
+            typedef struct {
+                int x;
+                int y;
+            } Point;""")
 
     def test_union(self) -> None:
         u = Struct(
@@ -298,17 +295,16 @@ class TestStructToCdef:
             is_union=True,
         )
         result = _struct_to_cdef(u)
-        assert result is not None
-        assert "union {" in result
-        assert "    int i;" in result
-        assert "    float f;" in result
-        assert "} Data;" in result
+        assert result == textwrap.dedent("""\
+            union {
+                int i;
+                float f;
+            } Data;""")
 
     def test_opaque_struct(self) -> None:
         s = Struct("Handle", [])
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "typedef struct Handle Handle;" in result
+        assert result == "typedef struct Handle Handle;"
 
     def test_opaque_typedef_struct(self) -> None:
         # Opaque structs (no fields) always emit the same forward declaration
@@ -317,8 +313,7 @@ class TestStructToCdef:
         # intentional behavior: both produce "typedef struct Handle Handle;".
         s = Struct("Handle", [], is_typedef=True)
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "typedef struct Handle Handle;" in result
+        assert result == "typedef struct Handle Handle;"
 
     def test_packed_struct(self) -> None:
         s = Struct(
@@ -327,10 +322,11 @@ class TestStructToCdef:
             is_packed=True,
         )
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "__attribute__((packed))" in result
-        assert "    uint8_t tag;" in result
-        assert "    uint32_t value;" in result
+        assert result == textwrap.dedent("""\
+            struct __attribute__((packed)) {
+                uint8_t tag;
+                uint32_t value;
+            } PackedRecord;""")
 
     def test_packed_typedef_struct(self) -> None:
         s = Struct(
@@ -340,9 +336,10 @@ class TestStructToCdef:
             is_typedef=True,
         )
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "typedef struct __attribute__((packed)) {" in result
-        assert "} PackedRecord;" in result
+        assert result == textwrap.dedent("""\
+            typedef struct __attribute__((packed)) {
+                uint8_t tag;
+            } PackedRecord;""")
 
     def test_struct_with_bitfields(self) -> None:
         s = Struct(
@@ -355,11 +352,13 @@ class TestStructToCdef:
             ],
         )
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "unsigned int read : 1;" in result
-        assert "unsigned int write : 1;" in result
-        assert "unsigned int exec : 1;" in result
-        assert "unsigned int reserved : 5;" in result
+        assert result == textwrap.dedent("""\
+            struct {
+                unsigned int read : 1;
+                unsigned int write : 1;
+                unsigned int exec : 1;
+                unsigned int reserved : 5;
+            } Flags;""")
 
     def test_anonymous_struct_skipped(self) -> None:
         s = Struct(None, [Field("x", CType("int"))])
@@ -369,14 +368,18 @@ class TestStructToCdef:
     def test_struct_with_array_field(self) -> None:
         s = Struct("Buffer", [Field("data", Array(CType("char"), 1024))])
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "    char data[1024];" in result
+        assert result == textwrap.dedent("""\
+            struct {
+                char data[1024];
+            } Buffer;""")
 
     def test_struct_with_pointer_field(self) -> None:
         s = Struct("Node", [Field("next", Pointer(CType("Node")))])
         result = _struct_to_cdef(s)
-        assert result is not None
-        assert "    Node * next;" in result
+        assert result == textwrap.dedent("""\
+            struct {
+                Node * next;
+            } Node;""")
 
 
 class TestFunctionToCdef:
@@ -464,41 +467,80 @@ class TestHeaderToLua:
         """Output contains the required structural elements."""
         header = Header("test.h", [])
         result = header_to_lua(header)
-        assert "-- Auto-generated LuaJIT FFI bindings" in result
-        assert "-- Source: test.h" in result
-        assert "-- Generated by headerkit" in result
-        assert 'local ffi = require("ffi")' in result
-        assert "ffi.cdef[[" in result
-        assert "]]" in result
-        assert "return {}" in result
-        assert result.index('local ffi = require("ffi")') < result.index("ffi.cdef[[")
-        assert result.index("ffi.cdef[[") < result.index("]]")
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+
+            ]]
+
+            return {}
+            """)
 
     def test_integer_constant_in_cdef(self) -> None:
         header = Header("test.h", [Constant("BUFFER_SIZE", 1024, is_macro=True)])
         result = header_to_lua(header)
-        assert "ffi.cdef[[" in result
-        assert "static const int BUFFER_SIZE = 1024;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Constants */
+            static const int BUFFER_SIZE = 1024;
+
+            ]]
+
+            return {}
+            """)
 
     def test_float_constant_as_lua_var(self) -> None:
         header = Header("test.h", [Constant("PI", 3.14, is_macro=True)])
         result = header_to_lua(header)
-        assert "local PI = 3.14" in result
-        # Float should be outside ffi.cdef block
-        lines = result.split("\n")
-        cdef_start = next(i for i, line in enumerate(lines) if "ffi.cdef[[" in line)
-        pi_line = next(i for i, line in enumerate(lines) if "local PI" in line)
-        assert pi_line < cdef_start
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            local PI = 3.14
+
+            ffi.cdef[[
+
+
+            ]]
+
+            return {}
+            """)
 
     def test_string_constant_as_lua_var(self) -> None:
         header = Header("test.h", [Constant("VERSION", '"1.0.0"', is_macro=True)])
         result = header_to_lua(header)
-        assert 'local VERSION = "1.0.0"' in result
-        # String should be outside ffi.cdef block
-        lines = result.split("\n")
-        cdef_start = next(i for i, line in enumerate(lines) if "ffi.cdef[[" in line)
-        ver_line = next(i for i, line in enumerate(lines) if "local VERSION" in line)
-        assert ver_line < cdef_start
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            local VERSION = "1.0.0"
+
+            ffi.cdef[[
+
+
+            ]]
+
+            return {}
+            """)
 
     def test_enum_in_cdef(self) -> None:
         header = Header(
@@ -506,10 +548,25 @@ class TestHeaderToLua:
             [Enum("Color", [EnumValue("RED", 0), EnumValue("GREEN", 1)])],
         )
         result = header_to_lua(header)
-        assert "/* Enums */" in result
-        assert "typedef enum {" in result
-        assert "RED = 0," in result
-        assert "} Color;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Enums */
+            typedef enum {
+                RED = 0,
+                GREEN = 1,
+            } Color;
+
+            ]]
+
+            return {}
+            """)
 
     def test_struct_in_cdef(self) -> None:
         header = Header(
@@ -517,16 +574,45 @@ class TestHeaderToLua:
             [Struct("Point", [Field("x", CType("int")), Field("y", CType("int"))])],
         )
         result = header_to_lua(header)
-        assert "/* Structs */" in result
-        assert "    int x;" in result
-        assert "    int y;" in result
-        assert "} Point;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Structs */
+            struct {
+                int x;
+                int y;
+            } Point;
+
+            ]]
+
+            return {}
+            """)
 
     def test_opaque_struct_in_cdef(self) -> None:
         header = Header("test.h", [Struct("Handle", [])])
         result = header_to_lua(header)
-        assert "/* Opaque types */" in result
-        assert "typedef struct Handle Handle;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Opaque types */
+            typedef struct Handle Handle;
+
+            ]]
+
+            return {}
+            """)
 
     def test_function_in_cdef(self) -> None:
         header = Header(
@@ -540,8 +626,22 @@ class TestHeaderToLua:
             ],
         )
         result = header_to_lua(header)
-        assert "/* Functions */" in result
-        assert "int add(int a, int b);" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Functions */
+            int add(int a, int b);
+
+            ]]
+
+            return {}
+            """)
 
     def test_variadic_function_in_cdef(self) -> None:
         header = Header(
@@ -556,7 +656,22 @@ class TestHeaderToLua:
             ],
         )
         result = header_to_lua(header)
-        assert "int printf(const char * fmt, ...);" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Functions */
+            int printf(const char * fmt, ...);
+
+            ]]
+
+            return {}
+            """)
 
     def test_function_pointer_typedef_in_callbacks(self) -> None:
         fp = FunctionPointer(
@@ -565,8 +680,22 @@ class TestHeaderToLua:
         )
         header = Header("test.h", [Typedef("EventCallback", Pointer(fp))])
         result = header_to_lua(header)
-        assert "/* Callback typedefs */" in result
-        assert "typedef void (*EventCallback)(int event_id, void * ctx);" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Callback typedefs */
+            typedef void (*EventCallback)(int event_id, void * ctx);
+
+            ]]
+
+            return {}
+            """)
 
     def test_calling_convention_on_function(self) -> None:
         header = Header(
@@ -574,7 +703,22 @@ class TestHeaderToLua:
             [Function("WinMain", CType("int"), [], calling_convention="stdcall")],
         )
         result = header_to_lua(header)
-        assert "__stdcall__ int WinMain(void);" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Functions */
+            __stdcall__ int WinMain(void);
+
+            ]]
+
+            return {}
+            """)
 
     def test_mixed_declarations(self) -> None:
         """Full integration test with multiple declaration types."""
@@ -602,29 +746,67 @@ class TestHeaderToLua:
             ],
         )
         result = header_to_lua(header)
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: api.h
+            -- Generated by headerkit
 
-        # Structure checks
-        assert "-- Source: api.h" in result
-        assert 'local ffi = require("ffi")' in result
-        assert "local PI = 3.14159" in result
-        assert "ffi.cdef[[" in result
-        assert "static const int MAX_SIZE = 4096;" in result
-        assert "typedef enum {" in result
-        assert "} Status;" in result
-        assert "typedef struct {" in result
-        assert "} Point;" in result
-        assert "typedef struct Opaque Opaque;" in result
-        assert "typedef void (*Callback)(void * data);" in result
-        assert "void init(void * cb);" in result
-        assert "]]" in result
-        assert "return {}" in result
+            local ffi = require("ffi")
+
+            local PI = 3.14159
+
+            ffi.cdef[[
+
+            /* Constants */
+            static const int MAX_SIZE = 4096;
+
+            /* Enums */
+            typedef enum {
+                OK = 0,
+                ERR = 1,
+            } Status;
+
+            /* Structs */
+            typedef struct {
+                int x;
+                int y;
+            } Point;
+
+            /* Opaque types */
+            typedef struct Opaque Opaque;
+
+            /* Callback typedefs */
+            typedef void (*Callback)(void * data);
+
+            /* Functions */
+            void init(void * cb);
+
+            ]]
+
+            return {}
+            """)
 
     def test_variable_in_output(self) -> None:
         var = Variable("count", CType("int"))
         header = Header("test.h", [var])
         writer = LuaWriter()
         result = writer.write(header)
-        assert "int count;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Functions */
+            int count;
+
+            ]]
+
+            return {}
+            """)
 
     def test_packed_struct_in_output(self) -> None:
         header = Header(
@@ -639,10 +821,25 @@ class TestHeaderToLua:
             ],
         )
         result = header_to_lua(header)
-        assert "typedef struct __attribute__((packed)) {" in result
-        assert "    uint8_t tag;" in result
-        assert "    uint32_t value;" in result
-        assert "} PackedRecord;" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Structs */
+            typedef struct __attribute__((packed)) {
+                uint8_t tag;
+                uint32_t value;
+            } PackedRecord;
+
+            ]]
+
+            return {}
+            """)
 
 
 class TestLuaWriter:
@@ -674,17 +871,28 @@ class TestLuaWriter:
         )
         writer = LuaWriter()
         result = writer.write(header)
-        assert "-- Source: test.h" in result
-        assert 'local ffi = require("ffi")' in result
-        assert "ffi.cdef[[" in result
-        assert "/* Structs */" in result
-        assert "    int x;" in result
-        assert "    int y;" in result
-        assert "} Point;" in result
-        assert "/* Functions */" in result
-        assert "Point * get_point(void);" in result
-        assert "]]" in result
-        assert "return {}" in result
+        assert result == textwrap.dedent("""\
+            -- Auto-generated LuaJIT FFI bindings
+            -- Source: test.h
+            -- Generated by headerkit
+
+            local ffi = require("ffi")
+
+            ffi.cdef[[
+
+            /* Structs */
+            struct {
+                int x;
+                int y;
+            } Point;
+
+            /* Functions */
+            Point * get_point(void);
+
+            ]]
+
+            return {}
+            """)
 
     def test_writer_registered(self) -> None:
         """LuaWriter should be registered in the writer registry."""

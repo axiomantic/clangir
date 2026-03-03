@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import platform
 
 import pytest
@@ -113,7 +112,8 @@ class TestMonkeyPatchMechanism:
         import headerkit._clang
 
         assert hasattr(headerkit._clang, "_NEEDS_INTEROP_STRING_PATCH")
-        assert isinstance(headerkit._clang._NEEDS_INTEROP_STRING_PATCH, bool)
+        expected = platform.python_implementation() != "CPython"
+        assert expected == headerkit._clang._NEEDS_INTEROP_STRING_PATCH
 
     def test_patch_not_applied_on_cpython(self) -> None:
         """On CPython, c_interop_string should remain the original class."""
@@ -128,7 +128,7 @@ class TestMonkeyPatchMechanism:
             headerkit._clang._cached_cindex = None
             cindex = get_cindex()
             assert cindex.c_interop_string is not _compat_c_interop_string
-            assert inspect.isclass(cindex.c_interop_string), "Original c_interop_string should be a class"
+            assert cindex.c_interop_string.__name__ == "c_interop_string"
         finally:
             headerkit._clang._cached_cindex = saved
 
