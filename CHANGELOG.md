@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-03-03
+
+### Fixed
+
+- Prompt writer incorrectly classified `typedef void (*fn)(int);` as a plain typedef in compact and standard modes when libclang represents the underlying type as `Pointer(FunctionPointer(...))`. Compact mode now emits `CALLBACK fn(...) -> void` and standard mode places it in the `callbacks:` section.
+- Prompt writer cross-reference map built keys with `struct`/`union`/`enum` prefixes (e.g. `struct Config`) while declaration dicts use bare names (`Config`), so `used_in` was never populated. Keys are now normalized to bare names.
+
+### Added
+
+- Integration roundtrip tests for ctypes, Cython, Lua, prompt, and diff writers: full `libclang → IR → writer output` pipeline coverage for each writer, exercising structs, enums, functions, typedefs, constants, anonymous types, and empty headers.
+- Integration smoke tests for all seven writers against real-world library headers (sqlite3, zlib, lua, curl, SDL2) in `test_real_headers.py`.
+
 ## [0.7.3] - 2026-03-01
 
 ### Fixed
