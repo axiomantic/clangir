@@ -127,18 +127,26 @@ def _function_compact(decl: Function) -> str:
     return f"FUNC {decl.name}({params}) -> {ret}"
 
 
+def _extract_function_pointer(type_expr: TypeExpr) -> FunctionPointer | None:
+    """Extract a FunctionPointer from a TypeExpr, handling Pointer wrappers.
+
+    libclang represents `typedef void (*fn)(int);` as
+    Typedef(underlying=Pointer(FunctionPointer(...))). Hand-constructed IR or
+    other backends may use Typedef(underlying=FunctionPointer(...)) directly.
+    Both forms are handled.
+    """
+    if isinstance(type_expr, FunctionPointer):
+        return type_expr
+    if isinstance(type_expr, Pointer) and isinstance(type_expr.pointee, FunctionPointer):
+        return type_expr.pointee
+    return None
+
+
 def _typedef_compact(decl: Typedef) -> str:
     """Render a typedef in compact form."""
-    if isinstance(decl.underlying_type, FunctionPointer) or (
-        isinstance(decl.underlying_type, Pointer) and isinstance(decl.underlying_type.pointee, FunctionPointer)
-    ):
+    fp = _extract_function_pointer(decl.underlying_type)
+    if fp is not None:
         # Function pointer typedef -> CALLBACK
-        # libclang represents `typedef void (*fn)(int);` as
-        # Typedef(underlying=Pointer(FunctionPointer(...))). Hand-constructed
-        # IR or other backends may use Typedef(underlying=FunctionPointer(...))
-        # directly. Both forms are handled by the outer isinstance check.
-        fp = decl.underlying_type.pointee if isinstance(decl.underlying_type, Pointer) else decl.underlying_type
-        assert isinstance(fp, FunctionPointer)
         params_parts = [_param_compact(p) for p in fp.parameters]
         if fp.is_variadic:
             params_parts.append("...")
@@ -204,9 +212,7 @@ def _header_to_standard(header: Header) -> str:
         elif isinstance(decl, Function):
             functions.append(decl)
         elif isinstance(decl, Typedef):
-            if isinstance(decl.underlying_type, FunctionPointer) or (
-                isinstance(decl.underlying_type, Pointer) and isinstance(decl.underlying_type.pointee, FunctionPointer)
-            ):
+            if _extract_function_pointer(decl.underlying_type) is not None:
                 callbacks.append(decl)
             else:
                 typedefs.append(decl)
@@ -253,8 +259,8 @@ def _header_to_standard(header: Header) -> str:
         lines.append("")
         lines.append("callbacks:")
         for td in callbacks:
-            fp = td.underlying_type.pointee if isinstance(td.underlying_type, Pointer) else td.underlying_type
-            assert isinstance(fp, FunctionPointer)
+            fp = _extract_function_pointer(td.underlying_type)
+            assert fp is not None
             params_parts = [_param_standard(p) for p in fp.parameters]
             if fp.is_variadic:
                 params_parts.append("...")
@@ -374,9 +380,9 @@ def _compute_cross_refs(header: Header) -> dict[str, list[str]]:
     Type names from the IR may carry struct/union/enum prefixes (e.g.
     'struct Config') because libclang preserves the elaborated type spelling.
     Declaration dicts use bare names (e.g. 'Config'). Strip the prefix so
-    cross-ref keys match declaration names.
+    cross-ref keys match declaration names. Results are sorted for determinism.
     """
-    refs: dict[str, list[str]] = {}
+    refs: dict[str, set[str]] = {}
     for decl in header.declarations:
         decl_name = _get_decl_name(decl)
         if decl_name is None:
@@ -388,11 +394,8 @@ def _compute_cross_refs(header: Header) -> dict[str, list[str]]:
                 if bare_name.startswith(prefix):
                     bare_name = bare_name[len(prefix) :]
                     break
-            if bare_name not in refs:
-                refs[bare_name] = []
-            if decl_name not in refs[bare_name]:
-                refs[bare_name].append(decl_name)
-    return refs
+            refs.setdefault(bare_name, set()).add(decl_name)
+    return {k: sorted(v) for k, v in refs.items()}
 
 
 def _header_to_verbose(header: Header) -> str:

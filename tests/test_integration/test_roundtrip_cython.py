@@ -13,19 +13,13 @@ import textwrap
 
 import pytest
 
-from headerkit.backends import get_backend, is_backend_available
+from headerkit.backends import is_backend_available
 from headerkit.writers.cython import write_pxd
 
 pytestmark = pytest.mark.skipif(
     not is_backend_available("libclang"),
     reason="libclang backend not available",
 )
-
-
-@pytest.fixture(scope="session")
-def backend():
-    """Get a libclang backend instance (shared across all tests in the session)."""
-    return get_backend("libclang")
 
 
 def parse_and_cython(backend, code: str) -> str:

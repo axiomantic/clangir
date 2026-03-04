@@ -268,6 +268,12 @@ def _merge_config_writer_opts(
 
 def main() -> int:
     """CLI entry point. Returns exit code (0 = success, 1 = error)."""
+    # Subcommand dispatch: `headerkit install-libclang [args]`
+    if len(sys.argv) > 1 and sys.argv[1] == "install-libclang":
+        from headerkit.install_libclang import main as _install_main
+
+        return _install_main(sys.argv[2:])
+
     parser = _build_parser()
     args = parser.parse_args()
 

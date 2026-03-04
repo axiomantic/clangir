@@ -354,7 +354,6 @@ class TestDiffMarkdown:
         code = "void foo(void);"
         b = backend.parse(code, "baseline.h")
         t = backend.parse(code, "target.h")
-        from headerkit.writers.diff import diff_headers, diff_to_markdown
 
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
@@ -394,7 +393,6 @@ class TestDiffMarkdown:
         """
         b = backend.parse("void foo(void);", "baseline.h")
         t = backend.parse("void foo(void);\nvoid bar(void);", "target.h")
-        from headerkit.writers.diff import diff_headers, diff_to_markdown
 
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
@@ -436,7 +434,6 @@ class TestDiffMarkdown:
         """
         b = backend.parse("void foo(void);\nvoid bar(void);", "baseline.h")
         t = backend.parse("void foo(void);", "target.h")
-        from headerkit.writers.diff import diff_headers, diff_to_markdown
 
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
