@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.4] - 2026-03-03
+## [0.8.0] - 2026-03-03
 
 ### Fixed
 
@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `headerkit` CLI command: parse C headers and emit output via configurable writers (`headerkit input.h`, `headerkit -w cffi:out.h -w json:out.json input.h`)
+- `headerkit install-libclang` subcommand: installs libclang system packages (delegates to `headerkit-install-libclang`)
+- `--backend` flag to select parser backend (default: `libclang`)
+- `-I` / `--include-dir`, `-D` / `--define`, `--backend-arg` flags for backend configuration
+- `-w WRITER[:OUTPUT]` flag for writer selection and output routing; multiple writers supported; omitting output path sends to stdout
+- `--writer-opt WRITER:KEY=VALUE` flag for per-writer constructor options; multiple flags accumulate list values
+- `--config PATH` and `--no-config` flags for config file control
+- Config file support: `.headerkit.toml` (preferred) and `[tool.headerkit]` section in `pyproject.toml`, discovered by walking up from the current directory
+- Entry-point plugin discovery: install third-party backends/writers and register them under `headerkit.backends` or `headerkit.writers` entry-point groups
+- `plugins` config key for explicit plugin module imports
+- Multi-input file support via synthetic umbrella header with automatic prefix filtering
+- `toml` optional dependency group (`pip install headerkit[toml]`) for TOML config support on Python 3.10
 - Integration roundtrip tests for ctypes, Cython, Lua, prompt, and diff writers: full `libclang → IR → writer output` pipeline coverage for each writer, exercising structs, enums, functions, typedefs, constants, anonymous types, and empty headers.
 - Integration smoke tests for all seven writers against real-world library headers (sqlite3, zlib, lua, curl, SDL2) in `test_real_headers.py`.
 - `test_unknown_declaration_kind` for JSON writer's `"unknown"` fallback path (previously untested code path)
@@ -243,7 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[0.7.4]: https://github.com/axiomantic/headerkit/compare/v0.7.3...v0.7.4
+[0.8.0]: https://github.com/axiomantic/headerkit/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/axiomantic/headerkit/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/axiomantic/headerkit/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/axiomantic/headerkit/compare/v0.7.0...v0.7.1

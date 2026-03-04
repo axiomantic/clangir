@@ -231,3 +231,25 @@ def _ensure_backends_loaded() -> None:
         import warnings
 
         warnings.warn(f"No parser backends available. {hint}", stacklevel=2)
+
+
+def _load_backend_plugins() -> None:
+    """Load backend plugins registered via entry points.
+
+    Called explicitly by the CLI before invoking the backend.
+    NOT called from _ensure_backends_loaded() to preserve test hermeticity.
+
+    Plugin authoring contract: the entry point value must be a module path.
+    ep.load() imports the module, which calls register_backend() at module bottom.
+    Backend registration silently replaces existing backends with the same name.
+    """
+    import importlib.metadata
+
+    _ensure_backends_loaded()
+    for ep in importlib.metadata.entry_points(group="headerkit.backends"):
+        try:
+            ep.load()
+        except (ImportError, ValueError) as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Failed to load backend plugin %r: %s", ep.name, exc)

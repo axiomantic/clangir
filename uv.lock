@@ -178,7 +178,7 @@ wheels = [
 
 [[package]]
 name = "headerkit"
-version = "0.7.4"
+version = "0.8.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -191,6 +191,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 docs = [
     { name = "mike" },
@@ -206,10 +207,13 @@ test = [
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
+toml = [
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "headerkit", extras = ["test", "lint", "docs"], marker = "extra == 'dev'" },
+    { name = "headerkit", extras = ["test", "lint", "docs", "toml"], marker = "extra == 'dev'" },
     { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
@@ -218,8 +222,9 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-timeout", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'lint'" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'toml'", specifier = ">=1.1.0" },
 ]
-provides-extras = ["test", "lint", "docs", "dev"]
+provides-extras = ["toml", "test", "lint", "docs", "dev"]
 
 [[package]]
 name = "idna"

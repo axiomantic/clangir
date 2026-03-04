@@ -273,3 +273,26 @@ def _ensure_writers_loaded() -> None:
     import headerkit.writers.json  # noqa: F401
     import headerkit.writers.lua  # noqa: F401
     import headerkit.writers.prompt  # noqa: F401
+
+
+def _load_writer_plugins() -> None:
+    """Load writer plugins registered via entry points.
+
+    Called explicitly by the CLI before invoking writers.
+    NOT called from _ensure_writers_loaded() to preserve test hermeticity.
+
+    Plugin authoring contract: the entry point value must be a module path.
+    ep.load() imports the module, which calls register_writer() at module bottom.
+    Note: register_writer() raises ValueError on duplicate names (unlike register_backend
+    which silently replaces). Plugin authors must use unique names.
+    """
+    import importlib.metadata
+
+    _ensure_writers_loaded()
+    for ep in importlib.metadata.entry_points(group="headerkit.writers"):
+        try:
+            ep.load()
+        except (ImportError, ValueError) as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Failed to load writer plugin %r: %s", ep.name, exc)

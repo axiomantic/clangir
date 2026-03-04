@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "headerkit"
-version = "0.7.4"
+version = "0.8.0"
 description = "C/C++ header analysis toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more"
 readme = "README.md"
 license = "MIT AND Apache-2.0 WITH LLVM-exception"
@@ -40,13 +40,15 @@ Issues = "https://github.com/axiomantic/headerkit/issues"
 Changelog = "https://github.com/axiomantic/headerkit/blob/main/CHANGELOG.md"
 
 [project.scripts]
+headerkit = "headerkit._cli:main"
 headerkit-install-libclang = "headerkit.install_libclang:main"
 
 [project.optional-dependencies]
+toml = ["tomli>=1.1.0; python_version < '3.11'"]
 test = ["pytest", "pytest-timeout"]
 lint = ["ruff", "mypy"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
-dev = ["headerkit[test,lint,docs]"]
+dev = ["headerkit[test,lint,docs,toml]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["headerkit"]
@@ -67,10 +69,19 @@ known-first-party = ["headerkit"]
 python_version = "3.10"
 strict = true
 
+[[tool.mypy.overrides]]
+module = "headerkit._config"
+warn_unused_ignores = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 60
 markers = [
     "libclang: tests requiring system libclang installation",
     "download: tests requiring network access to download headers",
+    "slow: marks tests as slow-running",
 ]
+
+[project.entry-points."headerkit.backends"]
+
+[project.entry-points."headerkit.writers"]
