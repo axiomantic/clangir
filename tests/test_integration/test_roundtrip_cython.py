@@ -9,6 +9,8 @@ ESCAPE analysis is documented inline per test class.
 
 from __future__ import annotations
 
+import textwrap
+
 import pytest
 
 from headerkit.backends import get_backend, is_backend_available
@@ -54,17 +56,32 @@ class TestCythonStructRoundtrip:
     def test_simple_struct(self, backend):
         """Named struct with two int fields."""
         output = parse_and_cython(backend, "struct Point { int x; int y; };")
-        assert output == ('cdef extern from "test.h":\n\n    cdef struct Point:\n        int x\n        int y\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Point:
+                    int x
+                    int y
+        """)
 
     def test_opaque_struct(self, backend):
         """Forward declaration (no fields) -- emits forward-decl form without colon."""
         output = parse_and_cython(backend, "struct Handle;")
-        assert output == ('cdef extern from "test.h":\n\n    cdef struct Handle\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Handle
+        """)
 
     def test_anonymous_struct(self, backend):
         """typedef struct { ... } Name -- anonymous inner struct resolved to typedef name."""
         output = parse_and_cython(backend, "typedef struct { int x; } MyPoint;")
-        assert output == ('cdef extern from "test.h":\n\n    ctypedef struct MyPoint:\n        int x\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                ctypedef struct MyPoint:
+                    int x
+        """)
         assert "(anonymous" not in output
         assert "(unnamed" not in output
 
@@ -91,17 +108,29 @@ class TestCythonFunctionRoundtrip:
     def test_simple_function(self, backend):
         """Two-parameter function with int return type."""
         output = parse_and_cython(backend, "int add(int a, int b);")
-        assert output == ('cdef extern from "test.h":\n\n    int add(int a, int b)\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                int add(int a, int b)
+        """)
 
     def test_void_function(self, backend):
         """void function with void parameter -- libclang strips the 'void' parameter."""
         output = parse_and_cython(backend, "void init(void);")
-        assert output == ('cdef extern from "test.h":\n\n    void init()\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                void init()
+        """)
 
     def test_pointer_param(self, backend):
         """Function with a pointer parameter -- pointer written as 'int* data' (no space before *)."""
         output = parse_and_cython(backend, "void process(int *data);")
-        assert output == ('cdef extern from "test.h":\n\n    void process(int* data)\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                void process(int* data)
+        """)
 
 
 # ===========================================================================
@@ -126,7 +155,13 @@ class TestCythonEnumRoundtrip:
     def test_simple_enum(self, backend):
         """Named enum -- values are emitted as names only (cython convention)."""
         output = parse_and_cython(backend, "enum Color { RED = 0, GREEN = 1 };")
-        assert output == ('cdef extern from "test.h":\n\n    cdef enum Color:\n        RED\n        GREEN\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef enum Color:
+                    RED
+                    GREEN
+        """)
 
     def test_typedef_enum(self, backend):
         """typedef enum -- libclang may separate the enum body and typedef alias.
@@ -138,7 +173,15 @@ class TestCythonEnumRoundtrip:
         # The typedef enum passes through the cycle-detection path in PxdWriter,
         # which emits blank separators between phases. The exact output has been
         # verified empirically by running the writer.
-        assert output == ('cdef extern from "test.h":\n\n\n\n    cdef enum Switch:\n        OFF\n        ON\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+
+
+                cdef enum Switch:
+                    OFF
+                    ON
+        """)
 
 
 # ===========================================================================
@@ -162,14 +205,22 @@ class TestCythonTypedefRoundtrip:
     def test_simple_typedef(self, backend):
         """Simple scalar typedef."""
         output = parse_and_cython(backend, "typedef unsigned int uint32;")
-        assert output == ('cdef extern from "test.h":\n\n    ctypedef unsigned int uint32\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                ctypedef unsigned int uint32
+        """)
 
     def test_function_pointer_typedef(self, backend):
         """Function pointer typedef -- parameter name may be stripped by libclang."""
         output = parse_and_cython(backend, "typedef void (*Callback)(int status);")
         # libclang strips parameter names from function pointer typedefs in some versions.
         # The writer emits the parameter type only ("int") without name ("status").
-        assert output == ('cdef extern from "test.h":\n\n    ctypedef void (*Callback)(int)\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                ctypedef void (*Callback)(int)
+        """)
 
 
 # ===========================================================================
@@ -197,19 +248,32 @@ class TestCythonKeywordCollision:
     def test_param_named_api(self, backend):
         """Parameter named 'api' -> 'api_' with NO C-name alias (params don't need alias)."""
         output = parse_and_cython(backend, "void set_api(int api);")
-        assert output == ('cdef extern from "test.h":\n\n    void set_api(int api_)\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                void set_api(int api_)
+        """)
         # Explicit negative assertion: parameters must NOT get the C-name alias form
         assert 'api_ "api"' not in output
 
     def test_param_named_gil(self, backend):
         """Parameter named 'gil' -> 'gil_' with NO C-name alias."""
         output = parse_and_cython(backend, "void configure(int gil);")
-        assert output == ('cdef extern from "test.h":\n\n    void configure(int gil_)\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                void configure(int gil_)
+        """)
 
     def test_field_named_namespace(self, backend):
         """Struct field named 'namespace' -> 'namespace_ \"namespace\"' WITH C-name alias."""
         output = parse_and_cython(backend, "struct Config { int namespace; };")
-        assert output == ('cdef extern from "test.h":\n\n    cdef struct Config:\n        int namespace_ "namespace"\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Config:
+                    int namespace_ "namespace"
+        """)
 
     def test_field_named_public(self, backend):
         """Struct field named 'public' -> 'public_ \"public\"' WITH C-name alias.
@@ -220,7 +284,12 @@ class TestCythonKeywordCollision:
             output = parse_and_cython(backend, "struct Flags { int public; };")
         except RuntimeError:
             pytest.skip("libclang rejects 'public' as C field name in this config")
-        assert output == ('cdef extern from "test.h":\n\n    cdef struct Flags:\n        int public_ "public"\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Flags:
+                    int public_ "public"
+        """)
 
 
 # ===========================================================================
@@ -250,22 +319,25 @@ class TestCythonEmptyAndEdgeCases:
     def test_empty_header(self, backend):
         """Empty C source -> extern block with 'pass'."""
         output = parse_and_cython(backend, "")
-        assert output == ('cdef extern from "test.h":\n    pass\n')
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+                pass
+        """)
 
     def test_complete_header(self, backend):
         """Struct + function + enum in one header -- all three must appear."""
         code = "struct Point { int x; int y; };\nint add(int a, int b);\nenum Color { RED = 0, GREEN = 1 };\n"
         output = parse_and_cython(backend, code)
-        assert output == (
-            'cdef extern from "test.h":\n'
-            "\n"
-            "    cdef struct Point:\n"
-            "        int x\n"
-            "        int y\n"
-            "\n"
-            "    int add(int a, int b)\n"
-            "\n"
-            "    cdef enum Color:\n"
-            "        RED\n"
-            "        GREEN\n"
-        )
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                cdef struct Point:
+                    int x
+                    int y
+
+                int add(int a, int b)
+
+                cdef enum Color:
+                    RED
+                    GREEN
+        """)

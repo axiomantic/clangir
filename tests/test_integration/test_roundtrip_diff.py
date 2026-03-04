@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import pytest
 
@@ -358,19 +359,19 @@ class TestDiffMarkdown:
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
 
-        expected = (
-            "# API Diff: baseline.h -> target.h\n"
-            "\n"
-            "## Summary\n"
-            "\n"
-            "| Category | Count |\n"
-            "|----------|-------|\n"
-            "| Breaking | 0 |\n"
-            "| Non-breaking | 0 |\n"
-            "| Total | 0 |\n"
-            "\n"
-            "No changes detected.\n"
-        )
+        expected = textwrap.dedent("""\
+            # API Diff: baseline.h -> target.h
+
+            ## Summary
+
+            | Category | Count |
+            |----------|-------|
+            | Breaking | 0 |
+            | Non-breaking | 0 |
+            | Total | 0 |
+
+            No changes detected.
+        """)
         assert md == expected
 
     def test_markdown_function_added(self, backend):
@@ -398,24 +399,24 @@ class TestDiffMarkdown:
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
 
-        expected = (
-            "# API Diff: baseline.h -> target.h\n"
-            "\n"
-            "## Summary\n"
-            "\n"
-            "| Category | Count |\n"
-            "|----------|-------|\n"
-            "| Breaking | 0 |\n"
-            "| Non-breaking | 1 |\n"
-            "| Total | 1 |\n"
-            "\n"
-            "## Non-Breaking Changes\n"
-            "\n"
-            "### function_added\n"
-            "\n"
-            "- **bar**: function 'bar' added\n"
-            "  - Target: `void bar()`\n"
-        )
+        expected = textwrap.dedent("""\
+            # API Diff: baseline.h -> target.h
+
+            ## Summary
+
+            | Category | Count |
+            |----------|-------|
+            | Breaking | 0 |
+            | Non-breaking | 1 |
+            | Total | 1 |
+
+            ## Non-Breaking Changes
+
+            ### function_added
+
+            - **bar**: function 'bar' added
+              - Target: `void bar()`
+        """)
         assert md == expected
 
     def test_markdown_function_removed(self, backend):
@@ -440,24 +441,24 @@ class TestDiffMarkdown:
         report = diff_headers(b, t)
         md = diff_to_markdown(report)
 
-        expected = (
-            "# API Diff: baseline.h -> target.h\n"
-            "\n"
-            "## Summary\n"
-            "\n"
-            "| Category | Count |\n"
-            "|----------|-------|\n"
-            "| Breaking | 1 |\n"
-            "| Non-breaking | 0 |\n"
-            "| Total | 1 |\n"
-            "\n"
-            "## Breaking Changes\n"
-            "\n"
-            "### function_removed\n"
-            "\n"
-            "- **bar**: function 'bar' removed\n"
-            "  - Baseline: `void bar()`\n"
-        )
+        expected = textwrap.dedent("""\
+            # API Diff: baseline.h -> target.h
+
+            ## Summary
+
+            | Category | Count |
+            |----------|-------|
+            | Breaking | 1 |
+            | Non-breaking | 0 |
+            | Total | 1 |
+
+            ## Breaking Changes
+
+            ### function_removed
+
+            - **bar**: function 'bar' removed
+              - Baseline: `void bar()`
+        """)
         assert md == expected
 
 
@@ -519,24 +520,24 @@ class TestDiffWriterClass:
         writer = DiffWriter(baseline=b, format="markdown")
         md = writer.write(t)
 
-        expected = (
-            "# API Diff: baseline.h -> target.h\n"
-            "\n"
-            "## Summary\n"
-            "\n"
-            "| Category | Count |\n"
-            "|----------|-------|\n"
-            "| Breaking | 0 |\n"
-            "| Non-breaking | 1 |\n"
-            "| Total | 1 |\n"
-            "\n"
-            "## Non-Breaking Changes\n"
-            "\n"
-            "### function_added\n"
-            "\n"
-            "- **bar**: function 'bar' added\n"
-            "  - Target: `void bar()`\n"
-        )
+        expected = textwrap.dedent("""\
+            # API Diff: baseline.h -> target.h
+
+            ## Summary
+
+            | Category | Count |
+            |----------|-------|
+            | Breaking | 0 |
+            | Non-breaking | 1 |
+            | Total | 1 |
+
+            ## Non-Breaking Changes
+
+            ### function_added
+
+            - **bar**: function 'bar' added
+              - Target: `void bar()`
+        """)
         assert md == expected
 
     def test_writer_no_baseline_treats_all_as_additions(self, backend):

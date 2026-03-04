@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import pytest
 
@@ -37,27 +38,43 @@ class TestPromptCompact:
     def test_struct(self, backend):
         """Struct with two int fields renders in compact one-liner form."""
         output = parse_and_prompt(backend, "struct Point { int x; int y; };", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nSTRUCT Point {x:int, y:int}\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            STRUCT Point {x:int, y:int}
+        """)
 
     def test_function(self, backend):
         """Function declaration with two int parameters renders as FUNC line."""
         output = parse_and_prompt(backend, "int add(int a, int b);", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nFUNC add(a:int, b:int) -> int\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            FUNC add(a:int, b:int) -> int
+        """)
 
     def test_void_function(self, backend):
         """Void function with no parameters renders with empty param list."""
         output = parse_and_prompt(backend, "void init(void);", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nFUNC init() -> void\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            FUNC init() -> void
+        """)
 
     def test_enum(self, backend):
         """Enum with two named values renders as ENUM line."""
         output = parse_and_prompt(backend, "enum Color { RED = 0, GREEN = 1 };", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nENUM Color: RED=0, GREEN=1\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            ENUM Color: RED=0, GREEN=1
+        """)
 
     def test_integer_macro(self, backend):
         """Integer macro renders as CONST line before the function."""
         output = parse_and_prompt(backend, "#define MAX_SIZE 1024\nvoid func(void);", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nCONST MAX_SIZE=1024\nFUNC func() -> void\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            CONST MAX_SIZE=1024
+            FUNC func() -> void
+        """)
 
     def test_function_pointer_typedef(self, backend):
         """Function pointer typedef renders as CALLBACK line, not TYPEDEF.
@@ -66,12 +83,17 @@ class TestPromptCompact:
         parameters, so the param appears as bare type (int) without a name.
         """
         output = parse_and_prompt(backend, "typedef void (*Callback)(int status);", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\nCALLBACK Callback(int) -> void\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+            CALLBACK Callback(int) -> void
+        """)
 
     def test_empty_header(self, backend):
         """Empty source produces only the header comment line."""
         output = parse_and_prompt(backend, "", verbosity="compact")
-        assert output == "// test.h (headerkit compact)\n"
+        assert output == textwrap.dedent("""\
+            // test.h (headerkit compact)
+        """)
 
 
 class TestPromptStandard:
@@ -86,14 +108,25 @@ class TestPromptStandard:
     def test_struct(self, backend):
         """Struct with two int fields renders in standard YAML-like form."""
         output = parse_and_prompt(backend, "struct Point { int x; int y; };", verbosity="standard")
-        assert output == (
-            "# test.h (headerkit standard)\n\nstructs:\n  Point:\n    fields:\n      x: int\n      y: int\n"
-        )
+        assert output == textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            structs:
+              Point:
+                fields:
+                  x: int
+                  y: int
+        """)
 
     def test_function(self, backend):
         """Function declaration with two int params renders under functions section."""
         output = parse_and_prompt(backend, "int add(int a, int b);", verbosity="standard")
-        assert output == ("# test.h (headerkit standard)\n\nfunctions:\n  add: (a: int, b: int) -> int\n")
+        assert output == textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            functions:
+              add: (a: int, b: int) -> int
+        """)
 
     def test_callback(self, backend):
         """Function pointer typedef renders under callbacks section.
@@ -102,12 +135,19 @@ class TestPromptStandard:
         parameters, so the param appears as bare type (int) without a name.
         """
         output = parse_and_prompt(backend, "typedef void (*on_event_fn)(int code);", verbosity="standard")
-        assert output == ("# test.h (headerkit standard)\n\ncallbacks:\n  on_event_fn: (int) -> void\n")
+        assert output == textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            callbacks:
+              on_event_fn: (int) -> void
+        """)
 
     def test_empty_header(self, backend):
         """Empty source produces only the header comment line."""
         output = parse_and_prompt(backend, "", verbosity="standard")
-        assert output == "# test.h (headerkit standard)\n"
+        assert output == textwrap.dedent("""\
+            # test.h (headerkit standard)
+        """)
 
 
 class TestPromptVerbose:
