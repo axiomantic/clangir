@@ -5,9 +5,10 @@
 [![PyPI](https://img.shields.io/pypi/v/headerkit)](https://pypi.org/project/headerkit/)
 [![Python](https://img.shields.io/pypi/pyversions/headerkit)](https://pypi.org/project/headerkit/)
 
-A general-purpose C/C++ header analysis toolkit. Parse once with libclang, output to any format.
+Parse C/C++ headers with libclang and emit output in any format.
 
-headerkit carries the torch for [ctypesgen2](https://github.com/ctypesgen/ctypesgen) as a ctypes binding generator and serves as the new engine behind [autopxd2](https://github.com/elijahr/autopxd2) for Cython .pxd generation.
+headerkit is the parser engine behind [ctypesgen2](https://github.com/ctypesgen/ctypesgen) (ctypes bindings)
+and [autopxd2](https://github.com/elijahr/autopxd2) (Cython .pxd generation).
 
 ## Installation
 
@@ -15,15 +16,16 @@ headerkit carries the torch for [ctypesgen2](https://github.com/ctypesgen/ctypes
 pip install headerkit
 ```
 
-Requires Python 3.10+. No Python package dependencies.
+Requires Python 3.10+. No Python runtime dependencies.
 
 Then install libclang:
 
 ```bash
-headerkit-install-libclang   # bundled installer
+headerkit install-libclang     # subcommand form
+headerkit-install-libclang     # standalone script alias
 ```
 
-Or install manually:
+Or install it manually:
 
 | Platform | Command |
 |----------|---------|
@@ -34,7 +36,7 @@ Or install manually:
 
 Supports LLVM 18, 19, 20, and 21.
 
-## Quick Start
+## Quick start
 
 ```bash
 # CFFI bindings to stdout
@@ -50,7 +52,7 @@ headerkit mylib.h -w cython:mylib.pxd -w json:ir.json
 headerkit mylib.h -I /usr/local/include -D VERSION=2 -w cffi
 ```
 
-## CLI Reference
+## CLI reference
 
 ```
 headerkit [options] FILE [FILE ...]
@@ -66,25 +68,25 @@ Multiple input files are merged into a single umbrella header before parsing.
 | `-I DIR` | Add include directory (repeatable) |
 | `-D MACRO[=VALUE]` | Define preprocessor macro (repeatable) |
 | `--backend-arg ARG` | Pass extra argument to the backend (repeatable) |
-| `-w WRITER[:FILE]` | Route writer output to a file, or omit `:FILE` for stdout (repeatable) |
+| `-w WRITER[:FILE]` | Write output to a file, or omit `:FILE` for stdout (repeatable) |
 | `--writer-opt WRITER:KEY=VALUE` | Pass an option to a writer (repeatable) |
 | `--config PATH` | Load config from `PATH` instead of searching |
 | `--no-config` | Skip all config file loading |
 | `--version` | Print version and exit |
 
-At most one `-w` flag may omit the output path (multiple stdout writers is an error).
+At most one `-w` flag may omit the output path. Multiple writers sending to stdout is an error.
 
 ### Writers
 
-| Writer | Output | Description |
-|--------|--------|-------------|
+| Writer | Output | Notes |
+|--------|--------|-------|
 | `cffi` | CFFI cdef strings | Declarations for `ffibuilder.cdef()` |
-| `ctypes` | Python modules | Complete ctypes binding modules |
-| `cython` | .pxd files | Cython declaration files with C++ support |
-| `diff` | JSON or Markdown | API compatibility reports between header versions |
-| `json` | JSON | Full IR serialization for inspection and tooling |
+| `ctypes` | Python module | Complete ctypes binding module |
+| `cython` | .pxd file | Cython declaration file with C++ support |
+| `diff` | JSON or Markdown | API compatibility report between two header versions |
+| `json` | JSON | Full IR serialization |
 | `lua` | LuaJIT FFI bindings | `ffi.cdef()` declarations for LuaJIT |
-| `prompt` | Compact text | Token-optimized IR output for LLM context windows |
+| `prompt` | Compact text | Token-optimized IR for LLM context windows |
 
 Pass writer options with `--writer-opt`:
 
@@ -93,9 +95,10 @@ headerkit mylib.h -w cffi --writer-opt cffi:exclude_patterns=^__
 headerkit mylib.h -w ctypes:mylib.py --writer-opt ctypes:lib_name=mylib
 ```
 
-### Config File
+### Config file
 
-headerkit searches from the current directory upward for `.headerkit.toml`, or for `[tool.headerkit]` in `pyproject.toml`. Use `--no-config` to skip this.
+headerkit searches from the current directory upward for `.headerkit.toml`, or for a
+`[tool.headerkit]` section in `pyproject.toml`. Use `--no-config` to skip this.
 
 ```toml
 # .headerkit.toml
@@ -111,11 +114,11 @@ exclude_patterns = ["^__", "^_internal"]
 lib_name = "mylib"
 ```
 
-Config values serve as defaults; command-line flags override them.
+Command-line flags override config file values.
 
 ### Plugins
 
-Third-party backends and writers self-register via Python entry points:
+Register third-party backends and writers via Python entry points:
 
 ```toml
 # In your package's pyproject.toml
@@ -126,7 +129,7 @@ mybackend = "mypkg.backend:MyBackend"
 mywriter = "mypkg.writer:MyWriter"
 ```
 
-Plugins can also be loaded explicitly:
+Or load plugins explicitly from the config file:
 
 ```toml
 # .headerkit.toml
@@ -150,17 +153,17 @@ writer = get_writer("cffi")
 print(writer.write(header))
 ```
 
-See the [API reference](https://axiomantic.github.io/headerkit/) for full documentation of backends, writers, and the IR.
+See the [API reference](https://axiomantic.github.io/headerkit/) for full documentation of
+backends, writers, and the IR.
 
 ## Architecture
 
-headerkit separates parsing from output generation. A backend produces a language-neutral IR, and writers consume that IR to generate output.
+A backend parses headers and produces a language-neutral IR. Writers consume that IR and
+produce output. They are independent; any backend feeds any writer.
 
 ```
 C/C++ headers --> [backend] --> IR --> [writer] --> output
 ```
-
-Add a backend: all writers benefit. Add a writer: all backends feed it.
 
 ## Development
 

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from headerkit._cli import _build_umbrella, _parse_defines, _parse_writer_specs
+from headerkit._cli import _build_umbrella, _parse_defines, _parse_writer_specs, main
 from headerkit.ir import Header
 
 # =============================================================================
@@ -414,3 +414,42 @@ class TestMain:
         assert result == 0
         mock_load_backends.assert_called_once()
         mock_load_writers.assert_called_once()
+
+    def test_main_install_libclang_routes_to_subcommand(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """'headerkit install-libclang --skip-verify' routes to install_libclang.main with remaining args."""
+        monkeypatch.setattr(sys, "argv", ["headerkit", "install-libclang", "--skip-verify"])
+        with patch("headerkit.install_libclang.main", return_value=0) as mock_install_main:
+            result = main()
+        assert result == 0
+        mock_install_main.assert_called_once_with(["--skip-verify"])
+
+    def test_main_install_libclang_help_routes_to_subcommand(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """'headerkit install-libclang --help' routes to install_libclang.main with ['--help']."""
+        monkeypatch.setattr(sys, "argv", ["headerkit", "install-libclang", "--help"])
+        with (
+            patch("headerkit.install_libclang.main", side_effect=SystemExit(0)) as mock_install_main,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 0
+        mock_install_main.assert_called_once_with(["--help"])
+
+    def test_main_help_contains_install_libclang(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """'headerkit --help' output mentions install-libclang."""
+        monkeypatch.setattr(sys, "argv", ["headerkit", "--help"])
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        help_output = captured.out or captured.err
+        assert "install-libclang" in help_output

@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="headerkit",
         description="Parse C/C++ header files and emit output via configurable writers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)",
     )
     parser.add_argument(
         "input_files",
