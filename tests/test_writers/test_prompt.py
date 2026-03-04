@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import pytest
 
@@ -39,7 +40,7 @@ class TestCompactStruct:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "STRUCT Point {x:int, y:int}" in output
+        assert output == "// test.h (headerkit compact)\nSTRUCT Point {x:int, y:int}\n"
 
     def test_opaque_struct(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -47,7 +48,7 @@ class TestCompactStruct:
         header = Header("test.h", [Struct("Handle", [])])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "STRUCT Handle (opaque)" in output
+        assert output == "// test.h (headerkit compact)\nSTRUCT Handle (opaque)\n"
 
     def test_packed_struct(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -58,7 +59,7 @@ class TestCompactStruct:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "STRUCT __packed Packed {x:int}" in output
+        assert output == "// test.h (headerkit compact)\nSTRUCT __packed Packed {x:int}\n"
 
     def test_union(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -75,7 +76,7 @@ class TestCompactStruct:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "UNION Data {i:int, f:float}" in output
+        assert output == "// test.h (headerkit compact)\nUNION Data {i:int, f:float}\n"
 
     def test_bitfield(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -91,7 +92,7 @@ class TestCompactStruct:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "flags:uint32:4b" in output
+        assert output == "// test.h (headerkit compact)\nSTRUCT Flags {flags:uint32:4b}\n"
 
 
 class TestCompactEnum:
@@ -115,7 +116,7 @@ class TestCompactEnum:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "ENUM Status: OK=0, ERROR=1, TIMEOUT=2" in output
+        assert output == "// test.h (headerkit compact)\nENUM Status: OK=0, ERROR=1, TIMEOUT=2\n"
 
     def test_enum_with_auto_values(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -126,7 +127,7 @@ class TestCompactEnum:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "RED, GREEN=1" in output
+        assert output == "// test.h (headerkit compact)\nENUM Color: RED, GREEN=1\n"
 
 
 class TestCompactFunction:
@@ -150,7 +151,7 @@ class TestCompactFunction:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "FUNC open(path:const char*, flags:int) -> Handle*" in output
+        assert output == "// test.h (headerkit compact)\nFUNC open(path:const char*, flags:int) -> Handle*\n"
 
     def test_variadic_function(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -168,7 +169,7 @@ class TestCompactFunction:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "FUNC printf(fmt:const char*, ...) -> int" in output
+        assert output == "// test.h (headerkit compact)\nFUNC printf(fmt:const char*, ...) -> int\n"
 
     def test_void_function(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -176,7 +177,7 @@ class TestCompactFunction:
         header = Header("test.h", [Function("init", CType("void"), [])])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "FUNC init() -> void" in output
+        assert output == "// test.h (headerkit compact)\nFUNC init() -> void\n"
 
 
 class TestCompactConstant:
@@ -188,7 +189,7 @@ class TestCompactConstant:
         header = Header("test.h", [Constant("MYLIB_VERSION", 42)])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "CONST MYLIB_VERSION=42" in output
+        assert output == "// test.h (headerkit compact)\nCONST MYLIB_VERSION=42\n"
 
     def test_constant_string_value(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -196,7 +197,7 @@ class TestCompactConstant:
         header = Header("test.h", [Constant("VERSION", '"1.0"')])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert 'CONST VERSION="1.0"' in output
+        assert output == '// test.h (headerkit compact)\nCONST VERSION="1.0"\n'
 
     def test_constant_no_value(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -204,7 +205,7 @@ class TestCompactConstant:
         header = Header("test.h", [Constant("UNKNOWN", None)])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "CONST UNKNOWN=?" in output
+        assert output == "// test.h (headerkit compact)\nCONST UNKNOWN=?\n"
 
 
 class TestCompactTypedef:
@@ -219,7 +220,7 @@ class TestCompactTypedef:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "TYPEDEF myint = unsigned int" in output
+        assert output == "// test.h (headerkit compact)\nTYPEDEF myint = unsigned int\n"
 
     def test_function_pointer_typedef_as_callback(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -241,7 +242,30 @@ class TestCompactTypedef:
         )
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "CALLBACK EventCb(id:int, ctx:void*) -> void" in output
+        assert output == "// test.h (headerkit compact)\nCALLBACK EventCb(id:int, ctx:void*) -> void\n"
+
+
+class TestCompactPointerToFunctionPointerTypedef:
+    """Typedef of Pointer(FunctionPointer(...)) vs direct FunctionPointer."""
+
+    def test_pointer_to_function_pointer_typedef(self) -> None:
+        """Typedef of Pointer(FunctionPointer(...)) should be TYPEDEF, not CALLBACK.
+
+        Only a direct FunctionPointer underlying type triggers the CALLBACK
+        rendering. A Pointer wrapping a FunctionPointer falls through to
+        the generic TYPEDEF path in _typedef_compact.
+        """
+        from headerkit.writers.prompt import PromptWriter
+
+        fp = FunctionPointer(CType("void"), [Parameter("data", Pointer(CType("void")))])
+        td = Typedef("EventCb", Pointer(fp))
+        header = Header(path="test.h", declarations=[td])
+        writer = PromptWriter(verbosity="compact")
+        result = writer.write(header)
+        lines = result.splitlines()
+        assert lines[0] == "// test.h (headerkit compact)"
+        assert lines[1].startswith("TYPEDEF")
+        assert "CALLBACK" not in result
 
 
 class TestCompactVariable:
@@ -253,7 +277,7 @@ class TestCompactVariable:
         header = Header("test.h", [Variable("count", CType("int"))])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert "VAR count:int" in output
+        assert output == "// test.h (headerkit compact)\nVAR count:int\n"
 
 
 class TestCompactHeader:
@@ -265,7 +289,7 @@ class TestCompactHeader:
         header = Header("mylib.h", [])
         writer = PromptWriter(verbosity="compact")
         output = writer.write(header)
-        assert output.startswith("// mylib.h (headerkit compact)\n")
+        assert output == "// mylib.h (headerkit compact)\n"
 
 
 # =============================================================================
@@ -282,7 +306,7 @@ class TestStandardMode:
         header = Header("mylib.h", [])
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert output.startswith("# mylib.h (headerkit standard)\n")
+        assert output == "# mylib.h (headerkit standard)\n"
 
     def test_sections_grouped_by_type(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -314,12 +338,13 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "functions:" in output
-        assert "constants:" not in output
-        assert "enums:" not in output
-        assert "structs:" not in output
-        assert "typedefs:" not in output
-        assert "variables:" not in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            functions:
+              foo: () -> void
+        """)
+        assert output == expected
 
     def test_all_parameter_names_present(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -339,8 +364,13 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "x: int" in output
-        assert "y: float" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            functions:
+              foo: (x: int, y: float) -> int
+        """)
+        assert output == expected
 
     def test_struct_fields_with_types(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -356,9 +386,16 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "fields:" in output
-        assert "x: int" in output
-        assert "y: int" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            structs:
+              Point:
+                fields:
+                  x: int
+                  y: int
+        """)
+        assert output == expected
 
     def test_opaque_struct(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -366,7 +403,14 @@ class TestStandardMode:
         header = Header("test.h", [Struct("Handle", [])])
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "opaque: true" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            structs:
+              Handle:
+                opaque: true
+        """)
+        assert output == expected
 
     def test_packed_struct(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -377,7 +421,16 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "packed: true" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            structs:
+              Packed:
+                packed: true
+                fields:
+                  x: int
+        """)
+        assert output == expected
 
     def test_bitfield_in_standard(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -393,7 +446,15 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "uint32 (4 bits)" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            structs:
+              Flags:
+                fields:
+                  flags: uint32 (4 bits)
+        """)
+        assert output == expected
 
     def test_callback_section(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -412,8 +473,13 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "callbacks:" in output
-        assert "typedefs:" not in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            callbacks:
+              Callback: (data: void*) -> void
+        """)
+        assert output == expected
 
     def test_variadic_function_standard(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -431,8 +497,13 @@ class TestStandardMode:
         )
         writer = PromptWriter(verbosity="standard")
         output = writer.write(header)
-        assert "..." in output
-        assert "fmt" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            functions:
+              printf: (fmt: const char*, ...) -> int
+        """)
+        assert output == expected
 
 
 # =============================================================================
@@ -464,7 +535,17 @@ class TestVerboseMode:
         output = writer.write(header)
         parsed = json.loads(output)
         assert isinstance(parsed, dict)
+        assert parsed["path"] == "test.h"
         assert "declarations" in parsed
+        assert len(parsed["declarations"]) == 2
+        # Verify declaration structure
+        point_decl = parsed["declarations"][0]
+        assert point_decl["kind"] == "struct"
+        assert point_decl["name"] == "Point"
+        assert len(point_decl["fields"]) == 2
+        fn_decl = parsed["declarations"][1]
+        assert fn_decl["kind"] == "function"
+        assert fn_decl["name"] == "make_point"
 
     def test_cross_references_present(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -490,8 +571,7 @@ class TestVerboseMode:
         # Point struct should have used_in referencing make_point
         point_decl = parsed["declarations"][0]
         assert point_decl["name"] == "Point"
-        assert "used_in" in point_decl
-        assert "make_point" in point_decl["used_in"]
+        assert point_decl["used_in"] == ["make_point"]
 
     def test_cross_references_via_pointer(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -513,8 +593,7 @@ class TestVerboseMode:
 
         handle_decl = parsed["declarations"][0]
         assert handle_decl["name"] == "Handle"
-        assert "used_in" in handle_decl
-        assert "get_handle" in handle_decl["used_in"]
+        assert handle_decl["used_in"] == ["get_handle"]
 
     def test_no_cross_refs_when_not_referenced(self) -> None:
         from headerkit.writers.prompt import PromptWriter
@@ -555,7 +634,7 @@ class TestPromptWriterGeneral:
         header = Header("test.h", [Constant("X", 1)])
         writer = PromptWriter()
         output = writer.write(header)
-        assert "// test.h (headerkit compact)" in output
+        assert output == "// test.h (headerkit compact)\nCONST X=1\n"
 
     def test_writer_protocol_compliance(self) -> None:
         from headerkit.writers import WriterBackend
@@ -582,7 +661,7 @@ class TestPromptWriterGeneral:
         writer = get_writer("prompt")
         header = Header("test.h", [Constant("X", 1)])
         output = writer.write(header)
-        assert "CONST X=1" in output
+        assert output == "// test.h (headerkit compact)\nCONST X=1\n"
 
     def test_via_registry_with_kwargs(self) -> None:
         from headerkit.writers import get_writer
@@ -590,10 +669,23 @@ class TestPromptWriterGeneral:
         writer = get_writer("prompt", verbosity="standard")
         header = Header("test.h", [Constant("X", 1)])
         output = writer.write(header)
-        assert "constants:" in output
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            constants:
+              X: 1
+        """)
+        assert output == expected
 
     def test_token_ordering(self) -> None:
-        """compact < standard < verbose token count for same header."""
+        """compact < standard < verbose token count for same header.
+
+        This is a characterization test for emergent ordering, not a strict
+        behavioral contract. The three verbosity tiers are designed to produce
+        increasingly detailed output, so compact should always be the shortest
+        and verbose the longest. If this test fails, it indicates a regression
+        in the relative density of the verbosity tiers.
+        """
         from headerkit.writers.prompt import PromptWriter
 
         header = Header(
@@ -626,11 +718,9 @@ class TestPromptWriterGeneral:
 
         assert len(compact) < len(standard) < len(verbose)
 
-    def test_mixed_declarations(self) -> None:
-        """Header with all declaration types renders in all modes."""
-        from headerkit.writers.prompt import PromptWriter
-
-        header = Header(
+    def _mixed_header(self) -> Header:
+        """Build a header with all seven declaration types."""
+        return Header(
             "test.h",
             [
                 Constant("VER", 1),
@@ -646,29 +736,62 @@ class TestPromptWriterGeneral:
             ],
         )
 
-        # Compact mode: verify ALL 7 declaration types appear
-        compact_output = PromptWriter(verbosity="compact").write(header)
-        assert "CONST VER=1" in compact_output
-        assert "ENUM E: A=0" in compact_output
-        assert "STRUCT S {x:int}" in compact_output
-        assert "FUNC f(a:int) -> void" in compact_output
-        assert "TYPEDEF T = int" in compact_output
-        assert "VAR v:int" in compact_output
-        assert "CALLBACK Cb(x:int) -> void" in compact_output
+    def test_mixed_declarations_compact(self) -> None:
+        """Compact mode renders all 7 declaration types."""
+        from headerkit.writers.prompt import PromptWriter
 
-        # Standard mode: verify ALL section headers present
-        standard_output = PromptWriter(verbosity="standard").write(header)
-        assert "constants:" in standard_output
-        assert "enums:" in standard_output
-        assert "structs:" in standard_output
-        assert "functions:" in standard_output
-        assert "typedefs:" in standard_output
-        assert "variables:" in standard_output
-        assert "callbacks:" in standard_output
+        output = PromptWriter(verbosity="compact").write(self._mixed_header())
+        expected = textwrap.dedent("""\
+            // test.h (headerkit compact)
+            CONST VER=1
+            ENUM E: A=0
+            STRUCT S {x:int}
+            FUNC f(a:int) -> void
+            TYPEDEF T = int
+            VAR v:int
+            CALLBACK Cb(x:int) -> void
+        """)
+        assert output == expected
 
-        # Verbose mode: verify valid JSON with all declarations
-        verbose_output = PromptWriter(verbosity="verbose").write(header)
-        parsed = json.loads(verbose_output)
+    def test_mixed_declarations_standard(self) -> None:
+        """Standard mode renders all section headers for 7 declaration types."""
+        from headerkit.writers.prompt import PromptWriter
+
+        output = PromptWriter(verbosity="standard").write(self._mixed_header())
+        expected = textwrap.dedent("""\
+            # test.h (headerkit standard)
+
+            constants:
+              VER: 1
+
+            enums:
+              E: {A: 0}
+
+            structs:
+              S:
+                fields:
+                  x: int
+
+            callbacks:
+              Cb: (x: int) -> void
+
+            functions:
+              f: (a: int) -> void
+
+            typedefs:
+              T: int
+
+            variables:
+              v: int
+        """)
+        assert output == expected
+
+    def test_mixed_declarations_verbose(self) -> None:
+        """Verbose mode serializes all 7 declaration types as valid JSON."""
+        from headerkit.writers.prompt import PromptWriter
+
+        output = PromptWriter(verbosity="verbose").write(self._mixed_header())
+        parsed = json.loads(output)
         assert len(parsed["declarations"]) == 7
         names = {d["name"] for d in parsed["declarations"]}
         assert names == {"VER", "E", "S", "f", "T", "v", "Cb"}

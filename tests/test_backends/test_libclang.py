@@ -37,12 +37,33 @@ from headerkit.ir import (
 libclang = pytest.mark.libclang
 
 
+@pytest.fixture(autouse=True)
+def _skip_if_no_libclang(request: pytest.FixtureRequest) -> None:
+    """Skip tests in @libclang-marked classes when system libclang is not available.
+
+    This fixture is autouse but only activates for tests within classes
+    that carry the ``@libclang`` marker.
+    """
+    marker = request.node.get_closest_marker("libclang")
+    if marker is not None and not is_system_libclang_available():
+        pytest.skip("System libclang not available")
+
+
 class TestImportability:
     """Tests that the module can be imported and basic functions work."""
 
     def test_module_imports(self):
-        """The libclang backend module can be imported."""
-        import headerkit.backends.libclang  # noqa: F401
+        """The libclang backend module exposes the expected public API."""
+        import headerkit.backends.libclang as mod
+
+        assert hasattr(mod, "LibclangBackend")
+        assert callable(mod.LibclangBackend)
+        assert hasattr(mod, "is_system_libclang_available")
+        assert callable(mod.is_system_libclang_available)
+        assert hasattr(mod, "get_system_include_dirs")
+        assert callable(mod.get_system_include_dirs)
+        assert hasattr(mod, "normalize_path")
+        assert callable(mod.normalize_path)
 
     def test_is_system_libclang_available_returns_bool(self):
         """is_system_libclang_available() returns a boolean."""
@@ -50,19 +71,37 @@ class TestImportability:
         assert isinstance(result, bool)
 
     def test_libclang_backend_class_exists(self):
-        """LibclangBackend class is importable."""
-        assert LibclangBackend is not None
+        """LibclangBackend class has expected attributes and methods."""
+        assert LibclangBackend.__name__ == "LibclangBackend"
+        assert hasattr(LibclangBackend, "parse")
+        assert callable(LibclangBackend.parse)
+        assert hasattr(LibclangBackend, "name")
+        assert hasattr(LibclangBackend, "supports_macros")
+        assert hasattr(LibclangBackend, "supports_cpp")
 
 
 class TestHelperFunctions:
     """Tests for helper functions that don't require libclang."""
 
     def test_get_libclang_search_paths_returns_list(self):
-        """_get_libclang_search_paths returns a list of strings."""
+        """_get_libclang_search_paths returns a non-empty list of strings on supported platforms."""
+        import sys
+
         paths = _get_libclang_search_paths()
         assert isinstance(paths, list)
+        # _get_libclang_search_paths() returns hardcoded candidate paths derived from
+        # platform-specific install conventions (Homebrew, APT, LLVM releases, etc.).
+        # Exact paths vary by OS and installed LLVM versions, so we cannot enumerate
+        # the complete expected set. We assert count >=1 and verify each entry's structure.
+        assert len(paths) >= 1, "Expected at least one libclang search path"
         for path in paths:
             assert isinstance(path, str)
+            assert len(path) > 0, "Search path should not be empty"
+            # Each path should contain a libclang library filename
+            if sys.platform == "win32":
+                assert "libclang" in path.lower(), f"Expected libclang in path: {path}"
+            else:
+                assert "libclang" in path, f"Expected libclang in path: {path}"
 
     def test_is_system_header_usr_include(self):
         """System header detection for /usr/include."""
@@ -95,7 +134,14 @@ class TestHelperFunctions:
         assert _is_system_header(r"C:\some\path\clang\include\stddef.h") is True
 
     def test_is_umbrella_header_true(self):
-        """Umbrella header detection when many includes, few declarations."""
+        """Umbrella header detection when many includes, few declarations.
+
+        Threshold mechanics (default threshold=3):
+        - Umbrella if: non-system project includes >= threshold AND declarations < threshold
+        - _is_system_header filters out system paths (e.g. /usr/include/*)
+        - All 4 paths here are non-system (/home/user/lib/*), so project_includes=4 >= 3
+        - declarations=0 < 3, so this is an umbrella header
+        """
         header = Header(
             path="umbrella.h",
             declarations=[],
@@ -109,7 +155,13 @@ class TestHelperFunctions:
         assert _is_umbrella_header(header) is True
 
     def test_is_umbrella_header_false_many_decls(self):
-        """Non-umbrella header with declarations."""
+        """Non-umbrella header with declarations.
+
+        Threshold mechanics (default threshold=3):
+        - project includes=1 (only /home/user/lib/a.h), which is < 3
+        - declarations=4, which is >= 3
+        - Fails both criteria, so NOT an umbrella header
+        """
         header = Header(
             path="normal.h",
             declarations=[
@@ -120,6 +172,26 @@ class TestHelperFunctions:
             ],
             included_headers={"/home/user/lib/a.h"},
         )
+        assert _is_umbrella_header(header) is False
+
+    def test_is_umbrella_header_system_headers_excluded(self):
+        """_is_system_header influences umbrella detection by filtering system includes.
+
+        System headers (e.g. /usr/include/*) are not counted as project includes,
+        so a header that includes many system headers but few project headers
+        is NOT considered an umbrella header.
+        """
+        header = Header(
+            path="not_umbrella.h",
+            declarations=[],
+            included_headers={
+                "/usr/include/stdio.h",
+                "/usr/include/stdlib.h",
+                "/usr/include/string.h",
+                "/usr/include/math.h",
+            },
+        )
+        # All includes are system headers, so project_includes=0, not >= threshold
         assert _is_umbrella_header(header) is False
 
     def test_deduplicate_declarations_removes_duplicates(self):
@@ -320,11 +392,6 @@ class TestLibclangSearchPathsWindows:
 class TestLibclangBackendProperties:
     """Tests for LibclangBackend properties (require libclang)."""
 
-    @pytest.fixture(autouse=True)
-    def skip_if_no_libclang(self):
-        if not is_system_libclang_available():
-            pytest.skip("System libclang not available")
-
     def test_backend_name(self):
         backend = LibclangBackend()
         assert backend.name == "libclang"
@@ -341,11 +408,6 @@ class TestLibclangBackendProperties:
 @libclang
 class TestLibclangParsing:
     """Tests for parsing C code with the libclang backend."""
-
-    @pytest.fixture(autouse=True)
-    def skip_if_no_libclang(self):
-        if not is_system_libclang_available():
-            pytest.skip("System libclang not available")
 
     @pytest.fixture
     def backend(self):
@@ -581,11 +643,6 @@ class TestLibclangParsing:
 class TestBackendRegistration:
     """Test that the backend registers itself when libclang is available."""
 
-    @pytest.fixture(autouse=True)
-    def skip_if_no_libclang(self):
-        if not is_system_libclang_available():
-            pytest.skip("System libclang not available")
-
     def test_backend_registered(self):
         """If libclang is available, the backend should be registered."""
         from headerkit.backends import is_backend_available
@@ -651,6 +708,9 @@ class TestGetSystemIncludeDirs:
         first = get_system_include_dirs()
         second = get_system_include_dirs()
         assert first is second
+        # On systems where clang is available, verify the cache contains real data
+        if shutil.which("clang") is not None:
+            assert len(first) > 0, "clang is available but cached result is empty"
 
     def test_c_and_cxx_cached_separately(self):
         """C and C++ include dirs are cached independently."""
@@ -730,11 +790,6 @@ class TestHeaderInclusionTracking:
     Adapted from autopxd2 test_libclang_includes.py::TestHeaderInclusionTracking.
     """
 
-    @pytest.fixture(autouse=True)
-    def skip_if_no_libclang(self):
-        if not is_system_libclang_available():
-            pytest.skip("System libclang not available")
-
     @pytest.fixture
     def backend(self):
         return LibclangBackend()
@@ -772,9 +827,15 @@ class TestHeaderInclusionTracking:
         # stdio.h typically includes other headers transitively
         code = "#include <stdio.h>\nvoid test(void);\n"
         header = backend.parse(code, "test.h")
-        # Should have stdio.h plus its transitive includes
+        # stdio.h must be present.
         assert any("stdio.h" in h for h in header.included_headers)
-        assert len(header.included_headers) > 1
+        # stdio.h on every supported platform (Linux, macOS, Windows) transitively
+        # pulls in at least one additional system header (e.g. stddef.h, bits/types.h,
+        # _stdio.h, corecrt.h, etc.). The exact set is environment-dependent, so we
+        # only assert the count is >=2 rather than enumerating specific transitive files.
+        assert len(header.included_headers) >= 2, (
+            f"Expected transitive includes beyond stdio.h, got: {header.included_headers}"
+        )
 
 
 @libclang
@@ -785,11 +846,6 @@ class TestTypeQualifierParsing:
     libclang backend correctly extracts const, volatile, and handles
     _Atomic / __restrict qualifiers in the IR.
     """
-
-    @pytest.fixture(autouse=True)
-    def skip_if_no_libclang(self):
-        if not is_system_libclang_available():
-            pytest.skip("System libclang not available")
 
     @pytest.fixture
     def backend(self):
@@ -915,8 +971,6 @@ class TestMacroParsing:
     """Tests for macro parsing via libclang backend."""
 
     def setup_method(self):
-        if not is_system_libclang_available():
-            pytest.skip("libclang not available")
         self.backend = LibclangBackend()
 
     def test_simple_integer_macro(self):
@@ -925,7 +979,9 @@ class TestMacroParsing:
         constants = [d for d in header.declarations if isinstance(d, Constant)]
         size_consts = [c for c in constants if c.name == "SIZE"]
         assert len(size_consts) == 1
-        assert size_consts[0].value == 100 or size_consts[0].value == "100"
+        # _analyze_single_token parses "100" via int() and returns int value
+        assert size_consts[0].value == 100
+        assert isinstance(size_consts[0].value, int)
 
     def test_hex_macro(self):
         code = "#define MASK 0xFF\nvoid f(void);\n"
@@ -941,21 +997,24 @@ class TestMacroParsing:
         constants = [d for d in header.declarations if isinstance(d, Constant)]
         err_consts = [c for c in constants if c.name == "ERROR_CODE"]
         assert len(err_consts) == 1
-        # Negative macro is a multi-token expression; value is None but type is int
+        # Negative macro is a multi-token expression ("-" and "1");
+        # _analyze_expression_tokens returns CType("int") with value=None
+        assert err_consts[0].value is None
         assert err_consts[0].type is not None
         assert err_consts[0].type.name == "int"
 
-    def test_string_macro_skipped_or_captured(self):
+    def test_string_macro_captured(self):
+        """String macros are captured as Constant with quoted value and const char type."""
         code = '#define VERSION "1.0"\nvoid f(void);\n'
         header = self.backend.parse(code, "test.h")
         constants = [d for d in header.declarations if isinstance(d, Constant)]
         ver_consts = [c for c in constants if c.name == "VERSION"]
-        # String macros may or may not be captured depending on implementation
-        # If captured, value should be the quoted string and type should be const char
-        if ver_consts:
-            assert ver_consts[0].value == '"1.0"'
-            assert ver_consts[0].type is not None
-            assert ver_consts[0].type.name == "char"
+        # _analyze_single_token detects string literals and returns CType("char", ["const"])
+        assert len(ver_consts) == 1
+        assert ver_consts[0].value == '"1.0"'
+        assert ver_consts[0].type is not None
+        assert ver_consts[0].type.name == "char"
+        assert "const" in ver_consts[0].type.qualifiers
 
     def test_function_like_macro_not_captured(self):
         code = "#define MAX(a,b) ((a)>(b)?(a):(b))\nvoid f(void);\n"

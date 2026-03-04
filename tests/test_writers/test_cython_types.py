@@ -15,17 +15,48 @@ from headerkit.writers._cython_types import (
 class TestCythonStdlibRegistry:
     """Tests for Cython standard library mappings."""
 
-    def test_stdlib_headers_not_empty(self) -> None:
-        assert "stdint.h" in CYTHON_STDLIB_HEADERS
-        assert "stdio.h" in CYTHON_STDLIB_HEADERS
+    def test_stdlib_headers_contain_expected_keys(self) -> None:
+        expected_headers = {
+            "stddef.h",
+            "stdint.h",
+            "stdio.h",
+            "stdlib.h",
+            "string.h",
+            "math.h",
+            "time.h",
+            "signal.h",
+            "errno.h",
+            "setjmp.h",
+            "locale.h",
+            "unistd.h",
+            "fcntl.h",
+            "sys/stat.h",
+            "sys/types.h",
+            "dlfcn.h",
+            "Python.h",
+        }
+        assert set(CYTHON_STDLIB_HEADERS.keys()) == expected_headers
 
     def test_stdint_header_mapping(self) -> None:
-        """stdint.h maps to libc.stdint with expected types."""
+        """stdint.h maps to libc.stdint with all expected types."""
         assert "stdint.h" in CYTHON_STDLIB_HEADERS
         module, types = CYTHON_STDLIB_HEADERS["stdint.h"]
         assert module == "libc.stdint"
-        assert "uint32_t" in types
-        assert "int64_t" in types
+        expected_stdint_types = {
+            "int8_t",
+            "int16_t",
+            "int32_t",
+            "int64_t",
+            "uint8_t",
+            "uint16_t",
+            "uint32_t",
+            "uint64_t",
+            "intptr_t",
+            "uintptr_t",
+            "intmax_t",
+            "uintmax_t",
+        }
+        assert types == expected_stdint_types
 
     def test_stddef_header_mapping(self) -> None:
         """stddef.h maps to libc.stddef with expected types."""

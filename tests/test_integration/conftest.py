@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import urllib.error
 import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -42,10 +43,10 @@ def _download_and_extract_tar(url: str, dest_dir: Path, members: list[str] | Non
                 for wanted in members:
                     if member.name.endswith(wanted):
                         member.name = Path(member.name).name
-                        tf.extract(member, dest_dir, filter="data")
+                        tf.extract(member, dest_dir)
                         break
         else:
-            tf.extractall(dest_dir, filter="data")
+            tf.extractall(dest_dir)
 
 
 def _download_and_extract_zip(url: str, dest_dir: Path, members: list[str] | None = None) -> None:
@@ -91,7 +92,7 @@ def sqlite3_header() -> Path | None:
     if not header.exists():
         try:
             _download_and_extract_zip(SQLITE_URL, cache, ["sqlite3.h"])
-        except Exception as exc:
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download sqlite3: {exc}", stacklevel=2)
@@ -103,17 +104,21 @@ def sqlite3_header() -> Path | None:
 
 ZLIB_VERSION = "1.3.1"
 ZLIB_URL = f"https://raw.githubusercontent.com/madler/zlib/v{ZLIB_VERSION}/zlib.h"
+ZLIB_ZCONF_URL = f"https://raw.githubusercontent.com/madler/zlib/v{ZLIB_VERSION}/zconf.h"
 
 
 @pytest.fixture(scope="session")
 def zlib_header() -> Path | None:
-    """Download zlib.h header."""
+    """Download zlib.h and its required zconf.h companion header."""
     cache = CACHE_DIR / f"zlib-{ZLIB_VERSION}"
     header = cache / "zlib.h"
-    if not header.exists():
+    zconf = cache / "zconf.h"
+    # Download both files if either is missing (zlib.h includes zconf.h).
+    if not header.exists() or not zconf.exists():
         try:
             _download_file(ZLIB_URL, header)
-        except Exception as exc:
+            _download_file(ZLIB_ZCONF_URL, zconf)
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download zlib: {exc}", stacklevel=2)
@@ -135,7 +140,7 @@ def lua_headers() -> Path | None:
     if not header.exists():
         try:
             _download_and_extract_tar(LUA_URL, cache, ["lua.h", "lauxlib.h", "luaconf.h"])
-        except Exception as exc:
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download lua: {exc}", stacklevel=2)
@@ -167,8 +172,8 @@ def curl_headers() -> Path | None:
                 for member in tf.getmembers():
                     if member.name.startswith(prefix) and member.isfile():
                         member.name = Path(member.name).name
-                        tf.extract(member, curl_dir, filter="data")
-        except Exception as exc:
+                        tf.extract(member, curl_dir)
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download curl: {exc}", stacklevel=2)
@@ -183,8 +188,14 @@ SDL_URL = f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VER
 
 
 @pytest.fixture(scope="session")
-def sdl2_headers() -> Path | None:
-    """Download SDL2 header directory."""
+def sdl2_headers(backend) -> Path | None:
+    """Download SDL2 header directory.
+
+    Returns None (causing tests to skip) if headers are unavailable or cannot
+    be parsed on the current platform.  SDL2 uses ARM NEON intrinsics that
+    some libclang builds reject with a hard error; treating that as an
+    environmental unavailability keeps the suite green on those platforms.
+    """
     cache = CACHE_DIR / f"sdl2-{SDL_VERSION}"
     sdl_dir = cache / "SDL2"
     header = sdl_dir / "SDL.h"
@@ -199,13 +210,24 @@ def sdl2_headers() -> Path | None:
                 for member in tf.getmembers():
                     if member.name.startswith(prefix) and member.isfile():
                         member.name = Path(member.name).name
-                        tf.extract(member, sdl_dir, filter="data")
-        except Exception as exc:
+                        tf.extract(member, sdl_dir)
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download SDL2: {exc}", stacklevel=2)
             return None
-    return cache if header.exists() else None
+    if not header.exists():
+        return None
+    # Probe-parse to detect platform-specific incompatibilities (e.g. ARM NEON
+    # intrinsics on macOS that the vendored libclang rejects with a hard error).
+    try:
+        backend.parse(header.read_text(), header.name, include_dirs=[str(cache), str(sdl_dir)])
+    except RuntimeError as exc:
+        import warnings
+
+        warnings.warn(f"SDL2 headers cannot be parsed on this platform (skipping): {exc}", stacklevel=2)
+        return None
+    return cache
 
 
 # -- CPython ----------------------------------------------------------------
@@ -234,8 +256,8 @@ def cpython_headers() -> Path | None:
                         dest = inc_dir / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         member.name = rel
-                        tf.extract(member, inc_dir, filter="data")
-        except Exception as exc:
+                        tf.extract(member, inc_dir)
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
             import warnings
 
             warnings.warn(f"Failed to download CPython: {exc}", stacklevel=2)

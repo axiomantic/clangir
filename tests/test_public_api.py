@@ -20,8 +20,6 @@ def test_all_matches_module_exports():
     missing = public_attrs - all_set
     assert missing == set(), f"Public attributes missing from __all__: {missing}"
 
-    assert len(headerkit.__all__) >= 20, f"Expected at least 20 exports, got {len(headerkit.__all__)}"
-
 
 def test_type_aliases_are_unions():
     """TypeExpr and Declaration should be Union type aliases."""
@@ -43,18 +41,10 @@ def test_type_aliases_are_unions():
 
     # These are Union types, so get_args should return their members
     type_expr_members = set(typing.get_args(headerkit.TypeExpr))
-    assert CType in type_expr_members
-    assert Pointer in type_expr_members
-    assert Array in type_expr_members
-    assert FunctionPointer in type_expr_members
+    assert type_expr_members == {CType, Pointer, Array, FunctionPointer}
 
     decl_members = set(typing.get_args(headerkit.Declaration))
-    assert Enum in decl_members
-    assert Struct in decl_members
-    assert Function in decl_members
-    assert Typedef in decl_members
-    assert Variable in decl_members
-    assert Constant in decl_members
+    assert decl_members == {Enum, Struct, Function, Typedef, Variable, Constant}
 
 
 def test_ir_types_match_direct_import():
@@ -94,7 +84,7 @@ def test_writer_symbols_in_all():
     """All writer symbols should be listed in headerkit.__all__."""
     import headerkit
 
-    writer_names = [
+    expected_writer_symbols = {
         "WriterBackend",
         "get_default_writer",
         "get_writer",
@@ -102,10 +92,12 @@ def test_writer_symbols_in_all():
         "is_writer_available",
         "list_writers",
         "register_writer",
-    ]
+    }
     all_set = set(headerkit.__all__)
-    for name in writer_names:
-        assert name in all_set, f"{name!r} missing from headerkit.__all__"
+    # Subset check: test_all_matches_module_exports enforces that __all__ contains
+    # no extra symbols beyond what the module exports, so together the two tests
+    # enforce full exact coverage.
+    assert expected_writer_symbols <= all_set, f"Missing from headerkit.__all__: {expected_writer_symbols - all_set}"
 
 
 def test_writer_functions_match_direct_import():

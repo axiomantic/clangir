@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-03-02
+
+### Fixed
+
+- Tautological writer tests: all 4 writer test files asserted `writer.write(h) == writer_function(h)`, which is always true since write() delegates to the function; replaced with specific output content assertions
+- Tautological protocol checks: `isinstance(writer, WriterBackend)` only checks attribute names exist on runtime-checkable Protocol; replaced with behavioral verification in all writer test files
+- Integration writer tests used `len(output) > 0` as sole assertion; replaced with known-symbol checks in all 10 cffi/json writer integration tests
+- `test_version_detect.py` patched `shutil.which` in the wrong namespace (global instead of `headerkit._clang._version`), making the mock ineffective; test passed by coincidence
+- `test_ensure_backends_loaded_handles_import_error` had a broken patch target and asserted a flag that was set unconditionally before the import; fixed with `sys.modules` sentinel and registry-empty assertion
+- `test_verify_libclang_success/failure` had a dead `@patch` decorator with `create=True` on a nonexistent attribute and never verified the target function was called; removed dead patch, added `assert_called_once()`
+- `test_dict_is_json_serializable` asserted `json.loads(json.dumps(x)) == x`, which is always true for JSON-native dicts; replaced with structural verification
+- `test_loader.py` used `hasattr` as sole assertion for module attributes; replaced with `inspect.isclass` checks
+- `test_pypy_compat.py` `test_value_property` was an exact duplicate of `test_init_with_string`; deleted
+- Macro tests used permissive `or` (accepting int or str) and conditional `if` guards that passed silently when features were absent; resolved type ambiguity and pinned behavior assertions
+- `test_negative_integer_macro` comment stated `value is None` but never asserted it; added the assertion
+- `test_install_linux_apt` truncated command assertions to first 2-3 tokens, missing package names; now asserts full commands
+- `test_install_windows_arm64` had self-referential path assertion comparing `call_args` to itself; replaced with computed expected path
+- `test_ir.py` `test_pointer_with_qualifiers` docstring incorrectly described output as `int * const` when actual output is `const int*`; fixed docstring
+- `test_ir.py` used substring checks (`"packed" in str(s)`, `"stdcall" in str(f)`) instead of exact equality; replaced with exact string assertions
+- `test_public_api.py` `test_type_aliases_are_unions` checked union membership but not completeness; replaced with exact set equality assertions
+- `test_diff.py` `test_format_description_property` used disjunctive assertion unlike every other writer test; replaced with exact string match
+- `test_ctypes.py` `test_type_map_completeness` used magic number `len(MAP) == 28`; replaced with full key set assertion
+- `test_ctypes.py` `test_section_headers_present` checked ordering of 4 of 5 sections, missing "Typedefs"; added
+- `test_cython.py` `test_basic_cppclass` accepted both spaces and tabs via `or`; pinned to 4-space indentation matching source
+- Integration `conftest.py` caught bare `except Exception` in all 6 download fixtures; narrowed to `urllib.error.URLError`, `socket.timeout`, `OSError`
+- Integration `_parse_header` used `pytest.skip` for parse failures on known-good headers; changed to `pytest.fail`
+- `test_roundtrip.py` conditional assertions (`if version_constants:`, `if switch_td:`) replaced with pinned behavior assertions
+- Five duplicate `skip_if_no_libclang` autouse fixtures across test_libclang.py classes consolidated into one module-level fixture
+- Redundant `CIR_CLANG_VERSION` env cleanup across 21 test methods replaced with module-level autouse fixture in test_version_detect.py
+- Repeated `mock_winreg` constant setup across 6 test methods extracted into shared fixture in test_windows_detection.py
+
+### Added
+
+- `test_unknown_declaration_kind` for JSON writer's `"unknown"` fallback path (previously untested code path)
+- `test_pointer_to_function_pointer_typedef` for prompt writer's `Pointer(FunctionPointer(...))` rendering (distinct from direct FunctionPointer)
+- `test_identical_functions/structs/enums_produce_no_diff` verifying unchanged declarations produce zero diff entries
+- `test_field_added_in_middle_is_breaking` for struct diff edge case (middle insertion vs end append)
+- `test_is_umbrella_header_system_headers_excluded` verifying system header filtering in umbrella detection
+- `test_mixed_declarations` split into per-verbosity tests for better failure diagnosis in prompt writer
+
 ## [0.7.3] - 2026-03-01
 
 ### Fixed
@@ -200,6 +240,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[0.7.4]: https://github.com/axiomantic/headerkit/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/axiomantic/headerkit/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/axiomantic/headerkit/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/axiomantic/headerkit/compare/v0.7.0...v0.7.1

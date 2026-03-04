@@ -1,7 +1,5 @@
 """Tests for the backend registry."""
 
-from unittest.mock import patch
-
 import pytest
 
 from headerkit.backends import (
@@ -75,7 +73,7 @@ class TestBackendRegistry:
 
         b._BACKENDS_LOADED = True
         names = list_backends()
-        assert "mock" in names
+        assert names == ["mock"]
 
     def test_is_backend_available(self):
         register_backend("mock", MockBackend)
@@ -89,7 +87,7 @@ class TestBackendRegistry:
         import headerkit.backends as b
 
         b._BACKENDS_LOADED = True
-        with pytest.raises(ValueError, match="Unknown backend"):
+        with pytest.raises(ValueError, match=r"Unknown backend: 'nonexistent'"):
             get_backend("nonexistent")
 
     def test_get_backend_none_returns_default(self):
@@ -113,14 +111,14 @@ class TestBackendRegistry:
 
         b._BACKENDS_LOADED = True
         info = get_backend_info()
-        assert isinstance(info, list)
-        assert len(info) == 1
-        # get_backend_info iterates the registry
-        entry = info[0]
-        assert entry["name"] == "mock"
-        assert entry["available"] is True
-        assert "default" in entry
-        assert "description" in entry
+        assert info == [
+            {
+                "name": "mock",
+                "available": True,
+                "default": True,
+                "description": "",
+            }
+        ]
 
     def test_first_registered_becomes_default(self):
         register_backend("first", MockBackend)
@@ -139,7 +137,13 @@ class TestBackendRegistry:
         assert get_default_backend() == "second"
 
     def test_duplicate_registration_second_class_wins(self):
-        """Registering the same name twice replaces the first class."""
+        """Registering the same name twice replaces the first class.
+
+        The registry key ("mock") is independent of the backend's .name property
+        ("mock2"). The registry uses the key passed to register_backend(), not
+        the instance's .name. This is intentional: it allows re-registration
+        under the same key with a different class.
+        """
 
         class MockBackend2:
             @property
@@ -164,6 +168,11 @@ class TestBackendRegistry:
         b._BACKENDS_LOADED = True
         backend = get_backend("mock")
         assert isinstance(backend, MockBackend2)
+        # Registry key is "mock" but the instance's .name is "mock2";
+        # the registry stores classes by registration key, not by .name
+        assert backend.name == "mock2"
+        assert backend.supports_macros is True
+        assert backend.supports_cpp is True
 
     def test_get_backend_creates_new_instances(self):
         """Each call to get_backend should return a new instance."""
@@ -184,12 +193,37 @@ class TestBackendRegistry:
             get_default_backend()
 
     def test_ensure_backends_loaded_handles_import_error(self):
-        """Test that _ensure_backends_loaded catches ImportError gracefully."""
+        """Test that _ensure_backends_loaded catches ImportError gracefully.
+
+        When the libclang module fails to import, _ensure_backends_loaded should:
+        1. Set _BACKENDS_LOADED = True (preventing retry)
+        2. Leave the registry empty (no backends registered)
+        3. Emit a warning about missing backends (not raise an exception)
+        """
+        import sys
+        import warnings
+
         import headerkit.backends as b
 
         b._BACKEND_REGISTRY.clear()
         b._DEFAULT_BACKEND = None
         b._BACKENDS_LOADED = False
-        with patch("headerkit.backends.libclang", side_effect=ImportError("test")):
-            b._ensure_backends_loaded()
+
+        # Remove the libclang module from sys.modules so import is re-attempted,
+        # then make the import raise ImportError via None sentinel
+        saved_module = sys.modules.get("headerkit.backends.libclang")
+        sys.modules["headerkit.backends.libclang"] = None  # type: ignore[assignment]  # forces ImportError
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                b._ensure_backends_loaded()
+        finally:
+            if saved_module is not None:
+                sys.modules["headerkit.backends.libclang"] = saved_module
+            else:
+                sys.modules.pop("headerkit.backends.libclang", None)
+
+        # Flag is set to prevent re-trying the failed import
         assert b._BACKENDS_LOADED is True
+        # Registry should be empty since the import failed and no backend registered
+        assert len(b._BACKEND_REGISTRY) == 0

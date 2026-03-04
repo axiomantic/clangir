@@ -102,6 +102,15 @@ class TestWriterRegistry:
 
         writer = get_writer("mock")
         assert isinstance(writer, MockWriter)
+        # Verify the writer actually works: write() returns a string
+        header = Header(
+            path="test.h",
+            declarations=[
+                Function(name="test_fn", return_type=CType(name="void"), parameters=[]),
+            ],
+        )
+        result = writer.write(header)
+        assert isinstance(result, str)
 
     def test_register_default(self) -> None:
         """Register with is_default=True, get_writer() without name returns it."""
@@ -124,9 +133,8 @@ class TestWriterRegistry:
         w._WRITERS_LOADED = True
 
         names = list_writers()
-        assert "alpha" in names
-        assert "beta" in names
-        assert len(names) == 2
+        # list_writers() returns insertion-ordered results; assert exact order.
+        assert names == ["alpha", "beta"]
 
     def test_duplicate_registration_raises(self) -> None:
         """Registering the same name twice raises ValueError."""
@@ -162,12 +170,7 @@ class TestWriterRegistry:
         w._WRITERS_LOADED = True
 
         info = get_writer_info()
-        assert isinstance(info, list)
-        assert len(info) == 1
-        entry = info[0]
-        assert entry["name"] == "mock"
-        assert entry["description"] == "A test writer"
-        assert entry["is_default"] is True  # first registered becomes default
+        assert info == [{"name": "mock", "description": "A test writer", "is_default": True}]
 
     def test_description_from_docstring(self) -> None:
         """If no description passed, register_writer() extracts from class docstring."""
@@ -177,8 +180,13 @@ class TestWriterRegistry:
         w._WRITERS_LOADED = True
 
         info = get_writer_info()
-        assert len(info) == 1
-        assert info[0]["description"] == "Extract this first line as description."
+        assert info == [
+            {
+                "name": "with-doc",
+                "description": "Extract this first line as description.",
+                "is_default": True,
+            }
+        ]
 
     def test_get_default_writer(self) -> None:
         """Returns the default writer name."""
@@ -255,7 +263,7 @@ class TestWriterRegistryIntegration:
         writer = get_writer("cffi")
         output = writer.write(header)
 
-        assert "int test_func(void);" in output
+        assert output == "int test_func(void);"
 
     def test_roundtrip_json(self) -> None:
         """Parse a simple header, write with json writer, verify JSON is valid."""
@@ -274,9 +282,15 @@ class TestWriterRegistryIntegration:
         output = writer.write(header)
 
         parsed = json.loads(output)
-        assert isinstance(parsed, dict)
-        assert parsed["path"] == "test.h"
-        assert len(parsed["declarations"]) == 1
-        decl = parsed["declarations"][0]
-        assert decl["kind"] == "function"
-        assert decl["name"] == "test_func"
+        assert parsed == {
+            "path": "test.h",
+            "declarations": [
+                {
+                    "kind": "function",
+                    "name": "test_func",
+                    "return_type": {"kind": "ctype", "name": "int"},
+                    "parameters": [],
+                    "is_variadic": False,
+                }
+            ],
+        }

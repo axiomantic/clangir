@@ -4,7 +4,17 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from headerkit._clang._version import detect_llvm_version
+
+
+@pytest.fixture(autouse=True)
+def _clear_cir_clang_version():
+    """Ensure CIR_CLANG_VERSION is absent before each test."""
+    os.environ.pop("CIR_CLANG_VERSION", None)
+    yield
+    os.environ.pop("CIR_CLANG_VERSION", None)
 
 
 def _which_only(*names: str) -> object:
@@ -50,7 +60,7 @@ class TestEnvVarOverride:
         """Non-numeric CIR_CLANG_VERSION is ignored, falls through to other strategies."""
         with (
             patch.dict(os.environ, {"CIR_CLANG_VERSION": "abc"}, clear=False),
-            patch("shutil.which", return_value=None),
+            patch("headerkit._clang._version.shutil.which", return_value=None),
             patch("headerkit._clang._version.glob.glob", return_value=[]),
             patch("headerkit._clang._version._try_windows_registry", return_value=None),
             patch("headerkit._clang._version._try_windows_program_files", return_value=None),
@@ -69,8 +79,6 @@ class TestLlvmConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("llvm-config")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            # Clear env var if set
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "18"
 
     def test_llvm_config_versioned_binary(self):
@@ -83,7 +91,6 @@ class TestLlvmConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("llvm-config-18")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "18"
 
     def test_llvm_config_not_found(self):
@@ -96,7 +103,6 @@ class TestLlvmConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "19"
 
     def test_llvm_config_returns_non_zero_exit(self):
@@ -121,7 +127,6 @@ class TestLlvmConfig:
             ),
             patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "21"
 
     def test_llvm_config_returns_garbage(self):
@@ -146,7 +151,6 @@ class TestLlvmConfig:
             ),
             patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
     def test_llvm_config_subprocess_timeout(self):
@@ -168,7 +172,6 @@ class TestLlvmConfig:
             ),
             patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "19"
 
 
@@ -182,7 +185,6 @@ class TestClangPreprocessor:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
     def test_clang_versioned_binary(self):
@@ -195,14 +197,16 @@ class TestClangPreprocessor:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang-19")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "19"
 
     def test_apple_clang_version_detected(self):
         """Apple clang reports its own __clang_major__ which differs from LLVM version.
 
-        Apple Clang 16.x ships __clang_major__ = 16. This should be detected
-        and returned as the version string.
+        Apple Clang version numbers do not correspond to upstream LLVM versions
+        (e.g., Apple Clang 16.x is based on LLVM ~18). Our detector returns the
+        raw __clang_major__ value without attempting to map to upstream LLVM
+        versions. This is approximate but consistent: the caller (get_cindex)
+        handles the fallback when the version falls outside vendored range.
         """
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -219,7 +223,6 @@ class TestClangPreprocessor:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "16"
 
     def test_clang_preprocessor_no_clang_major(self):
@@ -233,7 +236,6 @@ class TestClangPreprocessor:
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
             _no_llvm_dir,
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() is None
 
     def test_clang_subprocess_oserror(self):
@@ -244,7 +246,6 @@ class TestClangPreprocessor:
             patch("headerkit._clang._version.subprocess.run", side_effect=OSError("Permission denied")),
             _no_llvm_dir,
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() is None
 
 
@@ -259,7 +260,6 @@ class TestPkgConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("pkg-config")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "18"
 
     def test_pkg_config_not_installed(self):
@@ -272,7 +272,6 @@ class TestPkgConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
     def test_pkg_config_module_not_found(self):
@@ -294,7 +293,6 @@ class TestPkgConfig:
             patch("headerkit._clang._version.shutil.which", side_effect=_which_only("pkg-config", "clang")),
             patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "19"
 
 
@@ -307,7 +305,6 @@ class TestLlvmDir:
             patch("headerkit._clang._version.sys.platform", "linux"),
             patch("headerkit._clang._version.glob.glob", return_value=["/usr/lib/llvm-18/"]),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "18"
 
     def test_multiple_llvm_dirs_picks_newest(self):
@@ -321,7 +318,6 @@ class TestLlvmDir:
                 return_value=["/usr/lib/llvm-18/", "/usr/lib/llvm-20/"],
             ),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
     def test_skipped_on_non_linux(self):
@@ -331,7 +327,6 @@ class TestLlvmDir:
             patch("headerkit._clang._version.shutil.which", return_value=None),
             patch("headerkit._clang._version.sys.platform", "darwin"),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() is None
 
 
@@ -358,7 +353,6 @@ class TestHomebrewLlvm:
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
             _no_llvm_dir,
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
     def test_brew_skipped_on_linux(self):
@@ -369,12 +363,18 @@ class TestHomebrewLlvm:
             patch("headerkit._clang._version.sys.platform", "linux"),
             _no_llvm_dir,
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() is None
 
 
 class TestWindowsDetectionOrder:
-    """Verify Windows-specific strategies are called in correct order."""
+    """Verify Windows-specific strategies are called in correct order.
+
+    Limitation: these tests verify that strategies eventually produce the correct
+    result under win32 conditions, but do not assert the exact call ordering
+    (e.g., via mock.call_args_list). The detection function's linear strategy
+    chain is verified implicitly: earlier strategies are blocked (shutil.which
+    returns None), so the result must come from a later strategy.
+    """
 
     def test_registry_called_after_clang_preprocessor(self):
         """On win32, registry detection is used when earlier strategies fail."""
@@ -399,7 +399,6 @@ class TestWindowsDetectionOrder:
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "18"
 
     def test_program_files_called_after_registry(self):
@@ -433,7 +432,6 @@ class TestWindowsDetectionOrder:
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
             patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() == "20"
 
 
@@ -446,5 +444,4 @@ class TestFallback:
             patch("headerkit._clang._version._try_windows_registry", return_value=None),
             patch("headerkit._clang._version._try_windows_program_files", return_value=None),
         ):
-            os.environ.pop("CIR_CLANG_VERSION", None)
             assert detect_llvm_version() is None
