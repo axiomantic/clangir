@@ -19,7 +19,6 @@ classifiers = [
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Compilers",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -30,7 +29,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Typing :: Typed",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.urls]
@@ -43,14 +42,17 @@ Changelog = "https://github.com/axiomantic/headerkit/blob/main/CHANGELOG.md"
 headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
-toml = ["tomli>=1.1.0; python_version < '3.11'"]
-test = ["pytest", "pytest-timeout"]
+toml = []
+test = ["pytest", "pytest-timeout", "bigfoot @ /Users/elijahrutschman/Development/bigfoot"]
 lint = ["ruff", "mypy"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
 dev = ["headerkit[test,lint,docs,toml]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["headerkit"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 120

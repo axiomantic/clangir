@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import tempfile
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
+
+import bigfoot
 
 from headerkit.install_libclang import (
     DEFAULT_LLVM_VERSION,
@@ -17,167 +18,236 @@ from headerkit.install_libclang import (
 )
 
 
-def _completed(returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="", stderr="")
-
-
 class TestInstallLinux:
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch("headerkit.install_libclang.shutil.which")
-    def test_install_linux_dnf(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_linux_dnf(self) -> None:
         """When dnf is available, install_linux runs 'dnf install -y clang-devel'."""
-        mock_which.side_effect = lambda name: "/usr/bin/dnf" if name == "dnf" else None
+        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=0)
 
-        result = install_linux()
+        with bigfoot.sandbox():
+            result = install_linux()
 
         assert result is True
-        mock_run.assert_called_once_with(["dnf", "install", "-y", "clang-devel"], check=False, text=True)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="dnf",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["dnf", "install", "-y", "clang-devel"],
+        )
 
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch("headerkit.install_libclang.shutil.which")
-    def test_install_linux_apt(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_linux_apt(self) -> None:
         """When dnf is unavailable but apt-get is, install_linux uses apt-get."""
-        mock_which.side_effect = lambda name: "/usr/bin/apt-get" if name == "apt-get" else None
+        bigfoot.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
+        bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
+        bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        result = install_linux()
+        with bigfoot.sandbox():
+            result = install_linux()
 
         assert result is True
-        assert mock_run.call_count == 2
-        calls = mock_run.call_args_list
-        assert calls[0] == call(["apt-get", "update", "-qq"], check=False, text=True)
-        assert calls[1] == call(["apt-get", "install", "-y", "libclang-dev"], check=False, text=True)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="apt-get",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["apt-get", "update", "-qq"],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["apt-get", "install", "-y", "libclang-dev"],
+        )
 
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch("headerkit.install_libclang.shutil.which")
-    def test_install_linux_apk(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_linux_apk(self) -> None:
         """When dnf and apt-get are unavailable but apk is, install_linux uses apk."""
-        mock_which.side_effect = lambda name: "/sbin/apk" if name == "apk" else None
+        bigfoot.subprocess_mock.mock_which("apk", returns="/sbin/apk")
+        bigfoot.subprocess_mock.mock_run(["apk", "add", "clang-dev"], returncode=0)
 
-        result = install_linux()
+        with bigfoot.sandbox():
+            result = install_linux()
 
         assert result is True
-        mock_run.assert_called_once_with(["apk", "add", "clang-dev"], check=False, text=True)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="apk",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["apk", "add", "clang-dev"],
+        )
 
-    @patch("headerkit.install_libclang.subprocess.run")
-    @patch("headerkit.install_libclang.shutil.which", return_value=None)
-    def test_install_linux_no_package_manager(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_linux_no_package_manager(self) -> None:
         """When no package manager is available, install_linux returns False."""
-        result = install_linux()
+        # Access the proxy to ensure the plugin is created and registered before
+        # sandbox entry. Without this, subprocess.run would not be intercepted.
+        bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
+
+        with bigfoot.sandbox():
+            result = install_linux()
 
         assert result is False
-        mock_run.assert_not_called()
+        # If subprocess.run had fired inside the sandbox, UnmockedInteractionError
+        # would have raised immediately.
 
     def test_install_linux_dnf_fails_falls_through_to_apt(self) -> None:
-        def which_side_effect(cmd: str) -> str | None:
-            if cmd in ("dnf", "apt-get"):
-                return f"/usr/bin/{cmd}"
-            return None
+        """When dnf fails (returncode=1), install_linux falls through to apt-get."""
+        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        bigfoot.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
+        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=1)
+        bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
+        bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        def run_side_effect(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-            cmd = args[0] if args else kwargs.get("args", [])
-            if "dnf" in cmd[0]:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-        with (
-            patch("headerkit.install_libclang.shutil.which", side_effect=which_side_effect),
-            patch("headerkit.install_libclang.subprocess.run", side_effect=run_side_effect) as mock_run,
-        ):
+        with bigfoot.sandbox():
             result = install_linux()
-            assert result is True
-            calls = mock_run.call_args_list
-            apt_update = [c for c in calls if c.args[0] == ["apt-get", "update", "-qq"]]
-            apt_install = [c for c in calls if c.args[0] == ["apt-get", "install", "-y", "libclang-dev"]]
-            assert len(apt_update) == 1, "Expected one apt-get update call"
-            assert len(apt_install) == 1, "Expected one apt-get install call"
+
+        assert result is True
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="dnf",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["dnf", "install", "-y", "clang-devel"],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="apt-get",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["apt-get", "update", "-qq"],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["apt-get", "install", "-y", "libclang-dev"],
+        )
 
 
 class TestInstallMacos:
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch("headerkit.install_libclang.shutil.which", return_value="/opt/homebrew/bin/brew")
-    def test_install_macos_success(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_macos_success(self) -> None:
         """When brew is available, install_macos runs 'brew install llvm'."""
-        result = install_macos()
+        bigfoot.subprocess_mock.mock_which("brew", returns="/opt/homebrew/bin/brew")
+        bigfoot.subprocess_mock.mock_run(["brew", "install", "llvm"], returncode=0)
+
+        with bigfoot.sandbox():
+            result = install_macos()
 
         assert result is True
-        mock_run.assert_called_once_with(["brew", "install", "llvm"], check=False, text=True)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="brew",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["brew", "install", "llvm"],
+        )
 
-    @patch("headerkit.install_libclang.subprocess.run")
-    @patch("headerkit.install_libclang.shutil.which", return_value=None)
-    def test_install_macos_no_brew(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_macos_no_brew(self) -> None:
         """When brew is unavailable, install_macos returns False."""
-        result = install_macos()
+        bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
+
+        with bigfoot.sandbox():
+            result = install_macos()
 
         assert result is False
-        mock_run.assert_not_called()
 
 
 class TestInstallWindows:
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch("headerkit.install_libclang.shutil.which", return_value=r"C:\ProgramData\chocolatey\bin\choco.exe")
-    @patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False)
-    def test_install_windows_x64(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+    def test_install_windows_x64(self) -> None:
         """On x64 Windows with choco, install_windows pins the LLVM version."""
-        result = install_windows(DEFAULT_LLVM_VERSION)
-
-        assert result is True
-        mock_run.assert_called_once_with(
+        bigfoot.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
+        bigfoot.subprocess_mock.mock_run(
             ["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
-            check=False,
-            text=True,
+            returncode=0,
         )
 
-    @patch("headerkit.install_libclang.subprocess.run")
-    @patch("headerkit.install_libclang.shutil.which", return_value=None)
-    @patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False)
-    def test_install_windows_x64_no_choco(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
-        """On x64 Windows without choco, install_windows returns False."""
-        result = install_windows(DEFAULT_LLVM_VERSION)
-
-        assert result is False
-        mock_run.assert_not_called()
-
-    @patch("headerkit.install_libclang.os.remove")
-    @patch("headerkit.install_libclang.subprocess.run", return_value=_completed(0))
-    @patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "ARM64"}, clear=False)
-    def test_install_windows_arm64(self, mock_run: MagicMock, mock_remove: MagicMock) -> None:
-        """On ARM64 Windows, install_windows downloads and runs the LLVM installer."""
-        version = "18.1.0"
-        result = install_windows(version)
+        with (
+            patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            bigfoot.sandbox(),
+        ):
+            result = install_windows(DEFAULT_LLVM_VERSION)
 
         assert result is True
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="choco",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
+        )
+
+    def test_install_windows_x64_no_choco(self) -> None:
+        """On x64 Windows without choco, install_windows returns False."""
+        bigfoot.subprocess_mock.install()
+
+        with (
+            patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            bigfoot.sandbox(),
+        ):
+            result = install_windows(DEFAULT_LLVM_VERSION)
+
+        assert result is False
+
+    def test_install_windows_arm64(self) -> None:
+        """On ARM64 Windows, install_windows downloads and runs the LLVM installer."""
+        version = "18.1.0"
         expected_installer = os.path.join(tempfile.gettempdir(), "llvm-installer.exe")
-        # First call: curl download
-        curl_call = mock_run.call_args_list[0]
-        assert curl_call == call(
+        curl_url = f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/LLVM-{version}-woa64.exe"
+
+        bigfoot.subprocess_mock.mock_run(
             [
                 "curl",
                 "-sSL",
                 "-o",
                 expected_installer,
-                f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/LLVM-{version}-woa64.exe",
+                curl_url,
             ],
-            check=False,
-            text=True,
+            returncode=0,
         )
-        # Second call: powershell install
-        powershell_call = mock_run.call_args_list[1]
-        assert powershell_call == call(
+        bigfoot.subprocess_mock.mock_run(
             [
                 "powershell",
                 "-Command",
                 f"Start-Process '{expected_installer}' -ArgumentList '/S' -Wait",
             ],
-            check=False,
-            text=True,
+            returncode=0,
         )
+
+        with (
+            patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "ARM64"}, clear=False),
+            patch("headerkit.install_libclang.os.remove") as mock_remove,
+            bigfoot.sandbox(),
+        ):
+            result = install_windows(version)
+
+        assert result is True
         mock_remove.assert_called_once_with(expected_installer)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[
+                "curl",
+                "-sSL",
+                "-o",
+                expected_installer,
+                curl_url,
+            ],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[
+                "powershell",
+                "-Command",
+                f"Start-Process '{expected_installer}' -ArgumentList '/S' -Wait",
+            ],
+        )
 
 
 class TestVerifyLibclang:
     def test_verify_libclang_success(self) -> None:
         """When is_system_libclang_available returns True, verify_libclang returns True."""
-        # Patch the import inside verify_libclang
         mock_module = MagicMock()
         mock_module.is_system_libclang_available.return_value = True
         with patch.dict("sys.modules", {"headerkit.backends.libclang": mock_module}):
@@ -204,7 +274,6 @@ class TestMain:
     def test_main_linux(self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock) -> None:
         """On linux, main() calls install_linux."""
         mock_sys.platform = "linux"
-        # argparse uses sys.argv if argv is None, but we pass [] explicitly
         result = main([])
 
         mock_install.assert_called_once_with()

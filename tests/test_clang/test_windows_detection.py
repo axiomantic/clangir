@@ -5,6 +5,7 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
+import bigfoot
 import pytest
 
 from headerkit._clang._version import (
@@ -33,24 +34,22 @@ class TestWindowsRegistry:
         mock_winreg.OpenKey.return_value = mock_key
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 18\n#define __clang_minor__ 1\n"
-
+        expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 18\n#define __clang_minor__ 1\n",
+        )
         with (
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
-            patch("headerkit._clang._version.os.path.isfile", return_value=True) as mock_isfile,
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result) as mock_subprocess_run,
+            patch("headerkit._clang._version.os.path.isfile", return_value=True),
+            bigfoot.sandbox(),
         ):
             result = _try_windows_registry()
-            assert result == "18"
-            # Verify the correct path was constructed and passed to subprocess
-            expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
-            mock_isfile.assert_any_call(expected_path)
-            mock_subprocess_run.assert_called_once()
-            assert mock_subprocess_run.call_args[0][0][0] == expected_path
+        assert result == "18"
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
 
     def test_registry_key_not_found(self, mock_winreg_constants):
         """Registry key does not exist, returns None."""
@@ -102,19 +101,22 @@ class TestWindowsRegistry:
         mock_winreg.OpenKey.return_value = mock_key
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __STDC__ 1\n"
-
+        expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __STDC__ 1\n",
+        )
         with (
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            bigfoot.sandbox(),
         ):
             result = _try_windows_registry()
-            assert result is None
+        assert result is None
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
 
     def test_skipped_on_non_windows(self):
         """Returns None immediately on non-Windows platforms."""
@@ -129,18 +131,21 @@ class TestWindowsRegistry:
         mock_winreg.OpenKey.return_value = mock_key
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
+        expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            raises=subprocess.TimeoutExpired(cmd="clang.exe", timeout=5),
+        )
         with (
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            patch(
-                "headerkit._clang._version.subprocess.run",
-                side_effect=subprocess.TimeoutExpired(cmd="clang.exe", timeout=5),
-            ),
+            bigfoot.sandbox(),
         ):
             result = _try_windows_registry()
-            assert result is None
+        assert result is None
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
 
     def test_winreg_import_error(self):
         """When winreg module is not importable, returns None."""
@@ -157,10 +162,12 @@ class TestWindowsProgramFiles:
 
     def test_finds_version_from_programfiles(self):
         """Finds LLVM in PROGRAMFILES directory."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 20\n"
-
+        expected_path = os.path.join(r"C:\Program Files", "LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n",
+        )
         with (
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
@@ -170,22 +177,21 @@ class TestWindowsProgramFiles:
                     "PROGRAMFILES(X86)": r"C:\Program Files (x86)",
                 },
             ),
-            patch("headerkit._clang._version.os.path.isfile", return_value=True) as mock_isfile,
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result) as mock_subprocess_run,
+            patch("headerkit._clang._version.os.path.isfile", return_value=True),
+            bigfoot.sandbox(),
         ):
             result = _try_windows_program_files()
-            assert result == "20"
-            # Verify the correct path was constructed and passed to subprocess
-            expected_path = os.path.join(r"C:\Program Files", "LLVM", "bin", "clang.exe")
-            mock_isfile.assert_any_call(expected_path)
-            mock_subprocess_run.assert_called_once()
-            assert mock_subprocess_run.call_args[0][0][0] == expected_path
+        assert result == "20"
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
 
     def test_finds_version_from_programfiles_x86(self):
         """Finds LLVM in PROGRAMFILES(X86) when PROGRAMFILES path has no clang."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 19\n"
+        x86_path = os.path.join(r"C:\Program Files (x86)", "LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [x86_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n",
+        )
 
         def isfile_side_effect(path):
             # Only the x86 path has clang.exe
@@ -202,10 +208,11 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            bigfoot.sandbox(),
         ):
             result = _try_windows_program_files()
-            assert result == "19"
+        assert result == "19"
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[x86_path, "-dM", "-E", "-x", "c", "NUL"])
 
     def test_no_programfiles_env_var(self):
         """Both PROGRAMFILES env vars are absent."""
@@ -243,19 +250,17 @@ class TestWindowsProgramFiles:
 
     def test_subprocess_error_continues_to_next_candidate(self):
         """If clang.exe fails for PROGRAMFILES, tries PROGRAMFILES(X86)."""
-        success_result = MagicMock()
-        success_result.returncode = 0
-        success_result.stdout = "#define __clang_major__ 21\n"
-
-        call_count = 0
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise subprocess.SubprocessError("clang.exe crashed")
-            return success_result
-
+        first_path = os.path.join(r"C:\Program Files", "LLVM", "bin", "clang.exe")
+        x86_path = os.path.join(r"C:\Program Files (x86)", "LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [first_path, "-dM", "-E", "-x", "c", "NUL"],
+            raises=subprocess.SubprocessError("clang.exe crashed"),
+        )
+        bigfoot.subprocess_mock.mock_run(
+            [x86_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 21\n",
+        )
         with (
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
@@ -266,11 +271,9 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect) as mock_subprocess_run,
+            bigfoot.sandbox(),
         ):
             result = _try_windows_program_files()
-            assert result == "21"
-            # Verify both candidates were attempted and the x86 path succeeded
-            assert mock_subprocess_run.call_count == 2
-            x86_path = os.path.join(r"C:\Program Files (x86)", "LLVM", "bin", "clang.exe")
-            assert mock_subprocess_run.call_args_list[1][0][0][0] == x86_path
+        assert result == "21"
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[first_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[x86_path, "-dM", "-E", "-x", "c", "NUL"])

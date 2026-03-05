@@ -4,6 +4,7 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import bigfoot
 import pytest
 
 from headerkit._clang._version import detect_llvm_version
@@ -17,18 +18,6 @@ def _clear_cir_clang_version():
     os.environ.pop("CIR_CLANG_VERSION", None)
 
 
-def _which_only(*names: str) -> object:
-    """Return a shutil.which mock that only finds the given binary names."""
-    name_set = set(names)
-
-    def side_effect(cmd: str) -> str | None:
-        if cmd in name_set:
-            return f"/usr/bin/{cmd}"
-        return None
-
-    return side_effect
-
-
 # Patch glob.glob to disable llvm-dir detection in tests that don't need it.
 _no_llvm_dir = patch("headerkit._clang._version.glob.glob", return_value=[])
 
@@ -40,15 +29,13 @@ class TestEnvVarOverride:
 
     def test_cir_clang_version_env_var_takes_precedence(self):
         """Env var should take precedence over llvm-config."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "19.0.0\n"
+        bigfoot.subprocess_mock.install()
         with (
             patch.dict(os.environ, {"CIR_CLANG_VERSION": "20"}),
-            patch("headerkit._clang._version.shutil.which", return_value="/usr/bin/llvm-config"),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            bigfoot.sandbox(),
         ):
-            # Even though llvm-config would return 19, the env var should win
+            # Even though llvm-config would return 19, the env var should win.
+            # No subprocess.run or shutil.which calls should be made at all.
             assert detect_llvm_version() == "20"
 
     def test_env_var_with_whitespace_is_stripped(self):
@@ -71,133 +58,247 @@ class TestEnvVarOverride:
 
 class TestLlvmConfig:
     def test_llvm_config_full_version(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "18.1.0\n"
+        # Interaction sequence:
+        # 1. which("llvm-config") -> "/usr/bin/llvm-config"
+        # 2. run(["/usr/bin/llvm-config", "--version"]) -> rc=0, stdout="18.1.0\n"
+        bigfoot.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/llvm-config", "--version"],
+            returncode=0,
+            stdout="18.1.0\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("llvm-config")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "18"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="llvm-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/llvm-config", "--version"],
+        )
 
     def test_llvm_config_versioned_binary(self):
         """When only llvm-config-18 exists (common on Debian/Ubuntu)."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "18.1.8\n"
+        # Interaction sequence:
+        # which("llvm-config") -> None (unregistered, semi-permissive)
+        # which("llvm-config-30") through which("llvm-config-19") -> None (unregistered)
+        # which("llvm-config-18") -> "/usr/bin/llvm-config-18" (registered)
+        # run(["/usr/bin/llvm-config-18", "--version"]) -> rc=0, stdout="18.1.8\n"
+        bigfoot.subprocess_mock.mock_which("llvm-config-18", returns="/usr/bin/llvm-config-18")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/llvm-config-18", "--version"],
+            returncode=0,
+            stdout="18.1.8\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("llvm-config-18")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "18"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="llvm-config-18")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/llvm-config-18", "--version"],
+        )
+
     def test_llvm_config_not_found(self):
         """When llvm-config is not found, fall through to clang detection."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 19\n#define __clang_minor__ 0\n"
+        # Interaction sequence:
+        # which("llvm-config") through which("llvm-config-14") -> None (unregistered)
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n#define __clang_minor__ 0\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "19"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
 
     def test_llvm_config_returns_non_zero_exit(self):
         """When llvm-config returns non-zero, fall through to clang."""
-        llvm_result = MagicMock()
-        llvm_result.returncode = 1
-        llvm_result.stdout = ""
-        clang_result = MagicMock()
-        clang_result.returncode = 0
-        clang_result.stdout = "#define __clang_major__ 21\n"
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            if "llvm-config" in cmd[0]:
-                return llvm_result
-            return clang_result
-
+        # Interaction sequence:
+        # which("llvm-config") -> "/usr/bin/llvm-config" (registered)
+        # run(["/usr/bin/llvm-config", "--version"]) -> rc=1 (fail)
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/llvm-config", "--version"],
+            returncode=1,
+            stdout="",
+        )
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 21\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch(
-                "headerkit._clang._version.shutil.which",
-                side_effect=_which_only("llvm-config", "clang"),
-            ),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "21"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="llvm-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/llvm-config", "--version"],
+        )
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_llvm_config_returns_garbage(self):
         """When llvm-config returns non-numeric output, fall through to clang."""
-        llvm_result = MagicMock()
-        llvm_result.returncode = 0
-        llvm_result.stdout = "not-a-version\n"
-        clang_result = MagicMock()
-        clang_result.returncode = 0
-        clang_result.stdout = "#define __clang_major__ 20\n"
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            if "llvm-config" in cmd[0]:
-                return llvm_result
-            return clang_result
-
+        # Interaction sequence:
+        # which("llvm-config") -> "/usr/bin/llvm-config" (registered)
+        # run(["/usr/bin/llvm-config", "--version"]) -> rc=0, stdout="not-a-version\n"
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/llvm-config", "--version"],
+            returncode=0,
+            stdout="not-a-version\n",
+        )
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch(
-                "headerkit._clang._version.shutil.which",
-                side_effect=_which_only("llvm-config", "clang"),
-            ),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "20"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="llvm-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/llvm-config", "--version"],
+        )
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_llvm_config_subprocess_timeout(self):
         """When llvm-config times out, fall through to clang."""
-        clang_result = MagicMock()
-        clang_result.returncode = 0
-        clang_result.stdout = "#define __clang_major__ 19\n"
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            if "llvm-config" in cmd[0]:
-                raise subprocess.TimeoutExpired(cmd="llvm-config", timeout=5)
-            return clang_result
-
+        # Interaction sequence:
+        # which("llvm-config") -> "/usr/bin/llvm-config" (registered)
+        # run(["/usr/bin/llvm-config", "--version"]) -> raises TimeoutExpired
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/llvm-config", "--version"],
+            raises=subprocess.TimeoutExpired(cmd="llvm-config", timeout=5),
+        )
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch(
-                "headerkit._clang._version.shutil.which",
-                side_effect=_which_only("llvm-config", "clang"),
-            ),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "19"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="llvm-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/llvm-config", "--version"],
+        )
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
 
 
 class TestClangPreprocessor:
     def test_clang_major_define(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 20\n#define __clang_minor__ 1\n#define __clang_patchlevel__ 0\n"
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n#define __clang_minor__ 1\n#define __clang_patchlevel__ 0\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "20"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_clang_versioned_binary(self):
         """When only clang-19 exists (common on Debian/Ubuntu)."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 19\n"
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> None (unregistered)
+        # which("clang-30") through which("clang-20") -> None (unregistered)
+        # which("clang-19") -> "/usr/bin/clang-19" (registered)
+        # run(["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("clang-19", returns="/usr/bin/clang-19")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang-19")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "19"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang-19")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
 
     def test_apple_clang_version_detected(self):
         """Apple clang reports its own __clang_major__ which differs from LLVM version.
@@ -208,92 +309,173 @@ class TestClangPreprocessor:
         versions. This is approximate but consistent: the caller (get_cindex)
         handles the fallback when the version falls outside vendored range.
         """
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = (
-            "#define __APPLE_CC__ 6000\n"
-            "#define __apple_build_version__ 16000026\n"
-            "#define __clang__ 1\n"
-            "#define __clang_major__ 16\n"
-            "#define __clang_minor__ 0\n"
-            "#define __clang_patchlevel__ 0\n"
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout=(
+                "#define __APPLE_CC__ 6000\n"
+                "#define __apple_build_version__ 16000026\n"
+                "#define __clang__ 1\n"
+                "#define __clang_major__ 16\n"
+                "#define __clang_minor__ 0\n"
+                "#define __clang_patchlevel__ 0\n"
+            ),
         )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "16"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_clang_preprocessor_no_clang_major(self):
         """When clang output has no __clang_major__, falls through to soname."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __STDC__ 1\n#define __STDC_VERSION__ 201710L\n"
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __STDC__ 1\n#define __STDC_VERSION__ 201710L\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
             _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() is None
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_clang_subprocess_oserror(self):
         """When clang subprocess raises OSError, falls through to soname."""
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            raises=OSError("Permission denied"),
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", side_effect=OSError("Permission denied")),
             _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() is None
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
 
 
 class TestPkgConfig:
     def test_pkg_config_clang_module(self):
         """Detect version via pkg-config --modversion clang."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "18.1.8\n"
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> "/usr/bin/pkg-config" (registered)
+        # run(["/usr/bin/pkg-config", "--modversion", "clang"]) -> rc=0, stdout="18.1.8\n"
+        bigfoot.subprocess_mock.mock_which("pkg-config", returns="/usr/bin/pkg-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/pkg-config", "--modversion", "clang"],
+            returncode=0,
+            stdout="18.1.8\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("pkg-config")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "18"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="pkg-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/pkg-config", "--modversion", "clang"],
+        )
+
     def test_pkg_config_not_installed(self):
         """When pkg-config is not installed, fall through."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 20\n"
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> None (unregistered)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("clang")),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "20"
 
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
+
     def test_pkg_config_module_not_found(self):
         """When pkg-config can't find clang module, fall through."""
-        fail_result = MagicMock()
-        fail_result.returncode = 1
-        fail_result.stdout = ""
-        clang_result = MagicMock()
-        clang_result.returncode = 0
-        clang_result.stdout = "#define __clang_major__ 19\n"
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            if "pkg-config" in cmd[0]:
-                return fail_result
-            return clang_result
-
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> "/usr/bin/pkg-config" (registered)
+        # run(["/usr/bin/pkg-config", "--modversion", "clang"]) -> rc=1 (fail)
+        # run(["/usr/bin/pkg-config", "--modversion", "libclang"]) -> rc=1 (fail)
+        # which("clang") -> "/usr/bin/clang" (registered)
+        # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
+        bigfoot.subprocess_mock.mock_which("pkg-config", returns="/usr/bin/pkg-config")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/pkg-config", "--modversion", "clang"],
+            returncode=1,
+            stdout="",
+        )
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/pkg-config", "--modversion", "libclang"],
+            returncode=1,
+            stdout="",
+        )
+        bigfoot.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("pkg-config", "clang")),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
+            _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "19"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="pkg-config")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/pkg-config", "--modversion", "clang"],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/pkg-config", "--modversion", "libclang"],
+        )
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="clang")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
+        )
 
 
 class TestLlvmDir:
@@ -333,27 +515,43 @@ class TestLlvmDir:
 class TestHomebrewLlvm:
     def test_brew_llvm_prefix(self):
         """Detect version from Homebrew's llvm installation."""
-        prefix_result = MagicMock()
-        prefix_result.returncode = 0
-        prefix_result.stdout = "/opt/homebrew/opt/llvm\n"
-        version_result = MagicMock()
-        version_result.returncode = 0
-        version_result.stdout = "20.1.0\n"
-
-        def run_side_effect(cmd, **kwargs):  # noqa: ARG001
-            if cmd[0].endswith("brew"):
-                return prefix_result
-            return version_result
-
+        # Interaction sequence:
+        # All llvm-config variants -> None (unregistered)
+        # which("pkg-config") -> None (unregistered)
+        # All clang variants -> None (unregistered)
+        # which("brew") -> "/usr/local/bin/brew" (registered)
+        # run(["/usr/local/bin/brew", "--prefix", "llvm"]) -> rc=0, stdout="/opt/homebrew/opt/llvm\n"
+        # os.path.isfile("/opt/homebrew/opt/llvm/bin/llvm-config") -> True (patched)
+        # run(["/opt/homebrew/opt/llvm/bin/llvm-config", "--version"]) -> rc=0, stdout="20.1.0\n"
+        bigfoot.subprocess_mock.mock_which("brew", returns="/usr/local/bin/brew")
+        bigfoot.subprocess_mock.mock_run(
+            ["/usr/local/bin/brew", "--prefix", "llvm"],
+            returncode=0,
+            stdout="/opt/homebrew/opt/llvm\n",
+        )
+        bigfoot.subprocess_mock.mock_run(
+            ["/opt/homebrew/opt/llvm/bin/llvm-config", "--version"],
+            returncode=0,
+            stdout="20.1.0\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", side_effect=_which_only("brew")),
-            patch("headerkit._clang._version.subprocess.run", side_effect=run_side_effect),
             patch("headerkit._clang._version.sys.platform", "darwin"),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
             _no_llvm_dir,
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "20"
+
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="brew")
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/usr/local/bin/brew", "--prefix", "llvm"],
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["/opt/homebrew/opt/llvm/bin/llvm-config", "--version"],
+        )
 
     def test_brew_skipped_on_linux(self):
         """Homebrew detection is macOS-only."""
@@ -386,20 +584,31 @@ class TestWindowsDetectionOrder:
         mock_winreg.KEY_READ = 0x20019
         mock_winreg.KEY_WOW64_64KEY = 0x0100
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 18\n"
-
+        # Interaction sequence:
+        # All which() calls for llvm-config/pkg-config/clang -> None (unregistered)
+        # Windows registry finds clang.exe -> run([clang_exe_path, ...])
+        # The source uses os.path.join on the host OS, so we compute the same path.
+        _install_dir = r"C:\Program Files\LLVM"
+        _clang_exe = os.path.join(_install_dir, "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 18\n",
+        )
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", return_value=None),
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict("sys.modules", {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "18"
+
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
+        )
 
     def test_program_files_called_after_registry(self):
         """On win32, Program Files detection is used when registry fails."""
@@ -409,39 +618,52 @@ class TestWindowsDetectionOrder:
         mock_winreg.KEY_READ = 0x20019
         mock_winreg.KEY_WOW64_64KEY = 0x0100
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "#define __clang_major__ 20\n"
-
         def isfile_side_effect(path):
             return "program files" in path.lower() and "clang.exe" in path.lower()
 
+        # Interaction sequence:
+        # All which() calls -> None (unregistered, semi-permissive)
+        # Registry fails (OpenKey raises OSError)
+        # Program Files finds clang.exe -> run([clang_exe_path, ...])
+        # The source uses os.path.join on the host OS, so we compute the same path.
+        _program_files = r"C:\Program Files"
+        _clang_exe = os.path.join(_program_files, "LLVM", "bin", "clang.exe")
+        bigfoot.subprocess_mock.mock_run(
+            [_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n",
+        )
         with (
             patch.dict(
                 os.environ,
                 {
-                    "PROGRAMFILES": r"C:\Program Files",
+                    "PROGRAMFILES": _program_files,
                     "PROGRAMFILES(X86)": r"C:\Program Files (x86)",
                 },
                 clear=False,
             ),
-            patch("headerkit._clang._version.shutil.which", return_value=None),
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict("sys.modules", {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=False),
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
-            patch("headerkit._clang._version.subprocess.run", return_value=mock_result),
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() == "20"
+
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
+        )
 
 
 class TestFallback:
     def test_all_methods_fail_returns_none(self):
+        bigfoot.subprocess_mock.install()
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("headerkit._clang._version.shutil.which", return_value=None),
             _no_llvm_dir,
             patch("headerkit._clang._version._try_windows_registry", return_value=None),
             patch("headerkit._clang._version._try_windows_program_files", return_value=None),
+            bigfoot.sandbox(),
         ):
             assert detect_llvm_version() is None

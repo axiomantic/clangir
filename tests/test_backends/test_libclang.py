@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
+import bigfoot
 import pytest
 
 from headerkit.backends.libclang import (
@@ -728,59 +729,84 @@ class TestGetSystemIncludeDirs:
 
     def test_clang_not_found_returns_empty(self):
         """When clang is not on PATH, returns empty list."""
+        import sys
+
         import headerkit.backends.libclang as mod
 
+        null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        with patch("headerkit.backends.libclang.subprocess.run", side_effect=FileNotFoundError):
+        bigfoot.subprocess_mock.mock_run(
+            ["clang", "-v", "-x", "c", "-E", null_file],
+            raises=FileNotFoundError(),
+        )
+        with bigfoot.sandbox():
             result = get_system_include_dirs()
-            assert result == []
+        assert result == []
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
 
     def test_clang_timeout_returns_empty(self):
         """When clang times out, returns empty list."""
+        import sys
+
         import headerkit.backends.libclang as mod
 
+        null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        with patch(
-            "headerkit.backends.libclang.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="clang", timeout=10),
-        ):
+        bigfoot.subprocess_mock.mock_run(
+            ["clang", "-v", "-x", "c", "-E", null_file],
+            raises=subprocess.TimeoutExpired(cmd="clang", timeout=10),
+        )
+        with bigfoot.sandbox():
             result = get_system_include_dirs()
-            assert result == []
+        assert result == []
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
 
     def test_parses_include_search_paths(self):
         """Parses clang -v output to extract include search paths."""
+        import sys
+
         import headerkit.backends.libclang as mod
 
+        null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        mock_result = MagicMock()
-        mock_result.stderr = (
-            "clang version 18.0.0\n"
-            "#include <...> search starts here:\n"
-            " /usr/lib/clang/18/include\n"
-            " /usr/include\n"
-            "End of search list.\n"
+        bigfoot.subprocess_mock.mock_run(
+            ["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=0,
+            stderr=(
+                "clang version 18.0.0\n"
+                "#include <...> search starts here:\n"
+                " /usr/lib/clang/18/include\n"
+                " /usr/include\n"
+                "End of search list.\n"
+            ),
         )
-        with patch("headerkit.backends.libclang.subprocess.run", return_value=mock_result):
+        with bigfoot.sandbox():
             result = get_system_include_dirs()
-            assert "-isystem/usr/lib/clang/18/include" in result
-            assert "-isystem/usr/include" in result
+        assert result == ["-isystem/usr/lib/clang/18/include", "-isystem/usr/include"]
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
 
     def test_skips_framework_directories(self):
         """Framework directories are excluded from the result."""
+        import sys
+
         import headerkit.backends.libclang as mod
 
+        null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        mock_result = MagicMock()
-        mock_result.stderr = (
-            "#include <...> search starts here:\n"
-            " /usr/include\n"
-            " /System/Library/Frameworks (framework directory)\n"
-            "End of search list.\n"
+        bigfoot.subprocess_mock.mock_run(
+            ["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=0,
+            stderr=(
+                "#include <...> search starts here:\n"
+                " /usr/include\n"
+                " /System/Library/Frameworks (framework directory)\n"
+                "End of search list.\n"
+            ),
         )
-        with patch("headerkit.backends.libclang.subprocess.run", return_value=mock_result):
+        with bigfoot.sandbox():
             result = get_system_include_dirs()
-            assert "-isystem/usr/include" in result
-            assert len(result) == 1  # framework dir excluded
+        assert result == ["-isystem/usr/include"]
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
 
 
 @libclang
