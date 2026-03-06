@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "headerkit"
-version = "0.8.1"
+version = "0.8.2"
 description = "C/C++ header analysis toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more"
 readme = "README.md"
 license = "MIT AND Apache-2.0 WITH LLVM-exception"
@@ -43,7 +43,7 @@ headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
 toml = []
-test = ["pytest", "pytest-timeout", "bigfoot>=0.3.0"]
+test = ["pytest", "pytest-timeout", "bigfoot>=0.4.1"]
 lint = ["ruff", "mypy"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
 dev = ["headerkit[test,lint,docs,toml]"]

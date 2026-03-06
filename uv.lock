@@ -27,11 +27,11 @@ wheels = [
 
 [[package]]
 name = "bigfoot"
-version = "0.3.0"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9c/31/37cd0a0d0ac45bbc01ceff770ebc279b59c52b2303dd0a15e3855bd6a9ef/bigfoot-0.3.0.tar.gz", hash = "sha256:8d042e2acbcb07c9d48e701eab09a3fc18a2092b6f4f59405577037872359e3b", size = 85272, upload-time = "2026-03-05T10:17:34.06Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/ec/e326d321ec982f0e7454384f4ac6c0e6e6602923bbd74894d9bdb8a051a9/bigfoot-0.4.1.tar.gz", hash = "sha256:f36723ffb68fc7671ee5d63b038fc196150ad18b94fb148eda9cc702f974a554", size = 142390, upload-time = "2026-03-06T00:33:00.046Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/5c/7ce27a0fbad532ea860cb856c252d21567decf036489479ee6d1a7f95001/bigfoot-0.3.0-py3-none-any.whl", hash = "sha256:8a474c3c5a652e6744039187cd1dda685f699227afb4f0b3ff63fe8b0988f5a7", size = 30328, upload-time = "2026-03-05T10:17:32.66Z" },
+    { url = "https://files.pythonhosted.org/packages/77/9c/c74953266d31c5c7eecd530d5bdcf7c347a09a6a54d399fa8bc9b6500b14/bigfoot-0.4.1-py3-none-any.whl", hash = "sha256:65e14e0ba98e24ed4c1524ba57cafa226e988fb94de4e20166a276abdb2448c3", size = 51297, upload-time = "2026-03-06T00:32:58.389Z" },
 ]
 
 [[package]]
@@ -192,7 +192,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.3.0" },
+    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.4.1" },
     { name = "headerkit", extras = ["test", "lint", "docs", "toml"], marker = "extra == 'dev'" },
     { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },

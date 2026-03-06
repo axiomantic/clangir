@@ -24,7 +24,7 @@ class TestInstallLinux:
         bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
         bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=0)
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_linux()
 
         assert result is True
@@ -43,7 +43,7 @@ class TestInstallLinux:
         bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
         bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_linux()
 
         assert result is True
@@ -65,7 +65,7 @@ class TestInstallLinux:
         bigfoot.subprocess_mock.mock_which("apk", returns="/sbin/apk")
         bigfoot.subprocess_mock.mock_run(["apk", "add", "clang-dev"], returncode=0)
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_linux()
 
         assert result is True
@@ -84,7 +84,7 @@ class TestInstallLinux:
         # sandbox entry. Without this, subprocess.run would not be intercepted.
         bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_linux()
 
         assert result is False
@@ -99,7 +99,7 @@ class TestInstallLinux:
         bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
         bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_linux()
 
         assert result is True
@@ -131,7 +131,7 @@ class TestInstallMacos:
         bigfoot.subprocess_mock.mock_which("brew", returns="/opt/homebrew/bin/brew")
         bigfoot.subprocess_mock.mock_run(["brew", "install", "llvm"], returncode=0)
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_macos()
 
         assert result is True
@@ -148,7 +148,7 @@ class TestInstallMacos:
         """When brew is unavailable, install_macos returns False."""
         bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
 
-        with bigfoot.sandbox():
+        with bigfoot:
             result = install_macos()
 
         assert result is False
@@ -165,7 +165,7 @@ class TestInstallWindows:
 
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
 
@@ -185,7 +185,7 @@ class TestInstallWindows:
 
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
 
@@ -219,7 +219,7 @@ class TestInstallWindows:
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "ARM64"}, clear=False),
             patch("headerkit.install_libclang.os.remove") as mock_remove,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = install_windows(version)
 

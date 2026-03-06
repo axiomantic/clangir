@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-03-05
+
 ### Changed
 
+- Updated bigfoot dependency to >=0.4.1 and adopted `with bigfoot:` context manager syntax
 - Test suite now uses [bigfoot](https://github.com/axiomantic/bigfoot) for subprocess interception. `subprocess.run` and `shutil.which` mocks in `test_install_libclang.py`, `test_version_detect.py`, `test_libclang.py`, and `test_windows_detection.py` are replaced with `bigfoot.subprocess_mock`, which enforces strict FIFO ordering and fails fast on unexpected calls.
 - Integration test writer assertions extracted into shared helpers (`_check_ctypes_write`, `_check_cython_write`, etc.) in `test_real_headers.py`, eliminating repeated assertion logic across the five library test classes.
 

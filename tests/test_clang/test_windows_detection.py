@@ -45,7 +45,7 @@ class TestWindowsRegistry:
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_registry()
         assert result == "18"
@@ -112,7 +112,7 @@ class TestWindowsRegistry:
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_registry()
         assert result is None
@@ -141,7 +141,7 @@ class TestWindowsRegistry:
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_registry()
         assert result is None
@@ -178,7 +178,7 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "20"
@@ -208,7 +208,7 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "19"
@@ -271,7 +271,7 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "21"

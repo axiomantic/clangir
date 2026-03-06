@@ -38,7 +38,7 @@ class TestEnvVarOverride:
         bigfoot.subprocess_mock.install()
         with (
             patch.dict(os.environ, {"CIR_CLANG_VERSION": "20"}),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             # Even though llvm-config would return 19, the env var should win.
             # No subprocess.run or shutil.which calls should be made at all.
@@ -76,7 +76,7 @@ class TestLlvmConfig:
         with (
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "18"
 
@@ -102,7 +102,7 @@ class TestLlvmConfig:
         with (
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "18"
 
@@ -129,7 +129,7 @@ class TestLlvmConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "19"
 
@@ -163,7 +163,7 @@ class TestLlvmConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "21"
 
@@ -202,7 +202,7 @@ class TestLlvmConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "20"
 
@@ -240,7 +240,7 @@ class TestLlvmConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "19"
 
@@ -273,7 +273,7 @@ class TestClangPreprocessor:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "20"
 
@@ -302,7 +302,7 @@ class TestClangPreprocessor:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "19"
 
@@ -338,7 +338,7 @@ class TestClangPreprocessor:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "16"
 
@@ -360,7 +360,7 @@ class TestClangPreprocessor:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() is None
 
@@ -381,7 +381,7 @@ class TestClangPreprocessor:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() is None
 
@@ -408,7 +408,7 @@ class TestPkgConfig:
         with (
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "18"
 
@@ -435,7 +435,7 @@ class TestPkgConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "20"
 
@@ -475,7 +475,7 @@ class TestPkgConfig:
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
             _linux_platform,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "19"
 
@@ -561,7 +561,7 @@ class TestHomebrewLlvm:
             patch("headerkit._clang._version.sys.platform", "darwin"),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
             _no_llvm_dir,
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "20"
 
@@ -623,7 +623,7 @@ class TestWindowsDetectionOrder:
             patch.dict("sys.modules", {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "18"
 
@@ -668,7 +668,7 @@ class TestWindowsDetectionOrder:
             patch.dict("sys.modules", {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=False),
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() == "20"
 
@@ -686,6 +686,6 @@ class TestFallback:
             _no_llvm_dir,
             patch("headerkit._clang._version._try_windows_registry", return_value=None),
             patch("headerkit._clang._version._try_windows_program_files", return_value=None),
-            bigfoot.sandbox(),
+            bigfoot,
         ):
             assert detect_llvm_version() is None

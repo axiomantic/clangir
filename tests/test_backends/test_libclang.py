@@ -739,7 +739,7 @@ class TestGetSystemIncludeDirs:
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=FileNotFoundError(),
         )
-        with bigfoot.sandbox():
+        with bigfoot:
             result = get_system_include_dirs()
         assert result == []
         bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
@@ -756,7 +756,7 @@ class TestGetSystemIncludeDirs:
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=subprocess.TimeoutExpired(cmd="clang", timeout=10),
         )
-        with bigfoot.sandbox():
+        with bigfoot:
             result = get_system_include_dirs()
         assert result == []
         bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
@@ -780,7 +780,7 @@ class TestGetSystemIncludeDirs:
                 "End of search list.\n"
             ),
         )
-        with bigfoot.sandbox():
+        with bigfoot:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/lib/clang/18/include", "-isystem/usr/include"]
         bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
@@ -803,7 +803,7 @@ class TestGetSystemIncludeDirs:
                 "End of search list.\n"
             ),
         )
-        with bigfoot.sandbox():
+        with bigfoot:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/include"]
         bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
