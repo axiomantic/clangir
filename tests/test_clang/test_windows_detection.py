@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import bigfoot
 import pytest
+from dirty_equals import AnyThing
 
 from headerkit._clang._version import (
     _try_windows_program_files,
@@ -41,15 +42,21 @@ class TestWindowsRegistry:
             stdout="#define __clang_major__ 18\n#define __clang_minor__ 1\n",
         )
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot,
         ):
             result = _try_windows_registry()
         assert result == "18"
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 18\n#define __clang_minor__ 1\n",
+            stderr="",
+        )
 
     def test_registry_key_not_found(self, mock_winreg_constants):
         """Registry key does not exist, returns None."""
@@ -108,15 +115,21 @@ class TestWindowsRegistry:
             stdout="#define __STDC__ 1\n",
         )
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot,
         ):
             result = _try_windows_registry()
         assert result is None
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __STDC__ 1\n",
+            stderr="",
+        )
 
     def test_skipped_on_non_windows(self):
         """Returns None immediately on non-Windows platforms."""
@@ -137,15 +150,21 @@ class TestWindowsRegistry:
             raises=subprocess.TimeoutExpired(cmd="clang.exe", timeout=5),
         )
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot,
         ):
             result = _try_windows_registry()
         assert result is None
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=AnyThing,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
 
     def test_winreg_import_error(self):
         """When winreg module is not importable, returns None."""
@@ -169,6 +188,7 @@ class TestWindowsProgramFiles:
             stdout="#define __clang_major__ 20\n",
         )
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -178,11 +198,16 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "20"
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[expected_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 20\n",
+            stderr="",
+        )
 
     def test_finds_version_from_programfiles_x86(self):
         """Finds LLVM in PROGRAMFILES(X86) when PROGRAMFILES path has no clang."""
@@ -199,6 +224,7 @@ class TestWindowsProgramFiles:
             return os.path.normpath(path) == os.path.normpath(expected)
 
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -208,11 +234,16 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", side_effect=isfile_side_effect),
-            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "19"
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[x86_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[x86_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 19\n",
+            stderr="",
+        )
 
     def test_no_programfiles_env_var(self):
         """Both PROGRAMFILES env vars are absent."""
@@ -262,6 +293,7 @@ class TestWindowsProgramFiles:
             stdout="#define __clang_major__ 21\n",
         )
         with (
+            bigfoot,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -271,9 +303,20 @@ class TestWindowsProgramFiles:
                 },
             ),
             patch("headerkit._clang._version.os.path.isfile", return_value=True),
-            bigfoot,
         ):
             result = _try_windows_program_files()
         assert result == "21"
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[first_path, "-dM", "-E", "-x", "c", "NUL"])
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=[x86_path, "-dM", "-E", "-x", "c", "NUL"])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[first_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=AnyThing,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[x86_path, "-dM", "-E", "-x", "c", "NUL"],
+            returncode=0,
+            stdout="#define __clang_major__ 21\n",
+            stderr="",
+        )

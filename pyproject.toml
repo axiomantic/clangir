@@ -12,9 +12,9 @@ license-files = ["LICENSE", "headerkit/_clang/LICENSE"]
 authors = [
     { name = "elijahr", email = "elijahr+cir@gmail.com" },
 ]
-keywords = ["c", "c++", "parser", "cffi", "libclang", "ir", "code-generation"]
+keywords = ["c", "c++", "parser", "cffi", "libclang", "ir", "code-generation", "ctypes", "cython", "ffi", "bindings", "header-parser"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Compilers",
@@ -37,16 +37,16 @@ Homepage = "https://github.com/axiomantic/headerkit"
 Repository = "https://github.com/axiomantic/headerkit"
 Issues = "https://github.com/axiomantic/headerkit/issues"
 Changelog = "https://github.com/axiomantic/headerkit/blob/main/CHANGELOG.md"
+Documentation = "https://axiomantic.github.io/headerkit/"
 
 [project.scripts]
 headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
-toml = []
-test = ["pytest", "pytest-timeout", "bigfoot>=0.4.1"]
-lint = ["ruff", "mypy"]
-docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
-dev = ["headerkit[test,lint,docs,toml]"]
+test = ["pytest>=9,<10", "pytest-timeout>=2,<3", "bigfoot>=0.10.1,<1", "dirty-equals>=0.11,<1"]
+lint = ["ruff>=0.14,<1", "mypy>=1,<2"]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10", "mkdocstrings[python]>=0.27,<1", "mike>=2.1,<3"]
+dev = ["headerkit[test,lint,docs]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["headerkit"]

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import bigfoot
 import pytest
+from dirty_equals import AnyThing
 
 from headerkit.backends.libclang import (
     LibclangBackend,
@@ -742,7 +743,13 @@ class TestGetSystemIncludeDirs:
         with bigfoot:
             result = get_system_include_dirs()
         assert result == []
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=AnyThing,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
 
     def test_clang_timeout_returns_empty(self):
         """When clang times out, returns empty list."""
@@ -759,7 +766,13 @@ class TestGetSystemIncludeDirs:
         with bigfoot:
             result = get_system_include_dirs()
         assert result == []
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=AnyThing,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
 
     def test_parses_include_search_paths(self):
         """Parses clang -v output to extract include search paths."""
@@ -783,7 +796,13 @@ class TestGetSystemIncludeDirs:
         with bigfoot:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/lib/clang/18/include", "-isystem/usr/include"]
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=0,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
 
     def test_skips_framework_directories(self):
         """Framework directories are excluded from the result."""
@@ -806,7 +825,13 @@ class TestGetSystemIncludeDirs:
         with bigfoot:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/include"]
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.run, command=["clang", "-v", "-x", "c", "-E", null_file])
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["clang", "-v", "-x", "c", "-E", null_file],
+            returncode=0,
+            stdout=AnyThing,
+            stderr=AnyThing,
+        )
 
 
 @libclang

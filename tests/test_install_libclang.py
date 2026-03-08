@@ -31,10 +31,14 @@ class TestInstallLinux:
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="dnf",
+            returns="/usr/bin/dnf",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-devel"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
     def test_install_linux_apt(self) -> None:
@@ -47,17 +51,25 @@ class TestInstallLinux:
             result = install_linux()
 
         assert result is True
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="apt-get",
+            returns="/usr/bin/apt-get",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["apt-get", "update", "-qq"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["apt-get", "install", "-y", "libclang-dev"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
     def test_install_linux_apk(self) -> None:
@@ -69,13 +81,19 @@ class TestInstallLinux:
             result = install_linux()
 
         assert result is True
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apt-get", returns=None)
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="apk",
+            returns="/sbin/apk",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["apk", "add", "clang-dev"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
     def test_install_linux_no_package_manager(self) -> None:
@@ -88,8 +106,9 @@ class TestInstallLinux:
             result = install_linux()
 
         assert result is False
-        # If subprocess.run had fired inside the sandbox, UnmockedInteractionError
-        # would have raised immediately.
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apt-get", returns=None)
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apk", returns=None)
 
     def test_install_linux_dnf_fails_falls_through_to_apt(self) -> None:
         """When dnf fails (returncode=1), install_linux falls through to apt-get."""
@@ -106,22 +125,33 @@ class TestInstallLinux:
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="dnf",
+            returns="/usr/bin/dnf",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-devel"],
+            returncode=1,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="apt-get",
+            returns="/usr/bin/apt-get",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["apt-get", "update", "-qq"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["apt-get", "install", "-y", "libclang-dev"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
 
@@ -138,10 +168,14 @@ class TestInstallMacos:
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="brew",
+            returns="/opt/homebrew/bin/brew",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["brew", "install", "llvm"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
     def test_install_macos_no_brew(self) -> None:
@@ -152,6 +186,7 @@ class TestInstallMacos:
             result = install_macos()
 
         assert result is False
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="brew", returns=None)
 
 
 class TestInstallWindows:
@@ -173,10 +208,14 @@ class TestInstallWindows:
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.which,
             name="choco",
+            returns=r"C:\ProgramData\chocolatey\bin\choco.exe",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
             command=["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
     def test_install_windows_x64_no_choco(self) -> None:
@@ -190,6 +229,7 @@ class TestInstallWindows:
             result = install_windows(DEFAULT_LLVM_VERSION)
 
         assert result is False
+        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="choco", returns=None)
 
     def test_install_windows_arm64(self) -> None:
         """On ARM64 Windows, install_windows downloads and runs the LLVM installer."""
@@ -234,6 +274,9 @@ class TestInstallWindows:
                 expected_installer,
                 curl_url,
             ],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
@@ -242,6 +285,9 @@ class TestInstallWindows:
                 "-Command",
                 f"Start-Process '{expected_installer}' -ArgumentList '/S' -Wait",
             ],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
 
 

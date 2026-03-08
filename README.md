@@ -4,11 +4,23 @@
 [![Docs](https://github.com/axiomantic/headerkit/actions/workflows/docs.yml/badge.svg)](https://axiomantic.github.io/headerkit/)
 [![PyPI](https://img.shields.io/pypi/v/headerkit)](https://pypi.org/project/headerkit/)
 [![Python](https://img.shields.io/pypi/pyversions/headerkit)](https://pypi.org/project/headerkit/)
+[![License](https://img.shields.io/github/license/axiomantic/headerkit)](https://github.com/axiomantic/headerkit/blob/main/LICENSE)
 
 Parse C/C++ headers with libclang and emit output in any format.
 
 headerkit is the parser engine behind [ctypesgen2](https://github.com/ctypesgen/ctypesgen) (ctypes bindings)
 and [autopxd2](https://github.com/elijahr/autopxd2) (Cython .pxd generation).
+
+## Features
+
+- **Multiple output formats**: ctypes, CFFI, Cython, LuaJIT FFI, JSON IR, and LLM-optimized prompt output
+- **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes:lib.py -w cython:lib.pxd`
+- **Plugin system**: register third-party backends and writers via Python entry points
+- **Zero runtime dependencies**: pure Python, nothing to install beyond headerkit itself
+- **Config file support**: `.headerkit.toml` or `[tool.headerkit]` in `pyproject.toml`
+- **Multi-header merging**: pass multiple `.h` files and they are merged into a single umbrella header
+- **API diff reports**: detect breaking changes between header versions with the `diff` writer
+- **Broad LLVM support**: works with LLVM 18, 19, 20, and 21
 
 ## Installation
 
@@ -37,17 +49,85 @@ Supports LLVM 18, 19, 20, and 21.
 
 ## Quick start
 
+Given a header `mylib.h`:
+
+```c
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+Point* create_point(int x, int y);
+void free_point(Point* p);
+```
+
+Generate CFFI cdef declarations:
+
+```console
+$ headerkit mylib.h -w cffi
+typedef struct Point {
+    int x;
+    int y;
+} Point;
+Point * create_point(int x, int y);
+void free_point(Point * p);
+```
+
+Generate a Cython `.pxd` file:
+
+```console
+$ headerkit mylib.h -w cython
+cdef extern from "mylib.h":
+
+    ctypedef struct Point:
+        int x
+        int y
+
+    Point* create_point(int x, int y)
+
+    void free_point(Point* p)
+```
+
+Generate a complete ctypes binding module:
+
+```console
+$ headerkit mylib.h -w ctypes
+"""ctypes bindings generated from mylib.h."""
+
+import ctypes
+import ctypes.util
+import sys
+
+# ============================================================
+# Structures and Unions
+# ============================================================
+
+class Point(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+    ]
+
+# ============================================================
+# Function Prototypes
+# ============================================================
+
+_lib.create_point.argtypes = [ctypes.c_int, ctypes.c_int]
+_lib.create_point.restype = ctypes.POINTER(Point)
+
+_lib.free_point.argtypes = [ctypes.POINTER(Point)]
+_lib.free_point.restype = None
+```
+
+Multiple outputs in one pass:
+
 ```bash
-# CFFI bindings to stdout
-headerkit mylib.h -w cffi
-
-# ctypes binding module to a file
-headerkit mylib.h -w ctypes:mylib.py
-
-# Multiple outputs in one pass
 headerkit mylib.h -w cython:mylib.pxd -w json:ir.json
+```
 
-# With include paths and preprocessor defines
+With include paths and preprocessor defines:
+
+```bash
 headerkit mylib.h -I /usr/local/include -D VERSION=2 -w cffi
 ```
 
