@@ -44,7 +44,7 @@ headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
 toml = []
-test = ["pytest", "pytest-timeout", "bigfoot>=0.4.1"]
+test = ["pytest", "pytest-timeout", "bigfoot>=0.4.1", "dirty-equals"]
 lint = ["ruff", "mypy"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
 dev = ["headerkit[test,lint,docs,toml]"]
