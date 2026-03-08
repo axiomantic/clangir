@@ -8,7 +8,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -40,4 +40,4 @@ jobs:
           key: test-headers-v2
       - name: Run tests
         shell: bash
-        run: pytest
+        run: pytest -x
