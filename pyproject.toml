@@ -43,11 +43,10 @@ Documentation = "https://axiomantic.github.io/headerkit/"
 headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
-toml = []
-test = ["pytest", "pytest-timeout", "bigfoot>=0.4.1", "dirty-equals"]
-lint = ["ruff", "mypy"]
-docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.27", "mike>=2.1"]
-dev = ["headerkit[test,lint,docs,toml]"]
+test = ["pytest>=9,<10", "pytest-timeout>=2,<3", "bigfoot>=0.10.1,<1", "dirty-equals>=0.11,<1"]
+lint = ["ruff>=0.14,<1", "mypy>=1,<2"]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10", "mkdocstrings[python]>=0.27,<1", "mike>=2.1,<3"]
+dev = ["headerkit[test,lint,docs]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["headerkit"]
