@@ -8,19 +8,24 @@
 
 Parse C/C++ headers with libclang and emit output in any format.
 
-headerkit is the parser engine behind [autopxd2](https://github.com/elijahr/autopxd2) (Cython `.pxd` generation).
-It can also generate ctypes bindings, CFFI cdef declarations, LuaJIT FFI bindings, JSON IR, and LLM-optimized prompt output, and the plugin system lets you add your own.
+Built-in writers produce ctypes, CFFI, Cython, LuaJIT FFI, JSON IR, and LLM-optimized prompt output, and the plugin system lets you add your own.
+
+```mermaid
+graph LR
+    A[C/C++ headers] --> B[backend]
+    B --> C[IR]
+    C --> D[writer]
+    D --> E[output]
+```
 
 ## Features
 
-- **Multiple output formats**: ctypes, CFFI, Cython, LuaJIT FFI, JSON IR, and LLM-optimized prompt output
 - **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes:lib.py -w cython:lib.pxd`
 - **Plugin system**: register third-party backends and writers via Python entry points
 - **Zero runtime dependencies**: pure Python, nothing to install beyond headerkit itself
 - **Config file support**: `.headerkit.toml` or `[tool.headerkit]` in `pyproject.toml`
 - **Multi-header merging**: pass multiple `.h` files and they are merged into a single umbrella header
 - **API diff reports**: detect breaking changes between header versions with the `diff` writer
-- **Broad LLVM support**: works with LLVM 18, 19, 20, and 21
 
 ## Installation
 
@@ -28,7 +33,7 @@ It can also generate ctypes bindings, CFFI cdef declarations, LuaJIT FFI binding
 pip install headerkit
 ```
 
-Requires Python 3.10+. No Python runtime dependencies.
+Requires Python 3.10+.
 
 Then install libclang:
 
@@ -139,8 +144,6 @@ headerkit mylib.h -I /usr/local/include -D VERSION=2 -w cffi
 headerkit [options] FILE [FILE ...]
 ```
 
-Multiple input files are merged into a single umbrella header before parsing.
-
 ### Flags
 
 | Flag | Description |
@@ -217,10 +220,6 @@ Or load plugins explicitly from the config file:
 plugins = ["mypkg.headerkit_plugin"]
 ```
 
----
-
-Full documentation, guides, and API reference: [axiomantic.github.io/headerkit](https://axiomantic.github.io/headerkit/)
-
 ## Python API
 
 ```python
@@ -234,21 +233,7 @@ writer = get_writer("cffi")
 print(writer.write(header))
 ```
 
-See the [API reference](https://axiomantic.github.io/headerkit/) for full documentation of
-backends, writers, and the IR.
-
-## Architecture
-
-A backend parses headers and produces a language-neutral IR. Writers consume that IR and
-produce output. They are independent; any backend feeds any writer.
-
-```mermaid
-graph LR
-    A[C/C++ headers] --> B[backend]
-    B --> C[IR]
-    C --> D[writer]
-    D --> E[output]
-```
+Full documentation, guides, and API reference: [axiomantic.github.io/headerkit](https://axiomantic.github.io/headerkit/)
 
 ## Development
 
