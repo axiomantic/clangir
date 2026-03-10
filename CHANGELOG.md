@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-03-10
+
+### Changed
+
+- Updated README: fixed project description, added Mermaid architecture diagram, listed supported output formats and plugin system
+- Added CHANGELOG checklist item to PR template
+- Bumped `actions/checkout` to v6, `actions/cache` to v5, `peter-evans/create-pull-request` to v8
+
+### Fixed
+
+- Test assertion for Homebrew detection was unconditional but the code only probes `brew` on macOS
+
 ## [0.8.2] - 2026-03-05
 
 ### Changed
