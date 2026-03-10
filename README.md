@@ -8,8 +8,8 @@
 
 Parse C/C++ headers with libclang and emit output in any format.
 
-headerkit is the parser engine behind [ctypesgen2](https://github.com/ctypesgen/ctypesgen) (ctypes bindings)
-and [autopxd2](https://github.com/elijahr/autopxd2) (Cython .pxd generation).
+headerkit is the parser engine behind [autopxd2](https://github.com/elijahr/autopxd2) (Cython `.pxd` generation).
+It can also generate ctypes bindings, CFFI cdef declarations, LuaJIT FFI bindings, JSON IR, and LLM-optimized prompt output, and the plugin system lets you add your own.
 
 ## Features
 
@@ -97,6 +97,8 @@ $ headerkit mylib.h -w ctypes
 import ctypes
 import ctypes.util
 import sys
+
+# ... library loading omitted for brevity ...
 
 # ============================================================
 # Structures and Unions
@@ -240,8 +242,12 @@ backends, writers, and the IR.
 A backend parses headers and produces a language-neutral IR. Writers consume that IR and
 produce output. They are independent; any backend feeds any writer.
 
-```
-C/C++ headers --> [backend] --> IR --> [writer] --> output
+```mermaid
+graph LR
+    A[C/C++ headers] --> B[backend]
+    B --> C[IR]
+    C --> D[writer]
+    D --> E[output]
 ```
 
 ## Development
