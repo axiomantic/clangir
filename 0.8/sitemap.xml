@@ -2,98 +2,98 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/architecture/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/cffi/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/custom-backends/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/custom-writers/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/install-libclang/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/installation/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/guides/quickstart/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/backends/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/cffi/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/ctypes/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/cython/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/diff/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/install-libclang/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/ir/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/json/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/lua/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/prompt/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/reference/writers/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/tutorials/ctypes-writer/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/tutorials/header-cleanup/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/tutorials/json-export/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
     <url>
          <loc>https://axiomantic.github.io/headerkit/0.8/tutorials/pxd-writer/</loc>
-         <lastmod>2026-03-10</lastmod>
+         <lastmod>2026-03-11</lastmod>
     </url>
 </urlset>
