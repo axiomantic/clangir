@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-03-23
+## [0.9.0] - 2026-03-24
 
 ### Added
 
@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sidecar `.hkcache` files for json, prompt, and diff writers
 - `hash_comment_format()` method on CffiWriter, CtypesWriter, CythonWriter, and LuaWriter
 - Python 3.10 support with `tomli` fallback for TOML parsing
+
+### Fixed
+
+- `is_up_to_date_batch()` now skips items missing `output_path` with a warning instead of silently creating empty-string key collisions
 
 ## [0.8.4] - 2026-03-11
 
