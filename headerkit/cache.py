@@ -96,6 +96,39 @@ def is_up_to_date(
     return stored_hash == expected_hash
 
 
+def is_up_to_date_batch(
+    checks: Sequence[dict[str, Any]],
+) -> dict[str, bool]:
+    """Check multiple outputs for staleness.
+
+    Each dict in ``checks`` uses the same keyword arguments as
+    :func:`is_up_to_date`. Returns a mapping of ``str(output_path)`` to
+    up-to-date status.
+
+    Each check is independent. If a single check raises an exception,
+    that entry returns False and the exception is logged as a warning.
+    The batch does not short-circuit.
+
+    :param checks: Sequence of kwarg dicts for :func:`is_up_to_date`.
+    :returns: Dict mapping output path strings to up-to-date status.
+    """
+    results: dict[str, bool] = {}
+    for check in checks:
+        output_key = str(check.get("output_path", ""))
+        try:
+            results[output_key] = is_up_to_date(
+                output_path=check["output_path"],
+                header_paths=check["header_paths"],
+                writer_name=check.get("writer_name", ""),
+                writer_options=check.get("writer_options"),
+                extra_inputs=check.get("extra_inputs"),
+            )
+        except Exception as exc:
+            logger.warning("Batch check failed for %s: %s", output_key, exc)
+            results[output_key] = False
+    return results
+
+
 def save_hash(
     *,
     output_path: str | Path,
