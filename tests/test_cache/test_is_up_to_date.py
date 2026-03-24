@@ -24,6 +24,7 @@ class TestIsUpToDateEmbedded:
                 # hash = "{digest}"
                 # version = "0.8.4"
                 # writer = "cffi"
+                # generated = "2026-03-23T14:30:00Z"
 
             """)
             + original,
@@ -51,6 +52,7 @@ class TestIsUpToDateEmbedded:
                 # hash = "{digest}"
                 # version = "0.8.4"
                 # writer = "cffi"
+                # generated = "2026-03-23T14:30:00Z"
 
             """)
             + original,
@@ -84,6 +86,7 @@ class TestIsUpToDateSidecar:
                 hash = "{digest}"
                 version = "0.8.4"
                 writer = "cffi"
+                generated = "2026-03-23T14:30:00Z"
             """),
             encoding="utf-8",
         )
@@ -109,6 +112,7 @@ class TestIsUpToDateSidecar:
                 hash = "{digest}"
                 version = "0.8.4"
                 writer = "cffi"
+                generated = "2026-03-23T14:30:00Z"
             """),
             encoding="utf-8",
         )
@@ -207,6 +211,7 @@ class TestIsUpToDateEdgeCases:
                 # hash = "{digest}"
                 # version = "0.8.4"
                 # writer = "cffi"
+                # generated = "2026-03-23T14:30:00Z"
 
             """)
             + original,
@@ -220,6 +225,7 @@ class TestIsUpToDateEdgeCases:
                 hash = "0000000000000000000000000000000000000000000000000000000000000000"
                 version = "0.8.4"
                 writer = "cffi"
+                generated = "2026-01-01T00:00:00"
             """),
             encoding="utf-8",
         )
@@ -280,6 +286,7 @@ class TestIsUpToDateEdgeCases:
                 hash = "{digest_with_opts}"
                 version = "0.8.4"
                 writer = "cffi"
+                generated = "2026-03-23T14:30:00Z"
             """),
             encoding="utf-8",
         )
