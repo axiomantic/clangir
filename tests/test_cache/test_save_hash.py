@@ -8,7 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from headerkit.cache import _sidecar_path, compute_hash, save_hash
 from headerkit.writers import get_writer

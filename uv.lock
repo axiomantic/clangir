@@ -27,15 +27,11 @@ wheels = [
 
 [[package]]
 name = "bigfoot"
-version = "0.16.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/73/18/3d9e74f9ed7ea77a9dbd6a5f0c69a2fbb41c9e659698ecec35b16674cc01/bigfoot-0.16.0.tar.gz", hash = "sha256:db74d94936a49ca2b9c8c935c67a82f93bcde40909eeb24d2c2e78ab4ca4e0f3", size = 402517, upload-time = "2026-03-24T08:12:02.373Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/84/9899ebfb4fa7aa3403ea239e445b8b61d1dfbc41c18f30e64f3168da083c/bigfoot-0.15.0.tar.gz", hash = "sha256:0d9519924533428f1ed71a5a000151f601d9fa9b8aa1a798895560a278d151e4", size = 401908, upload-time = "2026-03-22T07:18:32.302Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/62/0afda60ee8855df637e562ca638e0146375921b3bbdafdfa758558a7609c/bigfoot-0.16.0-py3-none-any.whl", hash = "sha256:4c8f9474a324da54927d034de1e8f348c0ca2d3ad1650bf218c7b1a349b33ebc", size = 152976, upload-time = "2026-03-24T08:12:00.588Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/a8/1a3b3c06977ee9f1f9b6d7f141139d3f816c7eb514637ec0e497d5144bf3/bigfoot-0.15.0-py3-none-any.whl", hash = "sha256:f214afba99ee424f1c64d576309734bc0335b70eccdb6d942e1601894c5d2b99", size = 152578, upload-time = "2026-03-22T07:18:30.44Z" },
 ]
 
 [[package]]
@@ -167,18 +163,6 @@ wheels = [
 ]
 
 [[package]]
-name = "exceptiongroup"
-version = "1.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl", hash = "sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598", size = 16740, upload-time = "2025-11-21T23:01:53.443Z" },
-]
-
-[[package]]
 name = "ghp-import"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -201,7 +185,7 @@ wheels = [
 
 [[package]]
 name = "headerkit"
-version = "0.9.0"
+version = "0.8.4"
 source = { editable = "." }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -239,7 +223,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.16,<1" },
+    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.10.1,<1" },
     { name = "dirty-equals", marker = "extra == 'test'", specifier = ">=0.11,<1" },
     { name = "headerkit", extras = ["test", "lint", "docs"], marker = "extra == 'dev'" },
     { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1,<3" },
@@ -250,7 +234,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9,<10" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2,<3" },
     { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.14,<1" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
 ]
 provides-extras = ["test", "lint", "docs", "dev"]
 
