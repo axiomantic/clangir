@@ -105,6 +105,7 @@ class TestCompatCInteropStringUnicode:
         assert obj.value == text
 
 
+@pytest.mark.allow("subprocess")
 class TestMonkeyPatchMechanism:
     """Tests for the _NEEDS_INTEROP_STRING_PATCH flag and monkey-patch logic."""
 

@@ -5,9 +5,12 @@ import os
 import warnings
 from unittest.mock import patch
 
+import pytest
+
 from headerkit._clang import LATEST_VENDORED, OLDEST_VENDORED, VENDORED_VERSIONS, get_cindex
 
 
+@pytest.mark.allow("subprocess")
 class TestGetCindex:
     def setup_method(self):
         """Reset the cached module before each test."""

@@ -417,6 +417,10 @@ class CtypesWriter:
     def format_description(self) -> str:
         return "Python ctypes bindings"
 
+    def hash_comment_format(self) -> str:
+        """Return format string for wrapping TOML cache metadata in Python comments."""
+        return "# {line}"
+
 
 # Uses bottom-of-module self-registration. See headerkit/writers/cffi.py
 # for documentation of this managed circular import pattern.

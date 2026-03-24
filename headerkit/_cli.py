@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="headerkit",
         description="Parse C/C++ header files and emit output via configurable writers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)",
+        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache-check         Check if generated output is up-to-date\n  cache-save          Save cache hash for generated output",
     )
     parser.add_argument(
         "input_files",
@@ -274,6 +274,16 @@ def main() -> int:
         from headerkit.install_libclang import main as _install_main
 
         return _install_main(sys.argv[2:])
+
+    if len(sys.argv) > 1 and sys.argv[1] == "cache-check":
+        from headerkit._cache_cli import cache_check_main
+
+        return cache_check_main(sys.argv[2:])
+
+    if len(sys.argv) > 1 and sys.argv[1] == "cache-save":
+        from headerkit._cache_cli import cache_save_main
+
+        return cache_save_main(sys.argv[2:])
 
     parser = _build_parser()
     args = parser.parse_args()

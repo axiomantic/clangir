@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-24
+
+### Added
+
+- Hash-based cache staleness detection for generated output files
+- `compute_hash()`, `save_hash()`, and `is_up_to_date()` public API functions in `headerkit.cache`
+- `is_up_to_date_batch()` for checking multiple outputs at once
+- `cache-check` CLI subcommand (exit 0 = up-to-date, exit 1 = stale)
+- `cache-save` CLI subcommand for saving hash metadata
+- Embedded TOML hash comments for cffi, ctypes, cython, and lua writers
+- Sidecar `.hkcache` files for json, prompt, and diff writers
+- `hash_comment_format()` method on CffiWriter, CtypesWriter, CythonWriter, and LuaWriter
+- Python 3.10 support with `tomli` fallback for TOML parsing
+
+### Fixed
+
+- `is_up_to_date_batch()` now skips items missing `output_path` with a warning instead of silently creating empty-string key collisions
+
 ## [0.8.4] - 2026-03-11
 
 ### Changed
@@ -289,6 +307,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[0.9.0]: https://github.com/axiomantic/headerkit/compare/v0.8.4...v0.9.0
+[0.8.4]: https://github.com/axiomantic/headerkit/compare/v0.8.3...v0.8.4
+[0.8.3]: https://github.com/axiomantic/headerkit/compare/v0.8.2...v0.8.3
+[0.8.2]: https://github.com/axiomantic/headerkit/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/axiomantic/headerkit/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/axiomantic/headerkit/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/axiomantic/headerkit/compare/v0.7.2...v0.7.3

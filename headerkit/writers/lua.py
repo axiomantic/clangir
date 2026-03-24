@@ -416,6 +416,10 @@ class LuaWriter:
     def format_description(self) -> str:
         return "LuaJIT FFI bindings"
 
+    def hash_comment_format(self) -> str:
+        """Return format string for wrapping TOML cache metadata in Lua comments."""
+        return "-- {line}"
+
 
 # Uses bottom-of-module self-registration. See headerkit/writers/cffi.py
 # for the pattern explanation.

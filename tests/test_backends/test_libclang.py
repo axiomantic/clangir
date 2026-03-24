@@ -85,6 +85,7 @@ class TestImportability:
 class TestHelperFunctions:
     """Tests for helper functions that don't require libclang."""
 
+    @pytest.mark.allow("subprocess")
     def test_get_libclang_search_paths_returns_list(self):
         """_get_libclang_search_paths returns a non-empty list of strings on supported platforms."""
         import sys
@@ -390,6 +391,7 @@ class TestLibclangSearchPathsWindows:
             assert any("d:/custom/programs/llvm/bin/libclang.dll" in p for p in normalized)
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestLibclangBackendProperties:
     """Tests for LibclangBackend properties (require libclang)."""
@@ -407,6 +409,7 @@ class TestLibclangBackendProperties:
         assert backend.supports_cpp is True
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestLibclangParsing:
     """Tests for parsing C code with the libclang backend."""
@@ -641,6 +644,7 @@ class TestLibclangParsing:
         assert len(shutdown_fn.parameters) == 0
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestBackendRegistration:
     """Test that the backend registers itself when libclang is available."""
@@ -688,6 +692,7 @@ class TestGetSystemIncludeDirs:
         mod._system_include_cache_c = self._saved_c
         mod._system_include_cache_cxx = self._saved_cxx
 
+    @pytest.mark.allow("subprocess")
     def test_returns_list_of_strings(self):
         """get_system_include_dirs returns a list of strings."""
         result = get_system_include_dirs()
@@ -697,6 +702,7 @@ class TestGetSystemIncludeDirs:
         for item in result:
             assert isinstance(item, str)
 
+    @pytest.mark.allow("subprocess")
     def test_entries_are_isystem_flags(self):
         """Each entry should be an -isystem flag if any paths are found."""
         result = get_system_include_dirs()
@@ -705,6 +711,7 @@ class TestGetSystemIncludeDirs:
         for item in result:
             assert item.startswith("-isystem"), f"Expected -isystem prefix, got: {item}"
 
+    @pytest.mark.allow("subprocess")
     def test_result_is_cached(self):
         """Second call returns the same cached list object."""
         first = get_system_include_dirs()
@@ -714,6 +721,7 @@ class TestGetSystemIncludeDirs:
         if shutil.which("clang") is not None:
             assert len(first) > 0, "clang is available but cached result is empty"
 
+    @pytest.mark.allow("subprocess")
     def test_c_and_cxx_cached_separately(self):
         """C and C++ include dirs are cached independently."""
         c_dirs = get_system_include_dirs(cplus=False)
@@ -834,6 +842,7 @@ class TestGetSystemIncludeDirs:
         )
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestHeaderInclusionTracking:
     """Tests for tracking included headers via libclang parsing.
@@ -889,6 +898,7 @@ class TestHeaderInclusionTracking:
         )
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestTypeQualifierParsing:
     """Tests for type qualifier parsing through the libclang backend.
@@ -1017,6 +1027,7 @@ class TestTypeQualifierParsing:
         assert func.return_type.name == "void"
 
 
+@pytest.mark.allow("subprocess")
 @libclang
 class TestMacroParsing:
     """Tests for macro parsing via libclang backend."""

@@ -17,10 +17,13 @@ from headerkit._cli import main
 from headerkit.backends import is_backend_available
 
 # Skip entire module if libclang is not available
-pytestmark = pytest.mark.skipif(
-    not is_backend_available("libclang"),
-    reason="libclang backend not available",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not is_backend_available("libclang"),
+        reason="libclang backend not available",
+    ),
+    pytest.mark.allow("subprocess"),
+]
 
 # ---------------------------------------------------------------------------
 # Shared header sources

@@ -1190,6 +1190,10 @@ class CythonWriter:
         """Short description of the output format."""
         return "Cython .pxd declarations for C/C++ interop"
 
+    def hash_comment_format(self) -> str:
+        """Return format string for wrapping TOML cache metadata in Cython comments."""
+        return "# {line}"
+
 
 # Uses bottom-of-module self-registration (same pattern as cffi.py).
 from headerkit.writers import register_writer  # noqa: E402

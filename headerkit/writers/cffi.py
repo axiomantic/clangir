@@ -533,6 +533,10 @@ class CffiWriter:
     def format_description(self) -> str:
         return "CFFI cdef declarations for ffibuilder.cdef()"
 
+    def hash_comment_format(self) -> str:
+        """Return format string for wrapping TOML cache metadata in Python comments."""
+        return "# {line}"
+
 
 # Uses bottom-of-module self-registration. Unlike backends (which import
 # register_backend at the top and conditionally register at the bottom),

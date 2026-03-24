@@ -112,3 +112,33 @@ def test_writer_functions_match_direct_import():
     assert headerkit.is_writer_available is writers.is_writer_available
     assert headerkit.list_writers is writers.list_writers
     assert headerkit.register_writer is writers.register_writer
+
+
+def test_cache_symbols_in_all():
+    """Cache API symbols should be listed in headerkit.__all__."""
+    import headerkit
+
+    expected_cache_symbols = {
+        "compute_hash",
+        "is_up_to_date",
+        "save_hash",
+    }
+    all_set = set(headerkit.__all__)
+    assert expected_cache_symbols <= all_set, f"Missing from headerkit.__all__: {expected_cache_symbols - all_set}"
+
+
+def test_cache_functions_match_direct_import():
+    """Cache functions imported from headerkit should match headerkit.cache."""
+    import headerkit
+    from headerkit import cache
+
+    assert headerkit.compute_hash is cache.compute_hash
+    assert headerkit.is_up_to_date is cache.is_up_to_date
+    assert headerkit.save_hash is cache.save_hash
+
+
+def test_is_up_to_date_batch_not_in_all():
+    """is_up_to_date_batch is intentionally NOT exported in __all__."""
+    import headerkit
+
+    assert "is_up_to_date_batch" not in headerkit.__all__

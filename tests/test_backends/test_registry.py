@@ -192,6 +192,7 @@ class TestBackendRegistry:
         with pytest.raises(ValueError, match="No backends available"):
             get_default_backend()
 
+    @pytest.mark.allow("subprocess")
     def test_ensure_backends_loaded_handles_import_error(self):
         """Test that _ensure_backends_loaded catches ImportError gracefully.
 
