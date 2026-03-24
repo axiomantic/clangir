@@ -58,6 +58,44 @@ def compute_hash(
     )
 
 
+def is_up_to_date(
+    *,
+    output_path: str | Path,
+    header_paths: Sequence[str | Path],
+    writer_name: str,
+    writer_options: dict[str, Any] | None = None,
+    extra_inputs: Sequence[str | Path] | None = None,
+) -> bool:
+    """Check whether a generated output file is up-to-date with its inputs.
+
+    Reads stored hash from embedded comment or sidecar file, recomputes
+    the expected hash, and compares.
+
+    :param output_path: Path to the generated output file.
+    :param header_paths: Paths to C/C++ header files.
+    :param writer_name: Name of the writer.
+    :param writer_options: Writer configuration options.
+    :param extra_inputs: Additional file paths included in hash.
+    :returns: True if stored hash matches recomputed hash, False otherwise.
+        Returns False if output file is missing, hash is absent, or hash is corrupted.
+    """
+    out = Path(output_path)
+    if not out.exists():
+        return False
+
+    stored_hash = _read_stored_hash(out)
+    if stored_hash is None:
+        return False
+
+    expected_hash = _compute_hash_digest(
+        header_paths=header_paths,
+        writer_name=writer_name,
+        writer_options=writer_options,
+        extra_inputs=extra_inputs,
+    )
+    return stored_hash == expected_hash
+
+
 def save_hash(
     *,
     output_path: str | Path,
@@ -285,6 +323,40 @@ def _parse_embedded_toml(content: str) -> dict[str, Any] | None:
 def _sidecar_path(output_path: Path) -> Path:
     """Return the sidecar path: output_path with .hkcache extension appended."""
     return output_path.parent / (output_path.name + ".hkcache")
+
+
+def _read_stored_hash(output_path: Path) -> str | None:
+    """Try to read hash from embedded comment, then sidecar. Returns None if not found."""
+    # Try embedded first
+    try:
+        content = output_path.read_text(encoding="utf-8")
+        parsed = _parse_embedded_toml(content)
+        if parsed is not None:
+            cache_data = parsed.get("headerkit-cache")
+            if isinstance(cache_data, dict):
+                stored = cache_data.get("hash")
+                if isinstance(stored, str):
+                    return stored
+                logger.warning("Embedded TOML missing 'hash' key in %s", output_path)
+    except Exception:
+        logger.warning("Failed to read embedded hash from %s", output_path)
+
+    # Try sidecar
+    sidecar = _sidecar_path(output_path)
+    if sidecar.exists():
+        try:
+            sidecar_content = sidecar.read_text(encoding="utf-8")
+            parsed_sidecar: dict[str, Any] = tomllib.loads(sidecar_content)
+            cache_data_sc = parsed_sidecar.get("headerkit-cache")
+            if isinstance(cache_data_sc, dict):
+                stored_sc = cache_data_sc.get("hash")
+                if isinstance(stored_sc, str):
+                    return stored_sc
+                logger.warning("Sidecar TOML missing 'hash' key in %s", sidecar)
+        except Exception:
+            logger.warning("Failed to parse sidecar file %s", sidecar)
+
+    return None
 
 
 def _write_embedded_hash(output_path: Path, metadata_toml: str, comment_format: str) -> None:
