@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -17,18 +16,12 @@ except ImportError:
 from headerkit.cache import _sidecar_path, compute_hash, save_hash
 from headerkit.writers import get_writer
 
-_FAKE_NOW = datetime.datetime(2026, 3, 23, 14, 30, 0, tzinfo=datetime.timezone.utc)
 _FAKE_VERSION = "0.8.4"
 
 
 def _patch_version():  # noqa: ANN202
     """Patch importlib.metadata.version in headerkit.cache to return _FAKE_VERSION."""
     return patch("headerkit.cache.importlib.metadata.version", return_value=_FAKE_VERSION)
-
-
-def _patch_datetime():  # noqa: ANN202
-    """Patch datetime in headerkit.cache."""
-    return patch("headerkit.cache.datetime")
 
 
 def _compute_hash_with_fake_version(
@@ -52,9 +45,7 @@ class TestSaveHashEmbedded:
     def test_cffi_embeds_hash_in_output(self, sample_header: Path, sample_output: Path) -> None:
         """save_hash with cffi writer prepends hash comment to output file."""
         writer = get_writer("cffi")
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             result_path = save_hash(
                 output_path=sample_output,
                 header_paths=[sample_header],
@@ -73,7 +64,6 @@ class TestSaveHashEmbedded:
             # hash = "{expected_hash}"
             # version = "{_FAKE_VERSION}"
             # writer = "cffi"
-            # generated = "2026-03-23T14:30:00+00:00"
 
             # generated bindings
         """)
@@ -85,9 +75,7 @@ class TestSaveHashEmbedded:
         output.write_text("local ffi = require('ffi')\n", encoding="utf-8")
 
         writer = get_writer("lua")
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             result_path = save_hash(
                 output_path=output,
                 header_paths=[sample_header],
@@ -106,7 +94,6 @@ class TestSaveHashEmbedded:
             -- hash = "{expected_hash}"
             -- version = "{_FAKE_VERSION}"
             -- writer = "lua"
-            -- generated = "2026-03-23T14:30:00+00:00"
 
             local ffi = require('ffi')
         """)
@@ -135,9 +122,7 @@ class TestSaveHashEmbedded:
             header_paths=[sample_header],
             writer_name="cffi",
         )
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             save_hash(
                 output_path=sample_output,
                 header_paths=[sample_header],
@@ -158,7 +143,6 @@ class TestSaveHashEmbedded:
                 "hash": expected_hash,
                 "version": _FAKE_VERSION,
                 "writer": "cffi",
-                "generated": "2026-03-23T14:30:00+00:00",
             }
         }
 
@@ -218,9 +202,7 @@ class TestSaveHashSidecar:
             header_paths=[sample_header],
             writer_name="json",
         )
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             result_path = save_hash(
                 output_path=output,
                 header_paths=[sample_header],
@@ -239,7 +221,6 @@ class TestSaveHashSidecar:
                 "hash": expected_hash,
                 "version": _FAKE_VERSION,
                 "writer": "json",
-                "generated": "2026-03-23T14:30:00+00:00",
             }
         }
 
@@ -253,9 +234,7 @@ class TestSaveHashSidecar:
             header_paths=[sample_header],
             writer_name="cffi",
         )
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             result_path = save_hash(
                 output_path=sample_output,
                 header_paths=[sample_header],
@@ -276,7 +255,6 @@ class TestSaveHashSidecar:
                 "hash": expected_hash,
                 "version": _FAKE_VERSION,
                 "writer": "cffi",
-                "generated": "2026-03-23T14:30:00+00:00",
             }
         }
 
@@ -321,9 +299,7 @@ class TestSaveHashSidecar:
             header_paths=[sample_header],
             writer_name="cffi",
         )
-        with _patch_datetime() as mock_dt, _patch_version():
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with _patch_version():
             result_path = save_hash(
                 output_path=sample_output,
                 header_paths=[sample_header],
@@ -336,7 +312,6 @@ class TestSaveHashSidecar:
             hash = "{expected_hash}"
             version = "{_FAKE_VERSION}"
             writer = "cffi"
-            generated = "2026-03-23T14:30:00+00:00"
         """)
         assert raw == expected
 

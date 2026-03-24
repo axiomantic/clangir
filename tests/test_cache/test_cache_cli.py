@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import sys
 import textwrap
 from pathlib import Path
@@ -13,7 +12,6 @@ import pytest
 from headerkit._cache_cli import cache_check_main, cache_save_main
 from headerkit.cache import compute_hash
 
-_FAKE_NOW = datetime.datetime(2026, 3, 23, 14, 30, 0, tzinfo=datetime.timezone.utc)
 _FAKE_VERSION = "0.8.4"
 
 
@@ -89,12 +87,7 @@ class TestCacheSaveCli:
         self, sample_header: Path, sample_output: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """cache-save with --writer cffi uses embedded storage."""
-        with (
-            patch("headerkit.cache.datetime") as mock_dt,
-            patch("headerkit.cache.importlib.metadata.version", return_value=_FAKE_VERSION),
-        ):
-            mock_dt.datetime.now.return_value = _FAKE_NOW
-            mock_dt.timezone = datetime.timezone
+        with patch("headerkit.cache.importlib.metadata.version", return_value=_FAKE_VERSION):
             exit_code = cache_save_main(
                 [
                     str(sample_output),
@@ -122,7 +115,6 @@ class TestCacheSaveCli:
             # hash = "{expected_hash}"
             # version = "{_FAKE_VERSION}"
             # writer = "cffi"
-            # generated = "2026-03-23T14:30:00+00:00"
 
             # generated bindings
         """)

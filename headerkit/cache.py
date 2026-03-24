@@ -10,7 +10,6 @@ for validation on platforms where libclang is unavailable.
 
 from __future__ import annotations
 
-import datetime
 import hashlib
 import importlib.metadata
 import logging
@@ -117,10 +116,14 @@ def is_up_to_date_batch(
     """
     results: dict[str, bool] = {}
     for check in checks:
-        output_key = str(check.get("output_path", ""))
+        output_path = check.get("output_path")
+        if not output_path:
+            logger.warning("Batch check item missing required 'output_path', skipping")
+            continue
+        output_key = str(output_path)
         try:
             results[output_key] = is_up_to_date(
-                output_path=check["output_path"],
+                output_path=output_path,
                 header_paths=check["header_paths"],
                 writer_name=check.get("writer_name", ""),
                 writer_options=check.get("writer_options"),
@@ -292,13 +295,11 @@ def _build_metadata_toml(
     Uses manual string formatting to avoid a runtime dependency
     on a TOML serialization library.
     """
-    generated = datetime.datetime.now(datetime.timezone.utc).isoformat()
     lines = [
         "[headerkit-cache]",
         f'hash = "{hash_digest}"',
         f'version = "{headerkit_version}"',
         f'writer = "{writer_name}"',
-        f'generated = "{generated}"',
     ]
     return "\n".join(lines) + "\n"
 
