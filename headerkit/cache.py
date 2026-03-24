@@ -18,7 +18,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import tomllib  # type: ignore[import-not-found]
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ImportError:
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 if TYPE_CHECKING:
     from headerkit.writers import WriterBackend

@@ -27,11 +27,11 @@ wheels = [
 
 [[package]]
 name = "bigfoot"
-version = "0.4.1"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/ec/e326d321ec982f0e7454384f4ac6c0e6e6602923bbd74894d9bdb8a051a9/bigfoot-0.4.1.tar.gz", hash = "sha256:f36723ffb68fc7671ee5d63b038fc196150ad18b94fb148eda9cc702f974a554", size = 142390, upload-time = "2026-03-06T00:33:00.046Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/84/9899ebfb4fa7aa3403ea239e445b8b61d1dfbc41c18f30e64f3168da083c/bigfoot-0.15.0.tar.gz", hash = "sha256:0d9519924533428f1ed71a5a000151f601d9fa9b8aa1a798895560a278d151e4", size = 401908, upload-time = "2026-03-22T07:18:32.302Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/9c/c74953266d31c5c7eecd530d5bdcf7c347a09a6a54d399fa8bc9b6500b14/bigfoot-0.4.1-py3-none-any.whl", hash = "sha256:65e14e0ba98e24ed4c1524ba57cafa226e988fb94de4e20166a276abdb2448c3", size = 51297, upload-time = "2026-03-06T00:32:58.389Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/a8/1a3b3c06977ee9f1f9b6d7f141139d3f816c7eb514637ec0e497d5144bf3/bigfoot-0.15.0-py3-none-any.whl", hash = "sha256:f214afba99ee424f1c64d576309734bc0335b70eccdb6d942e1601894c5d2b99", size = 152578, upload-time = "2026-03-22T07:18:30.44Z" },
 ]
 
 [[package]]
@@ -138,6 +138,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dirty-equals"
+version = "0.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/1d/c5913ac9d6615515a00f4bdc71356d302437cb74ff2e9aaccd3c14493b78/dirty_equals-0.11.tar.gz", hash = "sha256:f4ac74ee88f2d11e2fa0f65eb30ee4f07105c5f86f4dc92b09eb1138775027c3", size = 128067, upload-time = "2025-11-17T01:51:24.451Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/8d/dbff05239043271dbeace563a7686212a3dd517864a35623fe4d4a64ca19/dirty_equals-0.11-py3-none-any.whl", hash = "sha256:b1d7093273fc2f9be12f443a8ead954ef6daaf6746fd42ef3a5616433ee85286", size = 28051, upload-time = "2025-11-17T01:51:22.849Z" },
+]
+
+[[package]]
 name = "ghp-import"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -153,18 +162,20 @@ wheels = [
 name = "griffelib"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/06/eccbd311c9e2b3ca45dbc063b93134c57a1ccc7607c5e545264ad092c4a9/griffelib-2.0.0.tar.gz", hash = "sha256:e504d637a089f5cab9b5daf18f7645970509bf4f53eda8d79ed71cce8bd97934", size = 166312, upload-time = "2026-03-23T21:06:55.954Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/51/c936033e16d12b627ea334aaaaf42229c37620d0f15593456ab69ab48161/griffelib-2.0.0-py3-none-any.whl", hash = "sha256:01284878c966508b6d6f1dbff9b6fa607bc062d8261c5c7253cb285b06422a7f", size = 142004, upload-time = "2026-02-09T19:09:40.561Z" },
 ]
 
 [[package]]
 name = "headerkit"
-version = "0.8.1"
+version = "0.8.4"
 source = { editable = "." }
 
 [package.optional-dependencies]
 dev = [
     { name = "bigfoot" },
+    { name = "dirty-equals" },
     { name = "mike" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
@@ -186,24 +197,26 @@ lint = [
 ]
 test = [
     { name = "bigfoot" },
+    { name = "dirty-equals" },
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.4.1" },
-    { name = "headerkit", extras = ["test", "lint", "docs", "toml"], marker = "extra == 'dev'" },
-    { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1" },
-    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.27" },
-    { name = "mypy", marker = "extra == 'lint'" },
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-timeout", marker = "extra == 'test'" },
-    { name = "ruff", marker = "extra == 'lint'" },
+    { name = "bigfoot", marker = "extra == 'test'", specifier = ">=0.10.1,<1" },
+    { name = "dirty-equals", marker = "extra == 'test'", specifier = ">=0.11,<1" },
+    { name = "headerkit", extras = ["test", "lint", "docs"], marker = "extra == 'dev'" },
+    { name = "mike", marker = "extra == 'docs'", specifier = ">=2.1,<3" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5,<10" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.27,<1" },
+    { name = "mypy", marker = "extra == 'lint'", specifier = ">=1,<2" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9,<10" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2,<3" },
+    { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.14,<1" },
 ]
-provides-extras = ["toml", "test", "lint", "docs", "dev"]
+provides-extras = ["test", "lint", "docs", "dev"]
 
 [[package]]
 name = "idna"
@@ -525,7 +538,7 @@ wheels = [
 
 [[package]]
 name = "mkdocstrings"
-version = "1.0.3"
+version = "0.30.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
@@ -535,9 +548,9 @@ dependencies = [
     { name = "mkdocs-autorefs" },
     { name = "pymdown-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/62/0dfc5719514115bf1781f44b1d7f2a0923fcc01e9c5d7990e48a05c9ae5d/mkdocstrings-1.0.3.tar.gz", hash = "sha256:ab670f55040722b49bb45865b2e93b824450fb4aef638b00d7acb493a9020434", size = 100946, upload-time = "2026-02-07T14:31:40.973Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/33/2fa3243439f794e685d3e694590d28469a9b8ea733af4b48c250a3ffc9a0/mkdocstrings-0.30.1.tar.gz", hash = "sha256:84a007aae9b707fb0aebfc9da23db4b26fc9ab562eb56e335e9ec480cb19744f", size = 106350, upload-time = "2025-09-19T10:49:26.446Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/41/1cf02e3df279d2dd846a1bf235a928254eba9006dd22b4a14caa71aed0f7/mkdocstrings-1.0.3-py3-none-any.whl", hash = "sha256:0d66d18430c2201dc7fe85134277382baaa15e6b30979f3f3bdbabd6dbdb6046", size = 35523, upload-time = "2026-02-07T14:31:39.27Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/2c/f0dc4e1ee7f618f5bff7e05898d20bf8b6e7fa612038f768bfa295f136a4/mkdocstrings-0.30.1-py3-none-any.whl", hash = "sha256:41bd71f284ca4d44a668816193e4025c950b002252081e387433656ae9a70a82", size = 36704, upload-time = "2025-09-19T10:49:24.805Z" },
 ]
 
 [package.optional-dependencies]

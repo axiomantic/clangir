@@ -7,7 +7,10 @@ import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from headerkit.cache import (
     _build_metadata_toml,
