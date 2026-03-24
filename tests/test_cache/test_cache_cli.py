@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from headerkit._cache_cli import cache_check_main, cache_save_main
+from headerkit.cache import compute_hash
+
+_FAKE_NOW = datetime.datetime(2026, 3, 23, 14, 30, 0, tzinfo=datetime.timezone.utc)
+_FAKE_VERSION = "0.8.4"
 
 
 class TestParseWriterOptions:
@@ -56,7 +62,7 @@ class TestParseWriterOptions:
         result = _parse_writer_options(["noequalssign"])
         assert result is None
         captured = capsys.readouterr()
-        assert "malformed --writer-option" in captured.err
+        assert captured.err == "headerkit cache: malformed --writer-option: 'noequalssign'; expected KEY=VALUE\n"
 
 
 class TestCacheSaveCli:
@@ -83,23 +89,44 @@ class TestCacheSaveCli:
         self, sample_header: Path, sample_output: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """cache-save with --writer cffi uses embedded storage."""
-        exit_code = cache_save_main(
-            [
-                str(sample_output),
-                "--header",
-                str(sample_header),
-                "--writer-name",
-                "cffi",
-                "--writer",
-                "cffi",
-            ]
-        )
+        with (
+            patch("headerkit.cache.datetime") as mock_dt,
+            patch("headerkit.cache.importlib.metadata.version", return_value=_FAKE_VERSION),
+        ):
+            mock_dt.datetime.now.return_value = _FAKE_NOW
+            mock_dt.timezone = datetime.timezone
+            exit_code = cache_save_main(
+                [
+                    str(sample_output),
+                    "--header",
+                    str(sample_header),
+                    "--writer-name",
+                    "cffi",
+                    "--writer",
+                    "cffi",
+                ]
+            )
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == f"saved: {sample_output} (embedded)\n"
-        # Verify embedded content
+
+        # Verify exact embedded content
+        with patch("headerkit.cache.importlib.metadata.version", return_value=_FAKE_VERSION):
+            expected_hash = compute_hash(
+                header_paths=[sample_header],
+                writer_name="cffi",
+            )
         content = sample_output.read_text(encoding="utf-8")
-        assert content.startswith("# [headerkit-cache]")
+        expected = textwrap.dedent(f"""\
+            # [headerkit-cache]
+            # hash = "{expected_hash}"
+            # version = "{_FAKE_VERSION}"
+            # writer = "cffi"
+            # generated = "2026-03-23T14:30:00+00:00"
+
+            # generated bindings
+        """)
+        assert content == expected
 
     def test_save_missing_output_exits_1(
         self, sample_header: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -117,7 +144,7 @@ class TestCacheSaveCli:
         )
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert f"Output not found: {missing}" in captured.err
+        assert captured.err == f"headerkit cache-save: Output not found: {missing}\n"
 
     def test_save_with_writer_options(
         self, sample_header: Path, sample_output: Path, capsys: pytest.CaptureFixture[str]
@@ -180,7 +207,10 @@ class TestCacheSaveCli:
         )
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "nonexistent_writer" in captured.err
+        assert captured.err == (
+            "headerkit cache-save: Unknown writer: 'nonexistent_writer'."
+            " Available: cffi, ctypes, cython, diff, json, lua, prompt\n"
+        )
 
 
 class TestCacheCheckCli:
@@ -360,7 +390,7 @@ class TestCliDispatch:
                 from headerkit._cli import main
 
                 main()
-            mock_check.assert_called_once()
+            mock_check.assert_called_once_with(["dummy.py", "--header", "dummy.h", "--writer-name", "cffi"])
 
     def test_cache_save_dispatches(self) -> None:
         """'headerkit cache-save' dispatches to cache_save_main."""
@@ -373,4 +403,4 @@ class TestCliDispatch:
                 from headerkit._cli import main
 
                 main()
-            mock_save.assert_called_once()
+            mock_save.assert_called_once_with(["dummy.py", "--header", "dummy.h", "--writer-name", "cffi"])
