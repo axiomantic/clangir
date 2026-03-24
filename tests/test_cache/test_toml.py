@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import datetime
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 from headerkit.cache import (
     _build_metadata_toml,
@@ -22,34 +21,63 @@ class TestBuildMetadataToml:
 
     def test_produces_valid_toml_with_correct_structure(self) -> None:
         """Output parses as valid TOML with exact keys and values."""
-        toml_str = _build_metadata_toml(
-            hash_digest="abcd1234" * 8,
-            writer_name="cffi",
-            headerkit_version="0.8.4",
-        )
+        fake_now = datetime.datetime(2026, 3, 23, 14, 30, 0, tzinfo=datetime.timezone.utc)
+        with patch("headerkit.cache.datetime") as mock_dt:
+            mock_dt.datetime.now.return_value = fake_now
+            mock_dt.timezone = datetime.timezone
+            toml_str = _build_metadata_toml(
+                hash_digest="abcd1234" * 8,
+                writer_name="cffi",
+                headerkit_version="0.8.4",
+            )
         expected = textwrap.dedent("""\
             [headerkit-cache]
             hash = "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
             version = "0.8.4"
             writer = "cffi"
+            generated = "2026-03-23T14:30:00+00:00"
         """)
         assert toml_str == expected
 
     def test_parses_as_valid_toml(self) -> None:
         """Output round-trips through tomllib.loads without error."""
-        toml_str = _build_metadata_toml(
-            hash_digest="a" * 64,
-            writer_name="lua",
-            headerkit_version="1.0.0",
-        )
+        fake_now = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        with patch("headerkit.cache.datetime") as mock_dt:
+            mock_dt.datetime.now.return_value = fake_now
+            mock_dt.timezone = datetime.timezone
+            toml_str = _build_metadata_toml(
+                hash_digest="a" * 64,
+                writer_name="lua",
+                headerkit_version="1.0.0",
+            )
         parsed = tomllib.loads(toml_str)
         assert parsed == {
             "headerkit-cache": {
                 "hash": "a" * 64,
                 "version": "1.0.0",
                 "writer": "lua",
+                "generated": "2026-01-01T00:00:00+00:00",
             }
         }
+
+    def test_generated_timestamp_is_utc_iso8601(self) -> None:
+        """The generated timestamp is a valid ISO 8601 UTC datetime."""
+        fake_now = datetime.datetime(2026, 6, 15, 9, 45, 30, tzinfo=datetime.timezone.utc)
+        with patch("headerkit.cache.datetime") as mock_dt:
+            mock_dt.datetime.now.return_value = fake_now
+            mock_dt.timezone = datetime.timezone
+            toml_str = _build_metadata_toml(
+                hash_digest="b" * 64,
+                writer_name="ctypes",
+                headerkit_version="2.0.0",
+            )
+        parsed = tomllib.loads(toml_str)
+        ts_str = parsed["headerkit-cache"]["generated"]
+        assert ts_str == "2026-06-15T09:45:30+00:00"
+        # Verify it round-trips as a datetime with UTC tzinfo
+        dt = datetime.datetime.fromisoformat(ts_str)
+        assert dt.tzinfo is not None
+        assert dt == fake_now
 
 
 class TestParseEmbeddedToml:

@@ -10,12 +10,15 @@ for validation on platforms where libclang is unavailable.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import importlib.metadata
 import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+import tomllib  # type: ignore[import-not-found]
 
 logger = logging.getLogger("headerkit.cache")
 
@@ -141,3 +144,82 @@ def _read_file_normalized(path: Path) -> bytes:
     raw = raw.replace(b"\r\n", b"\n")
     raw = raw.replace(b"\r", b"\n")
     return raw
+
+
+def _build_metadata_toml(
+    hash_digest: str,
+    writer_name: str,
+    headerkit_version: str,
+) -> str:
+    """Hand-serialize cache metadata to a TOML string.
+
+    Uses manual string formatting to avoid a runtime dependency
+    on a TOML serialization library.
+    """
+    generated = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    lines = [
+        "[headerkit-cache]",
+        f'hash = "{hash_digest}"',
+        f'version = "{headerkit_version}"',
+        f'writer = "{writer_name}"',
+        f'generated = "{generated}"',
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _parse_embedded_toml(content: str) -> dict[str, Any] | None:
+    """Extract [headerkit-cache] TOML block from comment lines in file content.
+
+    Scans lines from the start of the file. For each line, attempts to
+    match ``# [headerkit-cache]`` or ``-- [headerkit-cache]``. Once found,
+    strips the comment prefix from subsequent lines until a blank line or
+    non-comment line is reached. Feeds the stripped lines to tomllib.
+
+    :returns: Parsed TOML dict, or None if no valid block found.
+    """
+    lines = content.splitlines()
+    prefix: str | None = None
+    toml_lines: list[str] = []
+    collecting = False
+
+    for line in lines:
+        if not collecting:
+            # Try to detect the start marker
+            stripped = line.strip()
+            for candidate_prefix in ("#", "--"):
+                if stripped == f"{candidate_prefix} [headerkit-cache]":
+                    prefix = candidate_prefix
+                    toml_lines.append("[headerkit-cache]")
+                    collecting = True
+                    break
+        else:
+            # We are collecting TOML lines
+            stripped = line.strip()
+            if not stripped:
+                # Blank line ends the TOML block
+                break
+            if prefix is not None and stripped.startswith(prefix):
+                # Strip the comment prefix
+                toml_line = stripped[len(prefix) :].strip()
+                if not toml_line:
+                    break
+                toml_lines.append(toml_line)
+            else:
+                # Non-comment line ends the block
+                break
+
+    if not toml_lines:
+        return None
+
+    toml_str = "\n".join(toml_lines) + "\n"
+    try:
+        parsed: dict[str, Any] = tomllib.loads(toml_str)
+        return parsed
+    except Exception:
+        logger.warning("Failed to parse embedded TOML in output file")
+        return None
+
+
+def _sidecar_path(output_path: Path) -> Path:
+    """Return the sidecar path: output_path with .hkcache extension appended."""
+    return output_path.parent / (output_path.name + ".hkcache")
