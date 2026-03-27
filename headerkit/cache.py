@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import logging
+import platform as platform_mod
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,12 +35,28 @@ logger = logging.getLogger("headerkit.cache")
 # =============================================================================
 
 
+def default_namespace() -> str:
+    """Return a namespace string for the current Python environment.
+
+    Format: ``{impl}-{major}{minor}-{platform}-{machine}``
+    (e.g. ``cpython-312-darwin-arm64``).
+
+    Uses only the standard library: :mod:`sys` and :mod:`platform`.
+    """
+    impl = sys.implementation.name
+    ver = f"{sys.version_info.major}{sys.version_info.minor}"
+    plat = sys.platform
+    machine = platform_mod.machine()
+    return f"{impl}-{ver}-{plat}-{machine}"
+
+
 def compute_hash(
     *,
     header_paths: Sequence[str | Path],
     writer_name: str,
     writer_options: dict[str, Any] | None = None,
     extra_inputs: Sequence[str | Path] | None = None,
+    namespace: str | None = None,
 ) -> str:
     """Compute a deterministic SHA-256 hash of all inputs affecting generation.
 
@@ -48,6 +66,10 @@ def compute_hash(
     :param writer_options: Writer configuration options (sorted for determinism).
     :param extra_inputs: Additional file paths to include in the hash.
         Relative paths are resolved against CWD via ``Path(p).resolve()``.
+    :param namespace: Environment namespace to include in the hash. When
+        provided, the hash is scoped to a specific environment (e.g.
+        ``"cpython-312-darwin-arm64"``). Use :func:`default_namespace` to
+        generate a namespace for the current Python environment.
     :returns: Hex-encoded SHA-256 digest string.
     :raises FileNotFoundError: If any header or extra input file does not exist.
     :raises ValueError: If header_paths is empty.
@@ -57,6 +79,7 @@ def compute_hash(
         writer_name=writer_name,
         writer_options=writer_options,
         extra_inputs=extra_inputs,
+        namespace=namespace,
     )
 
 
@@ -67,6 +90,7 @@ def is_up_to_date(
     writer_name: str,
     writer_options: dict[str, Any] | None = None,
     extra_inputs: Sequence[str | Path] | None = None,
+    namespace: str | None = None,
 ) -> bool:
     """Check whether a generated output file is up-to-date with its inputs.
 
@@ -78,6 +102,8 @@ def is_up_to_date(
     :param writer_name: Name of the writer.
     :param writer_options: Writer configuration options.
     :param extra_inputs: Additional file paths included in hash.
+    :param namespace: Environment namespace. When provided, the namespaced
+        sidecar file is checked instead of the default sidecar.
     :returns: True if stored hash matches recomputed hash, False otherwise.
         Returns False if output file is missing, hash is absent, or hash is corrupted.
     """
@@ -85,7 +111,7 @@ def is_up_to_date(
     if not out.exists():
         return False
 
-    stored_hash = _read_stored_hash(out)
+    stored_hash = _read_stored_hash(out, namespace=namespace)
     if stored_hash is None:
         return False
 
@@ -94,6 +120,7 @@ def is_up_to_date(
         writer_name=writer_name,
         writer_options=writer_options,
         extra_inputs=extra_inputs,
+        namespace=namespace,
     )
     return stored_hash == expected_hash
 
@@ -128,6 +155,7 @@ def is_up_to_date_batch(
                 writer_name=check.get("writer_name", ""),
                 writer_options=check.get("writer_options"),
                 extra_inputs=check.get("extra_inputs"),
+                namespace=check.get("namespace"),
             )
         except Exception as exc:
             logger.warning("Batch check failed for %s: %s", output_key, exc)
@@ -143,6 +171,7 @@ def save_hash(
     writer_options: dict[str, Any] | None = None,
     extra_inputs: Sequence[str | Path] | None = None,
     writer: WriterBackend | None = None,
+    namespace: str | None = None,
 ) -> Path:
     """Compute and save cache hash metadata for a generated output file.
 
@@ -160,6 +189,9 @@ def save_hash(
     :param writer_options: Writer configuration options.
     :param extra_inputs: Additional file paths included in hash.
     :param writer: Writer instance (used to detect comment support).
+    :param namespace: Environment namespace. When provided, sidecar storage
+        is always used (embedded comments are not namespace-aware), and the
+        sidecar file is namespaced as ``{name}.{namespace}.hkcache``.
     :returns: Path where hash was saved (output_path if embedded, .hkcache if sidecar).
     :raises FileNotFoundError: If output_path or any input file does not exist.
     :raises ValueError: If header_paths is empty.
@@ -173,6 +205,7 @@ def save_hash(
         writer_name=writer_name,
         writer_options=writer_options,
         extra_inputs=extra_inputs,
+        namespace=namespace,
     )
 
     try:
@@ -180,16 +213,16 @@ def save_hash(
     except importlib.metadata.PackageNotFoundError:
         version = "unknown"
 
-    metadata_toml = _build_metadata_toml(hash_digest, writer_name, version)
+    metadata_toml = _build_metadata_toml(hash_digest, writer_name, version, namespace=namespace)
 
     # Check if writer supports embedded comments
     format_fn = getattr(writer, "hash_comment_format", None) if writer is not None else None
-    if format_fn is not None:
+    if format_fn is not None and namespace is None:
         comment_format: str = format_fn()
         _write_embedded_hash(out, metadata_toml, comment_format)
         return out
     else:
-        sidecar = _sidecar_path(out)
+        sidecar = _sidecar_path(out, namespace=namespace)
         _write_sidecar(sidecar, metadata_toml)
         return sidecar
 
@@ -205,6 +238,7 @@ def _compute_hash_digest(
     writer_name: str,
     writer_options: dict[str, Any] | None,
     extra_inputs: Sequence[str | Path] | None,
+    namespace: str | None = None,
 ) -> str:
     """Core hash computation. Shared by compute_hash, save_hash, is_up_to_date."""
     if not header_paths:
@@ -238,6 +272,12 @@ def _compute_hash_digest(
     hasher.update(b"headerkit-version:")
     hasher.update(version.encode("utf-8"))
     hasher.update(b"\x00")
+
+    # Feed namespace
+    if namespace is not None:
+        hasher.update(b"namespace:")
+        hasher.update(namespace.encode("utf-8"))
+        hasher.update(b"\x00")
 
     # Feed writer name
     hasher.update(b"writer:")
@@ -289,6 +329,7 @@ def _build_metadata_toml(
     hash_digest: str,
     writer_name: str,
     headerkit_version: str,
+    namespace: str | None = None,
 ) -> str:
     """Hand-serialize cache metadata to a TOML string.
 
@@ -301,6 +342,8 @@ def _build_metadata_toml(
         f'version = "{headerkit_version}"',
         f'writer = "{writer_name}"',
     ]
+    if namespace is not None:
+        lines.append(f'namespace = "{namespace}"')
     return "\n".join(lines) + "\n"
 
 
@@ -357,29 +400,40 @@ def _parse_embedded_toml(content: str) -> dict[str, Any] | None:
         return None
 
 
-def _sidecar_path(output_path: Path) -> Path:
-    """Return the sidecar path: output_path with .hkcache extension appended."""
+def _sidecar_path(output_path: Path, *, namespace: str | None = None) -> Path:
+    """Return the sidecar path: output_path with .hkcache extension appended.
+
+    When *namespace* is provided, the sidecar is
+    ``{name}.{namespace}.hkcache`` instead of ``{name}.hkcache``.
+    """
+    if namespace is not None:
+        return output_path.parent / (output_path.name + f".{namespace}.hkcache")
     return output_path.parent / (output_path.name + ".hkcache")
 
 
-def _read_stored_hash(output_path: Path) -> str | None:
-    """Try to read hash from embedded comment, then sidecar. Returns None if not found."""
-    # Try embedded first
-    try:
-        content = output_path.read_text(encoding="utf-8")
-        parsed = _parse_embedded_toml(content)
-        if parsed is not None:
-            cache_data = parsed.get("headerkit-cache")
-            if isinstance(cache_data, dict):
-                stored = cache_data.get("hash")
-                if isinstance(stored, str):
-                    return stored
-                logger.warning("Embedded TOML missing 'hash' key in %s", output_path)
-    except Exception:
-        logger.warning("Failed to read embedded hash from %s", output_path)
+def _read_stored_hash(output_path: Path, *, namespace: str | None = None) -> str | None:
+    """Try to read hash from embedded comment, then sidecar. Returns None if not found.
 
-    # Try sidecar
-    sidecar = _sidecar_path(output_path)
+    When *namespace* is provided, only the namespaced sidecar is checked
+    (embedded hashes are not namespace-aware).
+    """
+    # Try embedded first (only when no namespace)
+    if namespace is None:
+        try:
+            content = output_path.read_text(encoding="utf-8")
+            parsed = _parse_embedded_toml(content)
+            if parsed is not None:
+                cache_data = parsed.get("headerkit-cache")
+                if isinstance(cache_data, dict):
+                    stored = cache_data.get("hash")
+                    if isinstance(stored, str):
+                        return stored
+                    logger.warning("Embedded TOML missing 'hash' key in %s", output_path)
+        except Exception:
+            logger.warning("Failed to read embedded hash from %s", output_path)
+
+    # Try sidecar (namespaced or default)
+    sidecar = _sidecar_path(output_path, namespace=namespace)
     if sidecar.exists():
         try:
             sidecar_content = sidecar.read_text(encoding="utf-8")

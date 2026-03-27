@@ -1,7 +1,7 @@
 """headerkit - C/C++ header parsing toolkit."""
 
 from headerkit.backends import get_backend, is_backend_available, list_backends
-from headerkit.cache import compute_hash, is_up_to_date, save_hash
+from headerkit.cache import compute_hash, default_namespace, is_up_to_date, save_hash
 from headerkit.ir import (
     Array,
     Constant,
@@ -74,6 +74,7 @@ __all__ = [
     "register_writer",
     # Cache API
     "compute_hash",
+    "default_namespace",
     "is_up_to_date",
     "save_hash",
 ]

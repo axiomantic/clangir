@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Environment-namespaced cache sidecars via `namespace` parameter on `compute_hash()`, `save_hash()`, `is_up_to_date()`, and `is_up_to_date_batch()`
+- `default_namespace()` function returning `{impl}-{major}{minor}-{platform}-{machine}` (e.g. `cpython-312-darwin-arm64`)
+- Namespaced sidecar files use `{name}.{namespace}.hkcache` pattern, isolating caches per environment
+
 ## [0.9.0] - 2026-03-24
 
 ### Added
