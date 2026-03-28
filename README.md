@@ -6,9 +6,20 @@
 [![Python](https://img.shields.io/pypi/pyversions/headerkit)](https://pypi.org/project/headerkit/)
 [![License](https://img.shields.io/github/license/axiomantic/headerkit)](https://github.com/axiomantic/headerkit/blob/main/LICENSE)
 
-Parse C/C++ headers with libclang and emit output in any format.
+**headerkit** parses C/C++ headers with libclang and generates Python bindings, Cython declarations, LuaJIT FFI bindings, and more. It is:
 
-Built-in writers produce ctypes, CFFI, Cython, LuaJIT FFI, JSON IR, and LLM-optimized prompt output, and the plugin system lets you add your own.
+- A **CFFI binding generator** -- produce `ffi.cdef()` declarations from C headers
+- A **ctypes binding generator** -- produce complete `ctypes` struct/function modules
+- A **Cython `.pxd` generator** -- produce Cython declaration files with C++ support
+- A **LuaJIT FFI binding generator** -- produce `ffi.cdef()` declarations for LuaJIT
+- A **JSON IR serializer** -- export a full intermediate representation of parsed headers
+- An **LLM prompt writer** -- produce token-optimized header summaries for LLM context windows
+- An **API diff reporter** -- detect breaking changes between header versions
+- A **PEP 517 build backend** -- integrate binding generation into `pip install` and `python -m build`
+- A **two-layer cache system** -- parse once with libclang, rebuild anywhere without it
+- A **plugin system** -- register third-party backends and writers via entry points
+
+Zero runtime dependencies. Pure Python. Supports LLVM 18--21.
 
 ```mermaid
 graph LR
@@ -21,11 +32,8 @@ graph LR
 ## Features
 
 - **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes:lib.py -w cython:lib.pxd`
-- **Plugin system**: register third-party backends and writers via Python entry points
-- **Zero runtime dependencies**: pure Python, nothing to install beyond headerkit itself
 - **Config file support**: `.headerkit.toml` or `[tool.headerkit]` in `pyproject.toml`
 - **Multi-header merging**: pass multiple `.h` files and they are merged into a single umbrella header
-- **API diff reports**: detect breaking changes between header versions with the `diff` writer
 
 ## Installation
 
