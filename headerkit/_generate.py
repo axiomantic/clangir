@@ -263,7 +263,7 @@ def _lookup_output_cache(
     output_cache_key = compute_output_cache_key(
         ir_cache_key=ir_cache_key,
         writer_name=writer_name,
-        writer_options=writer_options or None,
+        writer_options=writer_options,
         writer_cache_version=_writer_cache_version(writer_inst),
     )
     output_ext = _writer_output_ext(writer_inst, writer_name)
