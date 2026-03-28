@@ -653,6 +653,8 @@ class DiffWriter:
         report = writer.write(new_header)
     """
 
+    cache_output: bool = False
+
     def __init__(self, baseline: Header | None = None, format: str = "json") -> None:
         self._baseline = baseline
         self._format = format

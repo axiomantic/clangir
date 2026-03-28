@@ -444,6 +444,8 @@ class PromptWriter:
         output = writer.write(header)
     """
 
+    cache_output: bool = False
+
     def __init__(self, verbosity: str = "compact") -> None:
         if verbosity not in ("compact", "standard", "verbose"):
             raise ValueError(f"Unknown verbosity: {verbosity!r}. Use 'compact', 'standard', or 'verbose'.")
