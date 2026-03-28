@@ -474,13 +474,16 @@ class TestBuildBackendAuto:
         assert captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] == "0"
 
     def test_prepare_metadata_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """build_backend_auto.prepare_metadata_for_build_wheel delegates."""
+        """build_backend_auto.prepare_metadata_for_build_wheel sets env and delegates."""
         monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+
+        captured_env: dict[str, str] = {}
 
         def mock_prepare(
             _metadata_directory: str,
             _config_settings: dict[str, Any] | None = None,
         ) -> str:
+            captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG", "")
             return "pkg-1.0.dist-info"
 
         monkeypatch.setattr(
@@ -492,16 +495,20 @@ class TestBuildBackendAuto:
 
         result = prepare_metadata_for_build_wheel("/tmp/meta", None)
         assert result == "pkg-1.0.dist-info"
+        assert captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] == "1"
 
     def test_build_editable_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """build_backend_auto.build_editable delegates."""
+        """build_backend_auto.build_editable sets env and delegates."""
         monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+
+        captured_env: dict[str, str] = {}
 
         def mock_build_editable(
             _wheel_directory: str,
             _config_settings: dict[str, Any] | None = None,
             _metadata_directory: str | None = None,
         ) -> str:
+            captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG", "")
             return "pkg-1.0-py3-none-any.whl"
 
         monkeypatch.setattr("headerkit.build_backend.build_editable", mock_build_editable)
@@ -510,14 +517,18 @@ class TestBuildBackendAuto:
 
         result = build_editable("/tmp/dist", None, None)
         assert result == "pkg-1.0-py3-none-any.whl"
+        assert captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] == "1"
 
     def test_get_requires_for_build_wheel_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """build_backend_auto.get_requires_for_build_wheel delegates."""
+        """build_backend_auto.get_requires_for_build_wheel sets env and delegates."""
         monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+
+        captured_env: dict[str, str] = {}
 
         def mock_get_requires(
             _config_settings: dict[str, Any] | None = None,
         ) -> list[str]:
+            captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG", "")
             return ["hatchling>=1.0"]
 
         monkeypatch.setattr(
@@ -529,14 +540,18 @@ class TestBuildBackendAuto:
 
         result = get_requires_for_build_wheel(None)
         assert result == ["hatchling>=1.0"]
+        assert captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] == "1"
 
     def test_get_requires_for_build_sdist_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """build_backend_auto.get_requires_for_build_sdist delegates."""
+        """build_backend_auto.get_requires_for_build_sdist sets env and delegates."""
         monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+
+        captured_env: dict[str, str] = {}
 
         def mock_get_requires(
             _config_settings: dict[str, Any] | None = None,
         ) -> list[str]:
+            captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG", "")
             return ["setuptools"]
 
         monkeypatch.setattr(
@@ -548,3 +563,4 @@ class TestBuildBackendAuto:
 
         result = get_requires_for_build_sdist(None)
         assert result == ["setuptools"]
+        assert captured_env["HEADERKIT_AUTO_INSTALL_LIBCLANG"] == "1"

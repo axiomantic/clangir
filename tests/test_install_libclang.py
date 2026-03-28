@@ -413,6 +413,20 @@ class TestAutoInstall:
         mock_install.assert_called_once_with()
         assert mock_verify.call_count == 2
 
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
+    @patch("headerkit.install_libclang.install_windows", return_value=True)
+    @patch("headerkit.install_libclang.sys")
+    def test_installs_on_windows_and_verifies(
+        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+    ) -> None:
+        """auto_install() installs on Windows, then verifies. Returns True on success."""
+        mock_sys.platform = "win32"
+        result = auto_install()
+
+        assert result is True
+        mock_install.assert_called_once_with(DEFAULT_LLVM_VERSION)
+        assert mock_verify.call_count == 2
+
     @patch("headerkit.install_libclang.verify_libclang", return_value=False)
     @patch("headerkit.install_libclang.install_linux", return_value=False)
     @patch("headerkit.install_libclang.sys")
@@ -425,6 +439,9 @@ class TestAutoInstall:
 
         assert result is False
         mock_install.assert_called_once_with()
+        # Early exit on install failure means verify is only called once
+        # (the initial availability check), not a second time post-install.
+        assert mock_verify.call_count == 1
 
     @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, False])
     @patch("headerkit.install_libclang.install_linux", return_value=True)
@@ -440,11 +457,24 @@ class TestAutoInstall:
         mock_install.assert_called_once_with()
         assert mock_verify.call_count == 2
 
+    @patch("headerkit.install_libclang.install_windows")
+    @patch("headerkit.install_libclang.install_macos")
+    @patch("headerkit.install_libclang.install_linux")
     @patch("headerkit.install_libclang.verify_libclang", return_value=False)
     @patch("headerkit.install_libclang.sys")
-    def test_returns_false_on_unsupported_platform(self, mock_sys: MagicMock, mock_verify: MagicMock) -> None:
+    def test_returns_false_on_unsupported_platform(
+        self,
+        mock_sys: MagicMock,
+        mock_verify: MagicMock,
+        mock_install_linux: MagicMock,
+        mock_install_macos: MagicMock,
+        mock_install_windows: MagicMock,
+    ) -> None:
         """auto_install() returns False on an unsupported platform."""
         mock_sys.platform = "freebsd"
         result = auto_install()
 
         assert result is False
+        mock_install_linux.assert_not_called()
+        mock_install_macos.assert_not_called()
+        mock_install_windows.assert_not_called()
