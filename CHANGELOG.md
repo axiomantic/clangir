@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `generate()` and `generate_all()` public API for cache-aware header generation
 - `json_to_header()` JSON IR deserializer (inverse of `header_to_json()`)
 - `GenerateResult` dataclass for multi-writer generation results
-- PEP 517 build backend (`headerkit._build_backend`) for consumer projects
+- PEP 517 build backend (`headerkit.build_backend`) for consumer projects
 - CLI flags: `--no-cache`, `--no-ir-cache`, `--no-output-cache`, `--cache-dir`
 - Environment variables: `HEADERKIT_NO_CACHE`, `HEADERKIT_NO_IR_CACHE`, `HEADERKIT_NO_OUTPUT_CACHE`
 - Cache subcommands: `headerkit cache status`, `headerkit cache clear`, `headerkit cache rebuild-index`

@@ -15,11 +15,11 @@ class TestGetInnerBackend:
 
     def test_default_inner_backend(self) -> None:
         """Default inner backend is hatchling.build."""
-        from headerkit._build_backend import _get_inner_backend
+        from headerkit.build_backend import _get_inner_backend
 
         mock_module = MagicMock()
         with patch(
-            "headerkit._build_backend.importlib.import_module",
+            "headerkit.build_backend.importlib.import_module",
             return_value=mock_module,
         ) as mock_import:
             result = _get_inner_backend(None)
@@ -28,11 +28,11 @@ class TestGetInnerBackend:
 
     def test_custom_inner_backend_via_config_settings(self) -> None:
         """config_settings['inner-backend'] overrides the default."""
-        from headerkit._build_backend import _get_inner_backend
+        from headerkit.build_backend import _get_inner_backend
 
         mock_module = MagicMock()
         with patch(
-            "headerkit._build_backend.importlib.import_module",
+            "headerkit.build_backend.importlib.import_module",
             return_value=mock_module,
         ) as mock_import:
             result = _get_inner_backend({"inner-backend": "flit_core.buildapi"})
@@ -41,11 +41,11 @@ class TestGetInnerBackend:
 
     def test_empty_config_settings_uses_default(self) -> None:
         """Empty config_settings dict still uses default."""
-        from headerkit._build_backend import _get_inner_backend
+        from headerkit.build_backend import _get_inner_backend
 
         mock_module = MagicMock()
         with patch(
-            "headerkit._build_backend.importlib.import_module",
+            "headerkit.build_backend.importlib.import_module",
             return_value=mock_module,
         ) as mock_import:
             result = _get_inner_backend({})
@@ -58,7 +58,7 @@ class TestLoadHeaderkitConfig:
 
     def test_reads_tool_headerkit_section(self, tmp_path: Path) -> None:
         """Extracts [tool.headerkit] from a valid pyproject.toml."""
-        from headerkit._build_backend import _load_headerkit_config
+        from headerkit.build_backend import _load_headerkit_config
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -84,7 +84,7 @@ class TestLoadHeaderkitConfig:
 
     def test_missing_tool_headerkit_returns_empty(self, tmp_path: Path) -> None:
         """Returns {} when [tool.headerkit] section is absent."""
-        from headerkit._build_backend import _load_headerkit_config
+        from headerkit.build_backend import _load_headerkit_config
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -98,14 +98,14 @@ class TestLoadHeaderkitConfig:
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         """Returns {} when pyproject.toml does not exist."""
-        from headerkit._build_backend import _load_headerkit_config
+        from headerkit.build_backend import _load_headerkit_config
 
         result = _load_headerkit_config(tmp_path / "nonexistent.toml")
         assert result == {}
 
     def test_invalid_toml_returns_empty(self, tmp_path: Path) -> None:
         """Returns {} and logs warning on invalid TOML."""
-        from headerkit._build_backend import _load_headerkit_config
+        from headerkit.build_backend import _load_headerkit_config
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[[[[invalid toml")
@@ -118,7 +118,7 @@ class TestRunGeneration:
 
     def test_no_headers_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No headers in config means no generate_all calls."""
-        from headerkit._build_backend import _run_generation
+        from headerkit.build_backend import _run_generation
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -134,7 +134,7 @@ class TestRunGeneration:
 
     def test_calls_generate_all_per_header(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Calls generate_all once per header entry with merged config."""
-        from headerkit._build_backend import _run_generation
+        from headerkit.build_backend import _run_generation
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -184,7 +184,7 @@ class TestRunGeneration:
 
     def test_config_settings_cache_flags(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """config_settings no-cache/no-ir-cache/no-output-cache are parsed."""
-        from headerkit._build_backend import _run_generation
+        from headerkit.build_backend import _run_generation
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -210,7 +210,7 @@ class TestRunGeneration:
 
     def test_missing_pyproject_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing pyproject.toml means no generation runs."""
-        from headerkit._build_backend import _run_generation
+        from headerkit.build_backend import _run_generation
 
         monkeypatch.chdir(tmp_path)
         with patch("headerkit._generate.generate_all") as mock_gen:
@@ -223,7 +223,7 @@ class TestBuildWheel:
 
     def test_build_wheel_generates_then_delegates(self) -> None:
         """build_wheel calls _run_generation then inner build_wheel."""
-        from headerkit._build_backend import build_wheel
+        from headerkit.build_backend import build_wheel
 
         mock_inner = MagicMock()
         mock_inner.build_wheel.return_value = "my_package-1.0-py3-none-any.whl"
@@ -240,11 +240,11 @@ class TestBuildWheel:
 
         with (
             patch(
-                "headerkit._build_backend._run_generation",
+                "headerkit.build_backend._run_generation",
                 side_effect=track_generation,
             ),
             patch(
-                "headerkit._build_backend._get_inner_backend",
+                "headerkit.build_backend._get_inner_backend",
                 return_value=mock_inner,
             ),
         ):
@@ -258,15 +258,15 @@ class TestBuildSdist:
 
     def test_build_sdist_generates_then_delegates(self) -> None:
         """build_sdist calls _run_generation then inner build_sdist."""
-        from headerkit._build_backend import build_sdist
+        from headerkit.build_backend import build_sdist
 
         mock_inner = MagicMock()
         mock_inner.build_sdist.return_value = "my_package-1.0.tar.gz"
 
         with (
-            patch("headerkit._build_backend._run_generation") as mock_gen,
+            patch("headerkit.build_backend._run_generation") as mock_gen,
             patch(
-                "headerkit._build_backend._get_inner_backend",
+                "headerkit.build_backend._get_inner_backend",
                 return_value=mock_inner,
             ),
         ):
@@ -277,18 +277,18 @@ class TestBuildSdist:
 
     def test_build_sdist_swallows_generation_error(self) -> None:
         """build_sdist still builds if generation fails."""
-        from headerkit._build_backend import build_sdist
+        from headerkit.build_backend import build_sdist
 
         mock_inner = MagicMock()
         mock_inner.build_sdist.return_value = "my_package-1.0.tar.gz"
 
         with (
             patch(
-                "headerkit._build_backend._run_generation",
+                "headerkit.build_backend._run_generation",
                 side_effect=RuntimeError("libclang not found"),
             ),
             patch(
-                "headerkit._build_backend._get_inner_backend",
+                "headerkit.build_backend._get_inner_backend",
                 return_value=mock_inner,
             ),
         ):
@@ -302,15 +302,15 @@ class TestPrepareMetadata:
 
     def test_delegates_without_generation(self) -> None:
         """prepare_metadata_for_build_wheel does not run generation."""
-        from headerkit._build_backend import prepare_metadata_for_build_wheel
+        from headerkit.build_backend import prepare_metadata_for_build_wheel
 
         mock_inner = MagicMock()
         mock_inner.prepare_metadata_for_build_wheel.return_value = "my_package-1.0.dist-info"
 
         with (
-            patch("headerkit._build_backend._run_generation") as mock_gen,
+            patch("headerkit.build_backend._run_generation") as mock_gen,
             patch(
-                "headerkit._build_backend._get_inner_backend",
+                "headerkit.build_backend._get_inner_backend",
                 return_value=mock_inner,
             ),
         ):
@@ -325,15 +325,15 @@ class TestBuildEditable:
 
     def test_build_editable_generates_then_delegates(self) -> None:
         """build_editable calls _run_generation then inner build_editable."""
-        from headerkit._build_backend import build_editable
+        from headerkit.build_backend import build_editable
 
         mock_inner = MagicMock()
         mock_inner.build_editable.return_value = "my_package-1.0-py3-none-any.whl"
 
         with (
-            patch("headerkit._build_backend._run_generation") as mock_gen,
+            patch("headerkit.build_backend._run_generation") as mock_gen,
             patch(
-                "headerkit._build_backend._get_inner_backend",
+                "headerkit.build_backend._get_inner_backend",
                 return_value=mock_inner,
             ),
         ):
@@ -348,13 +348,13 @@ class TestGetRequires:
 
     def test_get_requires_for_build_wheel_proxies(self) -> None:
         """get_requires_for_build_wheel returns inner backend's result."""
-        from headerkit._build_backend import get_requires_for_build_wheel
+        from headerkit.build_backend import get_requires_for_build_wheel
 
         mock_inner = MagicMock()
         mock_inner.get_requires_for_build_wheel.return_value = ["hatchling>=1.0"]
 
         with patch(
-            "headerkit._build_backend._get_inner_backend",
+            "headerkit.build_backend._get_inner_backend",
             return_value=mock_inner,
         ):
             result = get_requires_for_build_wheel(None)
@@ -363,12 +363,12 @@ class TestGetRequires:
 
     def test_get_requires_for_build_wheel_missing_hook(self) -> None:
         """Returns [] when inner backend lacks the hook."""
-        from headerkit._build_backend import get_requires_for_build_wheel
+        from headerkit.build_backend import get_requires_for_build_wheel
 
         mock_inner = MagicMock(spec=[])  # no attributes
 
         with patch(
-            "headerkit._build_backend._get_inner_backend",
+            "headerkit.build_backend._get_inner_backend",
             return_value=mock_inner,
         ):
             result = get_requires_for_build_wheel(None)
@@ -376,13 +376,13 @@ class TestGetRequires:
 
     def test_get_requires_for_build_sdist_proxies(self) -> None:
         """get_requires_for_build_sdist returns inner backend's result."""
-        from headerkit._build_backend import get_requires_for_build_sdist
+        from headerkit.build_backend import get_requires_for_build_sdist
 
         mock_inner = MagicMock()
         mock_inner.get_requires_for_build_sdist.return_value = ["setuptools"]
 
         with patch(
-            "headerkit._build_backend._get_inner_backend",
+            "headerkit.build_backend._get_inner_backend",
             return_value=mock_inner,
         ):
             result = get_requires_for_build_sdist(None)
@@ -391,12 +391,12 @@ class TestGetRequires:
 
     def test_get_requires_for_build_sdist_missing_hook(self) -> None:
         """Returns [] when inner backend lacks the hook."""
-        from headerkit._build_backend import get_requires_for_build_sdist
+        from headerkit.build_backend import get_requires_for_build_sdist
 
         mock_inner = MagicMock(spec=[])
 
         with patch(
-            "headerkit._build_backend._get_inner_backend",
+            "headerkit.build_backend._get_inner_backend",
             return_value=mock_inner,
         ):
             result = get_requires_for_build_sdist(None)

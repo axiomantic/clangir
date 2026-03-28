@@ -28,7 +28,7 @@ graph LR
 ```toml
 [build-system]
 requires = ["headerkit", "hatchling"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 ```
 
 ### 2. Configure headers and writers
@@ -75,7 +75,7 @@ python -m build        # same for sdist/wheel builds
 ```toml
 [build-system]
 requires = ["headerkit", "hatchling"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 
 [project]
 name = "mylib-bindings"
@@ -101,7 +101,7 @@ cache_dir = ".hkcache"
 
 When pip or build invokes `build_wheel()` or `build_sdist()`:
 
-1. headerkit imports `_build_backend` as the PEP 517 backend.
+1. headerkit imports `build_backend` as the PEP 517 backend.
 2. `_run_generation()` reads `[tool.headerkit]` from `pyproject.toml`.
 3. For each entry in `[tool.headerkit.headers]`, it calls `generate_all()`
    with the configured backend, writers, defines, and include dirs.
@@ -118,7 +118,7 @@ When pip or build invokes `build_wheel()` or `build_sdist()`:
 
 | Key | Description |
 |-----|-------------|
-| `build-backend` | Set to `"headerkit._build_backend"` |
+| `build-backend` | Set to `"headerkit.build_backend"` |
 | `requires` | Must include `"headerkit"` and the inner backend (e.g., `"hatchling"`) |
 
 ### `[tool.headerkit]` keys
@@ -181,7 +181,7 @@ Or set it permanently by adding both to your build requires:
 ```toml
 [build-system]
 requires = ["headerkit", "flit_core"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 ```
 
 ## Cache miss behavior

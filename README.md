@@ -15,36 +15,112 @@ Generates:
 - **LLMs**: Token-optimized header summaries for prompt windows.
 - **Builds**: PEP 517 backend for standard Python packaging.
 
-Zero runtime dependencies. Pure Python. Supports LLVM 18--21.
+Parse once. Build anywhere.
 
 ### Quick examples
 
-**Generate ctypes bindings:**
+Every example below assumes this input header:
+
+```c
+// mylib.h
+typedef struct { int x, y; } Point;
+int distance(const Point *a, const Point *b);
+```
+
+**ctypes -- drop-in Python module, no build step:**
 ```bash
 headerkit mylib.h -w ctypes:bindings.py
 ```
+```python
+# generated bindings.py
+class Point(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+    ]
 
-**Generate CFFI definitions:**
-```bash
-headerkit mylib.h -w cffi:_cffi_defs.py
+_lib.distance.argtypes = [ctypes.POINTER(Point), ctypes.POINTER(Point)]
+_lib.distance.restype = ctypes.c_int
 ```
 
-**Generate Cython declarations:**
+**CFFI -- declarations for `ffibuilder.cdef()`:**
+```bash
+headerkit mylib.h -w cffi:_defs.py
+```
+```c
+/* generated  _defs.py */
+typedef struct Point {
+    int x;
+    int y;
+} Point;
+int distance(const Point *a, const Point *b);
+```
+
+**Cython -- `.pxd` for compiled C/C++ interop:**
 ```bash
 headerkit mylib.h -w cython:mylib.pxd
 ```
+```cython
+# generated mylib.pxd
+cdef extern from "mylib.h":
 
-**Generate LuaJIT FFI bindings:**
+    ctypedef struct Point:
+        int x
+        int y
+
+    int distance(const Point *a, const Point *b)
+```
+
+**LuaJIT FFI -- `ffi.cdef` bindings for LuaJIT:**
 ```bash
 headerkit mylib.h -w lua:mylib_ffi.lua
 ```
+```lua
+/* generated mylib_ffi.lua */
+local ffi = require("ffi")
 
-**Export JSON IR:**
+ffi.cdef[[
+
+/* Structs */
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+/* Functions */
+int distance(const Point *a, const Point *b);
+
+]]
+```
+
+**JSON -- full IR for custom tooling:**
 ```bash
 headerkit mylib.h -w json:mylib.json
 ```
+```json
+{
+  "path": "mylib.h",
+  "declarations": [
+    {"kind": "struct", "name": "Point", "fields": [
+      {"name": "x", "type": {"kind": "ctype", "name": "int"}},
+      {"name": "y", "type": {"kind": "ctype", "name": "int"}}
+    ]},
+    {"kind": "function", "name": "distance", ...}
+  ]
+}
+```
 
-**Diff two header versions:**
+**Prompt -- token-optimized summary for LLM context windows:**
+```bash
+headerkit mylib.h -w prompt
+```
+```
+// mylib.h (headerkit compact)
+STRUCT Point {x:int, y:int}
+FUNC distance(a:const Point*, b:const Point*) -> int
+```
+
+**Diff -- API compatibility reports between header versions:**
 ```python
 from headerkit.backends import get_backend
 from headerkit.writers.diff import DiffWriter
@@ -54,21 +130,21 @@ old = backend.parse('#include "mylib_v1.h"', "v1.h")
 new = backend.parse('#include "mylib_v2.h"', "v2.h")
 print(DiffWriter(baseline=old, format="markdown").write(new))
 ```
-
-**Generate LLM prompt summary:**
-```bash
-headerkit mylib.h -w prompt
+```markdown
+## Breaking Changes
+### function_signature_changed
+- **distance**: parameter 0 type changed from 'const Point *' to 'const Point3D *'
 ```
 
-**Use as PEP 517 build backend:**
+**Build backend -- generate cacheable bindings at `pip install` time:**
 ```toml
 # In your project's pyproject.toml:
 [build-system]
 requires = ["headerkit", "hatchling"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 ```
 
-**Use the Python API:**
+**Python API -- parse and generate from code:**
 ```python
 from headerkit import generate
 
@@ -97,7 +173,7 @@ pip install headerkit
 
 Requires Python 3.10+.
 
-Then install libclang:
+Then install libclang (if not already present):
 
 ```bash
 headerkit install-libclang
@@ -113,92 +189,6 @@ Or install it manually:
 | Windows | `winget install LLVM.LLVM` or [LLVM installer](https://github.com/llvm/llvm-project/releases) |
 
 Supports LLVM 18, 19, 20, and 21.
-
-## Quick start
-
-Given a header `mylib.h`:
-
-```c
-typedef struct {
-    int x;
-    int y;
-} Point;
-
-Point* create_point(int x, int y);
-void free_point(Point* p);
-```
-
-Generate CFFI cdef declarations:
-
-```console
-$ headerkit mylib.h -w cffi
-typedef struct Point {
-    int x;
-    int y;
-} Point;
-Point * create_point(int x, int y);
-void free_point(Point * p);
-```
-
-Generate a Cython `.pxd` file:
-
-```console
-$ headerkit mylib.h -w cython
-cdef extern from "mylib.h":
-
-    ctypedef struct Point:
-        int x
-        int y
-
-    Point* create_point(int x, int y)
-
-    void free_point(Point* p)
-```
-
-Generate a complete ctypes binding module:
-
-```console
-$ headerkit mylib.h -w ctypes
-"""ctypes bindings generated from mylib.h."""
-
-import ctypes
-import ctypes.util
-import sys
-
-# ... library loading omitted for brevity ...
-
-# ============================================================
-# Structures and Unions
-# ============================================================
-
-class Point(ctypes.Structure):
-    _fields_ = [
-        ("x", ctypes.c_int),
-        ("y", ctypes.c_int),
-    ]
-
-# ============================================================
-# Function Prototypes
-# ============================================================
-
-_lib.create_point.argtypes = [ctypes.c_int, ctypes.c_int]
-_lib.create_point.restype = ctypes.POINTER(Point)
-
-_lib.free_point.argtypes = [ctypes.POINTER(Point)]
-_lib.free_point.restype = None
-```
-
-Multiple outputs in one pass:
-
-```bash
-headerkit mylib.h -w cython:mylib.pxd -w json:ir.json
-```
-
-With include paths and preprocessor defines:
-
-```bash
-headerkit mylib.h -I /usr/local/include -D VERSION=2 -w cffi
-```
 
 ## CLI reference
 
@@ -306,7 +296,7 @@ headerkit also ships a PEP 517 build backend. Consumer projects declare it in `p
 ```toml
 [build-system]
 requires = ["headerkit", "hatchling"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 ```
 
 See the [Cache Strategy Guide](docs/guides/cache.md) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](docs/guides/build-backend.md) for full setup instructions.

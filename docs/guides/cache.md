@@ -125,7 +125,7 @@ delegating to the inner backend (hatchling by default).
 # Consumer project's pyproject.toml
 [build-system]
 requires = ["headerkit", "hatchling"]
-build-backend = "headerkit._build_backend"
+build-backend = "headerkit.build_backend"
 
 [tool.headerkit]
 backend = "libclang"
