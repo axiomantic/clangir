@@ -166,7 +166,7 @@ class TestSlugLengthLimit:
             includes=[],
             other_args=[],
         )
-        assert len(slug) <= 120
+        assert len(slug) <= 116
         # Should have hashed defines group (8 hex chars)
         assert ".d." in slug
         parts = slug.split(".")
@@ -196,4 +196,15 @@ class TestSlugLengthLimit:
             other_args=[],
         )
         # Must leave room for "-999" suffix (4 chars)
+        assert len(slug) <= 116
+
+    def test_multi_group_overflow(self) -> None:
+        """Multiple groups that individually fit can overflow combined."""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="x.h",
+            defines=[f"DEF_{i}" for i in range(20)],
+            includes=[f"/path/to/inc_{i}" for i in range(20)],
+            other_args=[f"-flag{i}" for i in range(5)],
+        )
         assert len(slug) <= 116

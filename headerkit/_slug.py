@@ -68,7 +68,8 @@ def build_slug(
     if len(candidate) <= effective_limit:
         return candidate
 
-    # Second pass: hash groups that overflow
+    # Second pass: hash groups that overflow individually
+    group_entries: list[tuple[str, list[str], bool]] = []
     result_parts = list(components)
     for prefix, values in groups:
         joined = "_".join(values)
@@ -77,11 +78,43 @@ def build_slug(
         if len(test_slug) > effective_limit:
             result_parts.append(prefix)
             result_parts.append(_hash_group(values))
+            group_entries.append((prefix, values, True))
         else:
             result_parts.append(prefix)
             result_parts.append(joined)
+            group_entries.append((prefix, values, False))
 
-    return ".".join(result_parts)
+    # Third pass: if cumulative slug still exceeds the limit,
+    # progressively hash the longest unhashed group until it fits.
+    slug = ".".join(result_parts)
+    while len(slug) > effective_limit:
+        # Find the longest unhashed group
+        longest_idx = -1
+        longest_len = -1
+        for i, (_prefix, values, hashed) in enumerate(group_entries):
+            if not hashed:
+                joined_len = len("_".join(values))
+                if joined_len > longest_len:
+                    longest_len = joined_len
+                    longest_idx = i
+        if longest_idx == -1:
+            break  # All groups already hashed
+        group_entries[longest_idx] = (
+            group_entries[longest_idx][0],
+            group_entries[longest_idx][1],
+            True,
+        )
+        # Rebuild slug from components and group_entries
+        result_parts = list(components)
+        for prefix, values, hashed in group_entries:
+            result_parts.append(prefix)
+            if hashed:
+                result_parts.append(_hash_group(values))
+            else:
+                result_parts.append("_".join(values))
+        slug = ".".join(result_parts)
+
+    return slug
 
 
 def _sanitize(component: str) -> str:
