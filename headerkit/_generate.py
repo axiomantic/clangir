@@ -38,6 +38,7 @@ from headerkit._cache_store import (
     write_ir_entry,
     write_output_entry,
 )
+from headerkit._config import _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit.backends import get_backend
 from headerkit.install_libclang import auto_install
@@ -53,13 +54,20 @@ def _is_auto_install_allowed(
 ) -> bool:
     """Check whether auto-install of libclang is allowed.
 
-    Uses a layered configuration design (highest precedence first):
+    The feature is **opt-in by default**: auto-install is disabled unless
+    explicitly enabled through one of the configuration layers below.
 
-    1. ``auto_install_libclang`` kwarg (passed from ``generate()``)
-    2. ``HEADERKIT_AUTO_INSTALL_LIBCLANG=1`` environment variable
-    3. ``auto_install_libclang = true`` in ``[tool.headerkit]`` of the
-       project's ``pyproject.toml``
-    4. Default: ``False`` (opt-in)
+    Precedence (highest first):
+
+    1. ``auto_install_libclang`` kwarg -- ``True`` or ``False`` from the
+       caller (e.g. ``generate(auto_install_libclang=True)``).  When set,
+       all other layers are skipped.
+    2. ``HEADERKIT_AUTO_INSTALL_LIBCLANG`` environment variable -- set to
+       ``"1"`` to enable, any other value to disable.
+    3. ``auto_install_libclang`` key in the ``[tool.headerkit]`` section of
+       the project's ``pyproject.toml`` -- ``true`` to enable, ``false`` to
+       disable.
+    4. Default: ``False`` (auto-install disabled).
 
     :param project_root: Project root directory to search for pyproject.toml.
     :param auto_install_libclang: Explicit kwarg override from caller.
@@ -88,8 +96,6 @@ def _is_auto_install_allowed(
     pyproject = project_root / "pyproject.toml"
     if pyproject.exists():
         try:
-            from headerkit._config import _parse_toml
-
             raw = _parse_toml(pyproject.read_bytes())
             tool = raw.get("tool", {})
             section = tool.get("headerkit", {}) if isinstance(tool, dict) else {}
@@ -564,6 +570,7 @@ def generate_all(
     no_cache: bool = False,
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
+    auto_install_libclang: bool | None = None,
 ) -> list[GenerateResult]:
     """Parse a C/C++ header and generate output for multiple writers.
 
@@ -583,6 +590,8 @@ def generate_all(
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
+    :param auto_install_libclang: Explicitly enable (True) or disable (False)
+        automatic libclang installation. Passed through to ``generate()``.
     :returns: List of GenerateResult, one per writer.
     :raises FileNotFoundError: If header_path does not exist.
     """
@@ -613,6 +622,7 @@ def generate_all(
             no_cache=no_cache,
             no_ir_cache=no_ir_cache,
             no_output_cache=no_output_cache,
+            auto_install_libclang=auto_install_libclang,
             _result_meta=meta,
         )
 

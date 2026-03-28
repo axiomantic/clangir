@@ -180,6 +180,8 @@ def auto_install() -> bool:
     ``generate()`` when the libclang backend is needed but unavailable.
 
     - Idempotent: returns True immediately if libclang is already loadable.
+    - Suppresses stdout from the underlying install functions so that
+      callers (e.g. ``generate()``) never see unexpected print output.
     - Logs progress via the ``headerkit.install`` logger instead of printing.
     - Always verifies after installation (no ``--skip-verify``).
 
@@ -192,23 +194,27 @@ def auto_install() -> bool:
     logger.info("Platform: %s (%s)", sys.platform, platform.machine())
 
     ok: bool
-    if sys.platform == "linux":
-        ok = install_linux()
-    elif sys.platform == "darwin":
-        ok = install_macos()
-    elif sys.platform == "win32":
-        ok = install_windows(DEFAULT_LLVM_VERSION)
-    else:
-        logger.warning("Unsupported platform for auto-install: %s", sys.platform)
-        return False
+    # Redirect stdout to devnull so that print() calls inside the
+    # platform-specific installers (and _run / verify_libclang) do not
+    # leak output to callers that expect a quiet API.
+    with contextlib.redirect_stdout(open(os.devnull, "w")):  # noqa: SIM115
+        if sys.platform == "linux":
+            ok = install_linux()
+        elif sys.platform == "darwin":
+            ok = install_macos()
+        elif sys.platform == "win32":
+            ok = install_windows(DEFAULT_LLVM_VERSION)
+        else:
+            logger.warning("Unsupported platform for auto-install: %s", sys.platform)
+            return False
 
-    if not ok:
-        logger.warning("libclang installation failed")
-        return False
+        if not ok:
+            logger.warning("libclang installation failed")
+            return False
 
-    if not verify_libclang():
-        logger.warning("libclang installed but could not be loaded")
-        return False
+        if not verify_libclang():
+            logger.warning("libclang installed but could not be loaded")
+            return False
 
     logger.info("libclang auto-installed successfully")
     return True
