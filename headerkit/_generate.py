@@ -90,6 +90,7 @@ def generate(
     header_path: str | Path,
     writer_name: str | None = None,
     *,
+    code: str | None = None,
     backend_name: str | None = None,
     include_dirs: list[str] | None = None,
     defines: list[str] | None = None,
@@ -100,14 +101,18 @@ def generate(
     no_cache: bool = False,
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
+    project_prefixes: tuple[str, ...] | None = None,
 ) -> str:
     """Parse a C/C++ header and generate output using a single writer.
 
     Uses the two-layer cache: first checks IR cache, then output cache.
     Falls back to parsing with the backend if IR cache misses.
 
-    :param header_path: Path to the C/C++ header file.
+    :param header_path: Path to the C/C++ header file (used for cache key
+        even when *code* is provided).
     :param writer_name: Writer to use (default: "json").
+    :param code: Raw code string. When provided, this content is parsed
+        instead of reading *header_path* from disk.
     :param backend_name: Backend to use (default: "libclang").
     :param include_dirs: Include directories for parsing.
     :param defines: Preprocessor defines (without -D prefix).
@@ -118,12 +123,13 @@ def generate(
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
+    :param project_prefixes: Tuple of project prefix directories for backend.
     :returns: Generated output string.
-    :raises FileNotFoundError: If header_path does not exist.
+    :raises FileNotFoundError: If header_path does not exist and code is not provided.
     """
     # ---- Step 1: Resolve cache_dir ----
     header_path = Path(header_path)
-    if not header_path.exists():
+    if code is None and not header_path.exists():
         raise FileNotFoundError(f"Header file not found: {header_path}")
 
     backend_name = backend_name or "libclang"
@@ -151,6 +157,7 @@ def generate(
         header_path=header_path,
         project_root=project_root,
         parsed_args=parsed_args,
+        code=code,
     )
 
     # ---- Step 5: Build IR slug, check IR cache ----
@@ -178,14 +185,20 @@ def generate(
     if header is None:
         # Cache miss: parse with backend
         backend = get_backend(backend_name)
-        code = header_path.read_text(encoding="utf-8")
+        parse_code = code if code is not None else header_path.read_text(encoding="utf-8")
         all_args: list[str] = []
         for d in parsed_args.defines:
             all_args.append(f"-D{d}")
         for inc in parsed_args.includes:
             all_args.append(f"-I{inc}")
         all_args.extend(parsed_args.other_args)
-        header = backend.parse(code, str(header_path), include_dirs or [], all_args)
+        header = backend.parse(
+            parse_code,
+            str(header_path),
+            include_dirs or [],
+            all_args,
+            project_prefixes=project_prefixes,
+        )
 
         # Write IR to cache
         if use_ir_cache:

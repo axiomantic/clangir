@@ -16,8 +16,9 @@ from headerkit._config import (
     load_config,
     merge_config,
 )
-from headerkit.backends import _load_backend_plugins, get_backend
-from headerkit.writers import WriterBackend, _load_writer_plugins, get_writer
+from headerkit._generate import generate
+from headerkit.backends import _load_backend_plugins
+from headerkit.writers import _load_writer_plugins
 
 
 def _env_bool(name: str, *, default: bool = False) -> bool:
@@ -245,26 +246,6 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
     return code, filename, project_prefixes
 
 
-def _instantiate_writer(spec: WriterSpec) -> WriterBackend:
-    """Instantiate a writer from a WriterSpec.
-
-    Raises ValueError for unknown writer name, TypeError for bad constructor args.
-    Callers are responsible for catching and formatting error messages.
-    """
-    kwargs: dict[str, object] = {}
-    for key, values in spec.options.items():
-        kwargs[key] = values[0] if len(values) == 1 else values
-
-    if spec.name == "diff" and "baseline" not in kwargs:
-        print(
-            "Warning: diff writer used without a baseline; outputting full current header state"
-            " (not a true diff). Use the Python API to supply a baseline Header.",
-            file=sys.stderr,
-        )
-
-    return get_writer(spec.name, **kwargs)
-
-
 def _write_output(spec: WriterSpec, content: str) -> None:
     """Write output to stdout or file per spec.output_path."""
     if spec.output_path is None:
@@ -431,33 +412,38 @@ def main() -> int:
     # Build umbrella
     code, filename, project_prefixes = _build_umbrella(input_files)
 
-    # Parse
+    # Generate outputs via cache-aware pipeline
     extra_args = _parse_defines(defines) + backend_args
-    try:
-        backend = get_backend(backend_name)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    try:
-        header = backend.parse(
-            code=code,
-            filename=filename,
-            include_dirs=include_dirs or None,
-            extra_args=extra_args or None,
-            project_prefixes=project_prefixes or None,
-        )
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    # Write outputs
     for spec in specs:
+        writer_kwargs: dict[str, object] = {}
+        for key, values in spec.options.items():
+            writer_kwargs[key] = values[0] if len(values) == 1 else values
+
+        if spec.name == "diff" and "baseline" not in writer_kwargs:
+            print(
+                "Warning: diff writer used without a baseline; outputting full current header state"
+                " (not a true diff). Use the Python API to supply a baseline Header.",
+                file=sys.stderr,
+            )
+
         try:
-            writer = _instantiate_writer(spec)
-        except (ValueError, TypeError) as exc:
-            print(f"headerkit: {exc}", file=sys.stderr)
+            content = generate(
+                header_path=filename,
+                writer_name=spec.name,
+                code=code,
+                backend_name=backend_name,
+                include_dirs=include_dirs or None,
+                extra_args=extra_args or None,
+                writer_options=writer_kwargs or None,
+                cache_dir=resolved_cache_dir,
+                no_cache=resolved_no_cache,
+                no_ir_cache=resolved_no_ir_cache,
+                no_output_cache=resolved_no_output_cache,
+                project_prefixes=project_prefixes or None,
+            )
+        except (ValueError, TypeError, RuntimeError, FileNotFoundError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             return 1
-        content = writer.write(header)
         _write_output(spec, content)
 
     return 0

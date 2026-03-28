@@ -75,5 +75,8 @@ site/
 # Git worktrees
 .worktrees/
 
+# Cache
+.hkcache/
+
 # Claude Code local workspace (worktrees, settings, etc.)
 .claude/

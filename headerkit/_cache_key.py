@@ -98,6 +98,7 @@ def compute_ir_cache_key(
     header_path: Path,
     project_root: Path,
     parsed_args: ParsedArgs,
+    code: str | None = None,
 ) -> str:
     """Compute SHA-256 cache key for IR layer.
 
@@ -105,6 +106,7 @@ def compute_ir_cache_key(
     :param header_path: Path to the C/C++ header file.
     :param project_root: Project root directory (contains .hkcache/ or is git root).
     :param parsed_args: Structured representation of extra_args.
+    :param code: Raw code string. If provided, used instead of reading header_path.
     :returns: Hex digest string.
     """
     hasher = hashlib.sha256()
@@ -118,7 +120,7 @@ def compute_ir_cache_key(
     hasher.update(f"python:{py_impl}\0".encode())
 
     # Header content -- use path relative to project root for portability
-    content = header_path.read_text(encoding="utf-8")
+    content = code if code is not None else header_path.read_text(encoding="utf-8")
     rel_path = _relative_header_path(header_path, project_root)
     hasher.update(f"header:{rel_path}\0".encode())
     hasher.update(content.encode("utf-8"))
