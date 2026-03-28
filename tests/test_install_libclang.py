@@ -383,7 +383,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is True
-        mock_verify.assert_called_once_with()
+        mock_verify.assert_called_once_with(quiet=True)
 
     @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
     @patch("headerkit.install_libclang.install_linux", return_value=True)
@@ -396,7 +396,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is True
-        mock_install.assert_called_once_with()
+        mock_install.assert_called_once_with(quiet=True)
         assert mock_verify.call_count == 2
 
     @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
@@ -410,7 +410,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is True
-        mock_install.assert_called_once_with()
+        mock_install.assert_called_once_with(quiet=True)
         assert mock_verify.call_count == 2
 
     @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
@@ -424,7 +424,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is True
-        mock_install.assert_called_once_with(DEFAULT_LLVM_VERSION)
+        mock_install.assert_called_once_with(DEFAULT_LLVM_VERSION, quiet=True)
         assert mock_verify.call_count == 2
 
     @patch("headerkit.install_libclang.verify_libclang", return_value=False)
@@ -438,7 +438,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is False
-        mock_install.assert_called_once_with()
+        mock_install.assert_called_once_with(quiet=True)
         # Early exit on install failure means verify is only called once
         # (the initial availability check), not a second time post-install.
         assert mock_verify.call_count == 1
@@ -454,7 +454,7 @@ class TestAutoInstall:
         result = auto_install()
 
         assert result is False
-        mock_install.assert_called_once_with()
+        mock_install.assert_called_once_with(quiet=True)
         assert mock_verify.call_count == 2
 
     @patch("headerkit.install_libclang.install_windows")
