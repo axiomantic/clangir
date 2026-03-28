@@ -6,16 +6,14 @@
 [![Python](https://img.shields.io/pypi/pyversions/headerkit)](https://pypi.org/project/headerkit/)
 [![License](https://img.shields.io/github/license/axiomantic/headerkit)](https://github.com/axiomantic/headerkit/blob/main/LICENSE)
 
-**headerkit** is a CLI tool and Python library that parses C/C++ headers with libclang and generates Python bindings, Cython declarations, LuaJIT FFI bindings, and more. It is:
+**headerkit**: A CLI tool and Python library for parsing C/C++ headers.
 
-- A **CFFI binding generator** -- produce `ffi.cdef()` declarations from C headers
-- A **ctypes binding generator** -- produce complete `ctypes` struct/function modules
-- A **Cython `.pxd` generator** -- produce Cython declaration files with C++ support
-- A **LuaJIT FFI binding generator** -- produce `ffi.cdef()` declarations for LuaJIT
-- A **JSON IR serializer** -- export a full intermediate representation of parsed headers
-- An **LLM prompt writer** -- produce token-optimized header summaries for LLM context windows
-- An **API diff reporter** -- detect breaking changes between header versions
-- A **PEP 517 build backend** -- integrate binding generation into `pip install` and `python -m build`
+Generates:
+
+- **Bindings**: ctypes modules, Cython `.pxd` files, and `ffi.cdef()` for CFFI/LuaJIT.
+- **Data**: JSON Intermediate Representation (IR) and API diffs.
+- **LLMs**: Token-optimized header summaries for prompt windows.
+- **Builds**: PEP 517 backend for standard Python packaging.
 
 Zero runtime dependencies. Pure Python. Supports LLVM 18--21.
 
