@@ -82,6 +82,14 @@ Both backends and writers follow simple protocols and are registered in a global
 
     [:octicons-arrow-right-24: Architecture Overview](guides/architecture.md)
 
+-   **Cache System**
+
+    ---
+
+    Two-layer cache for libclang-free builds.
+
+    [:octicons-arrow-right-24: Cache Guide](guides/cache.md)
+
 -   **API Reference**
 
     ---
