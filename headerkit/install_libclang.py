@@ -182,12 +182,17 @@ def verify_libclang(*, quiet: bool = False) -> bool:
                 print("Verification: libclang is available and loadable.")
             return True
         else:
-            if not quiet:
-                print("WARNING: libclang was installed but could not be loaded by headerkit.")
+            msg = "libclang was installed but could not be loaded by headerkit."
+            if quiet:
+                logger.warning(msg)
+            else:
+                print(f"WARNING: {msg}")
                 print("You may need to set your library path or restart your shell.")
             return False
     except (ImportError, OSError, RuntimeError) as e:
-        if not quiet:
+        if quiet:
+            logger.warning("Could not verify libclang: %s", e)
+        else:
             print(f"WARNING: Could not verify libclang: {e}")
         return False
 
