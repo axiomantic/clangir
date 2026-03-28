@@ -76,6 +76,8 @@ nav:
     - Quick Start: guides/quickstart.md
   - Guides:
     - Architecture Overview: guides/architecture.md
+    - Cache System: guides/cache.md
+    - Build Backend: guides/build-backend.md
     - Using CFFI Writer: guides/cffi.md
     - Writing Custom Backends: guides/custom-backends.md
     - Writing Custom Writers: guides/custom-writers.md
@@ -96,6 +98,7 @@ nav:
     - JSON Writer: reference/json.md
     - Lua Writer: reference/lua.md
     - Prompt Writer: reference/prompt.md
+    - Generate Pipeline: reference/generate.md
     - Install Libclang CLI: reference/install-libclang.md
 
 extra:

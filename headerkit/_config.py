@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -54,6 +53,11 @@ class HeaderkitConfig:
     backend_args: list[str] = field(default_factory=list)
     plugins: list[str] = field(default_factory=list)
     writer_options: dict[str, WriterConfig] = field(default_factory=dict)
+    # Cache settings from [cache] / [tool.headerkit.cache] section
+    cache_dir: str | None = None
+    no_cache: bool = False
+    no_ir_cache: bool = False
+    no_output_cache: bool = False
     # Resolved source path for error reporting
     source_path: Path | None = None
 
@@ -104,13 +108,11 @@ def find_config_file(start: Path | None = None) -> Path | None:
 
 
 def _require_str_list(val: object, field_name: str, source: Path) -> list[str]:
-    """Validate that val is a list of strings; exit with error if not."""
+    """Validate that val is a list of strings; raise ValueError if not."""
     if not isinstance(val, list) or not all(isinstance(item, str) for item in val):
-        print(
-            f"headerkit: config error in {source}: {field_name} must be list[str], got {type(val).__name__}",
-            file=sys.stderr,
+        raise ValueError(
+            f"headerkit: config error in {source}: {field_name} must be list[str], got {type(val).__name__}"
         )
-        sys.exit(1)
     return cast(list[str], val)
 
 
@@ -122,11 +124,7 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
     if "backend" in data:
         val = data["backend"]
         if not isinstance(val, str):
-            print(
-                f"headerkit: config error in {source}: backend must be str, got {type(val).__name__}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise ValueError(f"headerkit: config error in {source}: backend must be str, got {type(val).__name__}")
         config.backend = val
 
     # writers: optional list of strings (no :path syntax)
@@ -134,11 +132,9 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
         writers = _require_str_list(data["writers"], "writers", source)
         for item in writers:
             if ":" in item:
-                print(
-                    f"headerkit: config error in {source}: writers must be bare names (no :path syntax), got {item!r}",
-                    file=sys.stderr,
+                raise ValueError(
+                    f"headerkit: config error in {source}: writers must be bare names (no :path syntax), got {item!r}"
                 )
-                sys.exit(1)
         config.writers = writers
 
     # include_dirs: optional list of strings
@@ -157,24 +153,55 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
     if "plugins" in data:
         config.plugins = _require_str_list(data["plugins"], "plugins", source)
 
+    # cache settings: [cache] section
+    if "cache" in data:
+        cache_val = data["cache"]
+        if not isinstance(cache_val, dict):
+            raise ValueError(
+                f"headerkit: config error in {source}: cache must be a table, got {type(cache_val).__name__}"
+            )
+        cache_table: dict[str, object] = cast(dict[str, object], cache_val)
+        if "cache_dir" in cache_table:
+            cd = cache_table["cache_dir"]
+            if not isinstance(cd, str):
+                raise ValueError(
+                    f"headerkit: config error in {source}: cache.cache_dir must be str, got {type(cd).__name__}"
+                )
+            config.cache_dir = cd
+        if "no_cache" in cache_table:
+            val = cache_table["no_cache"]
+            if not isinstance(val, bool):
+                raise ValueError(
+                    f"headerkit: config error in {source}: cache.no_cache must be bool, got {type(val).__name__}"
+                )
+            config.no_cache = val
+        if "no_ir_cache" in cache_table:
+            val = cache_table["no_ir_cache"]
+            if not isinstance(val, bool):
+                raise ValueError(
+                    f"headerkit: config error in {source}: cache.no_ir_cache must be bool, got {type(val).__name__}"
+                )
+            config.no_ir_cache = val
+        if "no_output_cache" in cache_table:
+            val = cache_table["no_output_cache"]
+            if not isinstance(val, bool):
+                raise ValueError(
+                    f"headerkit: config error in {source}: cache.no_output_cache must be bool, got {type(val).__name__}"
+                )
+            config.no_output_cache = val
+
     # writer options: [writer.NAME] sections -> writer_options[NAME].options
     if "writer" in data:
         val = data["writer"]
         if not isinstance(val, dict):
-            print(
-                f"headerkit: config error in {source}: writer must be a table, got {type(val).__name__}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise ValueError(f"headerkit: config error in {source}: writer must be a table, got {type(val).__name__}")
         writer_table: dict[str, object] = cast(dict[str, object], val)
         for writer_name, writer_opts in writer_table.items():
             if not isinstance(writer_opts, dict):
-                print(
+                raise ValueError(
                     f"headerkit: config error in {source}: writer.{writer_name} must be a table, "
-                    f"got {type(writer_opts).__name__}",
-                    file=sys.stderr,
+                    f"got {type(writer_opts).__name__}"
                 )
-                sys.exit(1)
             config.writer_options[writer_name] = WriterConfig(options=cast(dict[str, object], writer_opts))
 
     return config
@@ -183,7 +210,7 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
 def load_config(path: Path) -> HeaderkitConfig:
     """Load and validate config from `path`.
 
-    Raises SystemExit(1) with stderr message on:
+    Raises ValueError on:
     - tomllib is None (cannot parse TOML)
     - tomllib.TOMLDecodeError
     - Type validation failures (wrong TOML value types)
@@ -192,18 +219,15 @@ def load_config(path: Path) -> HeaderkitConfig:
     [tool.headerkit] section.
     """
     if tomllib is None:
-        print(
+        raise ValueError(
             f"headerkit: TOML config found at {path} but no TOML parser available.\n"
-            "Install: pip install tomli  (Python 3.10 only)",
-            file=sys.stderr,
+            "Install: pip install tomli  (Python 3.10 only)"
         )
-        sys.exit(1)
 
     try:
         raw = _parse_toml(path.read_bytes())
     except _TOML_DECODE_ERROR as exc:
-        print(f"headerkit: config parse error in {path}: {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"headerkit: config parse error in {path}: {exc}") from exc
 
     # Extract the relevant section
     if path.name == "pyproject.toml":

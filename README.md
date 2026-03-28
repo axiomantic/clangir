@@ -6,9 +6,150 @@
 [![Python](https://img.shields.io/pypi/pyversions/headerkit)](https://pypi.org/project/headerkit/)
 [![License](https://img.shields.io/github/license/axiomantic/headerkit)](https://github.com/axiomantic/headerkit/blob/main/LICENSE)
 
-Parse C/C++ headers with libclang and emit output in any format.
+**headerkit**: A CLI tool and Python library for parsing C/C++ headers.
 
-Built-in writers produce ctypes, CFFI, Cython, LuaJIT FFI, JSON IR, and LLM-optimized prompt output, and the plugin system lets you add your own.
+Generates:
+
+- **Bindings**: ctypes modules, CFFI definitions, Cython `.pxd` files, and LuaJIT FFI.
+- **Data**: JSON Intermediate Representation (IR) and API diffs.
+- **LLMs**: Token-optimized header summaries for prompt windows.
+- **Builds**: PEP 517 backend for standard Python packaging.
+
+Parse once. Build anywhere.
+
+### Quick examples
+
+Every example below assumes this input header:
+
+```c
+// mylib.h
+typedef struct { int x, y; } Point;
+int distance(const Point *a, const Point *b);
+```
+
+**ctypes -- drop-in Python module, no build step:**
+```bash
+headerkit mylib.h -w ctypes:bindings.py
+```
+```python
+# generated bindings.py
+class Point(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+    ]
+
+_lib.distance.argtypes = [ctypes.POINTER(Point), ctypes.POINTER(Point)]
+_lib.distance.restype = ctypes.c_int
+```
+
+**CFFI -- declarations for `ffibuilder.cdef()`:**
+```bash
+headerkit mylib.h -w cffi:_defs.py
+```
+```c
+/* generated  _defs.py */
+typedef struct Point {
+    int x;
+    int y;
+} Point;
+int distance(const Point *a, const Point *b);
+```
+
+**Cython -- `.pxd` for compiled C/C++ interop:**
+```bash
+headerkit mylib.h -w cython:mylib.pxd
+```
+```cython
+# generated mylib.pxd
+cdef extern from "mylib.h":
+
+    ctypedef struct Point:
+        int x
+        int y
+
+    int distance(const Point *a, const Point *b)
+```
+
+**LuaJIT FFI -- `ffi.cdef` bindings for LuaJIT:**
+```bash
+headerkit mylib.h -w lua:mylib_ffi.lua
+```
+```lua
+/* generated mylib_ffi.lua */
+local ffi = require("ffi")
+
+ffi.cdef[[
+
+/* Structs */
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+/* Functions */
+int distance(const Point *a, const Point *b);
+
+]]
+```
+
+**JSON -- full IR for custom tooling:**
+```bash
+headerkit mylib.h -w json:mylib.json
+```
+```json
+{
+  "path": "mylib.h",
+  "declarations": [
+    {"kind": "struct", "name": "Point", "fields": [
+      {"name": "x", "type": {"kind": "ctype", "name": "int"}},
+      {"name": "y", "type": {"kind": "ctype", "name": "int"}}
+    ]},
+    {"kind": "function", "name": "distance", ...}
+  ]
+}
+```
+
+**Prompt -- token-optimized summary for LLM context windows:**
+```bash
+headerkit mylib.h -w prompt
+```
+```
+// mylib.h (headerkit compact)
+STRUCT Point {x:int, y:int}
+FUNC distance(a:const Point*, b:const Point*) -> int
+```
+
+**Diff -- API compatibility reports between header versions:**
+```python
+from headerkit.backends import get_backend
+from headerkit.writers.diff import DiffWriter
+
+backend = get_backend("libclang")
+old = backend.parse('#include "mylib_v1.h"', "v1.h")
+new = backend.parse('#include "mylib_v2.h"', "v2.h")
+print(DiffWriter(baseline=old, format="markdown").write(new))
+```
+```markdown
+## Breaking Changes
+### function_signature_changed
+- **distance**: parameter 0 type changed from 'const Point *' to 'const Point3D *'
+```
+
+**Build backend -- generate cacheable bindings at `pip install` time:**
+```toml
+# In your project's pyproject.toml:
+[build-system]
+requires = ["headerkit", "hatchling"]
+build-backend = "headerkit.build_backend"
+```
+
+**Python API -- parse and generate from code:**
+```python
+from headerkit import generate
+
+output = generate("mylib.h", "cffi")
+```
 
 ```mermaid
 graph LR
@@ -21,11 +162,8 @@ graph LR
 ## Features
 
 - **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes:lib.py -w cython:lib.pxd`
-- **Plugin system**: register third-party backends and writers via Python entry points
-- **Zero runtime dependencies**: pure Python, nothing to install beyond headerkit itself
 - **Config file support**: `.headerkit.toml` or `[tool.headerkit]` in `pyproject.toml`
 - **Multi-header merging**: pass multiple `.h` files and they are merged into a single umbrella header
-- **API diff reports**: detect breaking changes between header versions with the `diff` writer
 
 ## Installation
 
@@ -35,7 +173,7 @@ pip install headerkit
 
 Requires Python 3.10+.
 
-Then install libclang:
+Then install libclang (if not already present):
 
 ```bash
 headerkit install-libclang
@@ -51,92 +189,6 @@ Or install it manually:
 | Windows | `winget install LLVM.LLVM` or [LLVM installer](https://github.com/llvm/llvm-project/releases) |
 
 Supports LLVM 18, 19, 20, and 21.
-
-## Quick start
-
-Given a header `mylib.h`:
-
-```c
-typedef struct {
-    int x;
-    int y;
-} Point;
-
-Point* create_point(int x, int y);
-void free_point(Point* p);
-```
-
-Generate CFFI cdef declarations:
-
-```console
-$ headerkit mylib.h -w cffi
-typedef struct Point {
-    int x;
-    int y;
-} Point;
-Point * create_point(int x, int y);
-void free_point(Point * p);
-```
-
-Generate a Cython `.pxd` file:
-
-```console
-$ headerkit mylib.h -w cython
-cdef extern from "mylib.h":
-
-    ctypedef struct Point:
-        int x
-        int y
-
-    Point* create_point(int x, int y)
-
-    void free_point(Point* p)
-```
-
-Generate a complete ctypes binding module:
-
-```console
-$ headerkit mylib.h -w ctypes
-"""ctypes bindings generated from mylib.h."""
-
-import ctypes
-import ctypes.util
-import sys
-
-# ... library loading omitted for brevity ...
-
-# ============================================================
-# Structures and Unions
-# ============================================================
-
-class Point(ctypes.Structure):
-    _fields_ = [
-        ("x", ctypes.c_int),
-        ("y", ctypes.c_int),
-    ]
-
-# ============================================================
-# Function Prototypes
-# ============================================================
-
-_lib.create_point.argtypes = [ctypes.c_int, ctypes.c_int]
-_lib.create_point.restype = ctypes.POINTER(Point)
-
-_lib.free_point.argtypes = [ctypes.POINTER(Point)]
-_lib.free_point.restype = None
-```
-
-Multiple outputs in one pass:
-
-```bash
-headerkit mylib.h -w cython:mylib.pxd -w json:ir.json
-```
-
-With include paths and preprocessor defines:
-
-```bash
-headerkit mylib.h -I /usr/local/include -D VERSION=2 -w cffi
-```
 
 ## CLI reference
 
@@ -219,6 +271,35 @@ Or load plugins explicitly from the config file:
 # .headerkit.toml
 plugins = ["mypkg.headerkit_plugin"]
 ```
+
+## Cache and build backend
+
+headerkit includes a two-layer cache that stores parsed IR and generated output in `.hkcache/`. Commit the cache to version control and downstream consumers can build without libclang installed.
+
+```python
+from headerkit import generate
+
+# First run: parses with libclang, caches result
+output = generate("mylib.h", "cffi")
+
+# Second run: loads from cache, no libclang needed
+output = generate("mylib.h", "cffi")
+```
+
+```bash
+# CLI: generate with caching (on by default)
+headerkit mylib.h -w cffi:bindings.py --cache-dir .hkcache
+```
+
+headerkit also ships a PEP 517 build backend. Consumer projects declare it in `pyproject.toml` and get bindings generated automatically during `pip install` or `python -m build`, with no libclang required when the cache is committed:
+
+```toml
+[build-system]
+requires = ["headerkit", "hatchling"]
+build-backend = "headerkit.build_backend"
+```
+
+See the [Cache Strategy Guide](docs/guides/cache.md) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](docs/guides/build-backend.md) for full setup instructions.
 
 ## Python API
 

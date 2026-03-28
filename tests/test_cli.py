@@ -11,7 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from headerkit._cli import _build_umbrella, _parse_defines, _parse_writer_specs, main
+from headerkit._cli import (
+    _build_parser,
+    _build_umbrella,
+    _env_bool,
+    _parse_defines,
+    _parse_writer_specs,
+    main,
+)
 from headerkit.ir import Header
 
 # =============================================================================
@@ -93,17 +100,20 @@ def reset_registries() -> Generator[None, None, None]:
 
 @pytest.fixture()
 def setup_mocks(reset_registries: None) -> Generator[tuple[MagicMock, MagicMock], None, None]:  # noqa: ARG001
-    """Patch get_backend and get_writer in _cli module, suppress plugin loading."""
-    mock_backend_instance = MockBackend()
-    mock_writer_instance = MockWriter()
+    """Patch generate() in _cli module, suppress plugin loading.
+
+    Yields (mock_generate, mock_generate) for backwards compatibility with tests
+    that destructure into (mock_get_backend, mock_get_writer).  Both elements
+    are the same mock so assert_called_once() works on either.
+    """
+    mock_generate = MagicMock(return_value="mock-output")
 
     with (
-        patch("headerkit._cli.get_backend", return_value=mock_backend_instance) as mock_get_backend,
-        patch("headerkit._cli.get_writer", return_value=mock_writer_instance) as mock_get_writer,
+        patch("headerkit._cli.generate", mock_generate),
         patch("headerkit._cli._load_backend_plugins"),
         patch("headerkit._cli._load_writer_plugins"),
     ):
-        yield mock_get_backend, mock_get_writer
+        yield mock_generate, mock_generate
 
 
 # =============================================================================
@@ -240,7 +250,7 @@ class TestMain:
 
     @pytest.fixture(autouse=True)
     def _setup(self, setup_mocks: tuple[MagicMock, MagicMock]) -> None:
-        self.mock_get_backend, self.mock_get_writer = setup_mocks
+        self.mock_generate = setup_mocks[0]
 
     def test_main_version(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """--version prints version string with semver and exits 0."""
@@ -279,8 +289,9 @@ class TestMain:
         assert result == 0
         captured = capsys.readouterr()
         assert captured.out == "mock-output"
-        self.mock_get_backend.assert_called_once()
-        self.mock_get_writer.assert_called_once_with("mock")
+        self.mock_generate.assert_called_once()
+        call_kwargs = self.mock_generate.call_args
+        assert call_kwargs.kwargs["writer_name"] == "mock"
 
     def test_main_single_writer_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Single writer with output path writes to file."""
@@ -297,8 +308,9 @@ class TestMain:
         result = main()
         assert result == 0
         assert output_file.read_text(encoding="utf-8") == "mock-output"
-        self.mock_get_backend.assert_called_once()
-        self.mock_get_writer.assert_called_once_with("mock")
+        self.mock_generate.assert_called_once()
+        call_kwargs = self.mock_generate.call_args
+        assert call_kwargs.kwargs["writer_name"] == "mock"
 
     def test_main_multiple_stdout_exits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -453,3 +465,76 @@ class TestMain:
         captured = capsys.readouterr()
         help_output = captured.out or captured.err
         assert "install-libclang" in help_output
+
+
+# =============================================================================
+# TestCacheFlags
+# =============================================================================
+
+
+class TestCacheFlags:
+    """Tests for --no-cache, --no-ir-cache, --no-output-cache, --cache-dir flags."""
+
+    def test_no_cache_flag_parsed(self) -> None:
+        """--no-cache sets args.no_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-cache"])
+        assert args.no_cache is True
+
+    def test_no_ir_cache_flag_parsed(self) -> None:
+        """--no-ir-cache sets args.no_ir_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-ir-cache"])
+        assert args.no_ir_cache is True
+
+    def test_no_output_cache_flag_parsed(self) -> None:
+        """--no-output-cache sets args.no_output_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-output-cache"])
+        assert args.no_output_cache is True
+
+    def test_cache_dir_flag_parsed(self) -> None:
+        """--cache-dir stores the provided path."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--cache-dir", "/tmp/cache"])
+        assert args.cache_dir == "/tmp/cache"
+
+    def test_defaults(self) -> None:
+        """All cache flags default to False/None when not specified."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h"])
+        assert args.no_cache is False
+        assert args.no_ir_cache is False
+        assert args.no_output_cache is False
+        assert args.cache_dir is None
+
+
+# =============================================================================
+# TestEnvBool
+# =============================================================================
+
+
+class TestEnvBool:
+    """Tests for the _env_bool() helper."""
+
+    def test_env_bool_true_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'1', 'true', 'yes' (case-insensitive) return True."""
+        for val in ("1", "true", "TRUE", "True", "yes", "YES", "Yes"):
+            monkeypatch.setenv("TEST_VAR", val)
+            assert _env_bool("TEST_VAR") is True, f"Expected True for {val!r}"
+
+    def test_env_bool_false_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'0', 'false', 'no', '' return False."""
+        for val in ("0", "false", "FALSE", "no", "NO", ""):
+            monkeypatch.setenv("TEST_VAR", val)
+            assert _env_bool("TEST_VAR") is False, f"Expected False for {val!r}"
+
+    def test_env_bool_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unset env var returns False (default)."""
+        monkeypatch.delenv("TEST_VAR", raising=False)
+        assert _env_bool("TEST_VAR") is False
+
+    def test_env_bool_custom_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Custom default is returned when var is unset."""
+        monkeypatch.delenv("TEST_VAR", raising=False)
+        assert _env_bool("TEST_VAR", default=True) is True

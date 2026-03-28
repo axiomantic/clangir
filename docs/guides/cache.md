@@ -1,229 +1,281 @@
-# Cache Staleness Detection
+# Cache Strategy Guide
 
-headerkit includes a hash-based cache system that detects when generated
-output files are stale relative to their inputs. This enables a two-phase
-workflow: generate bindings on a machine with libclang, then validate
-freshness on any machine without libclang.
+headerkit includes a two-layer cache that stores parsed IR and generated
+output in `.hkcache/`. This enables libclang-free builds by committing the
+cache to your repository.
 
 ## Overview
 
-The cache works by computing a SHA-256 hash over all inputs that affect
-generation:
+Parsing C/C++ headers with libclang is slow and requires libclang to be
+installed. The cache eliminates both problems:
 
-- Header file contents (normalized for line endings and BOM)
-- Writer name and options
-- headerkit version
-- Any extra input files
+- **IR cache**: Stores the parsed intermediate representation (IR) as JSON.
+  Subsequent runs skip libclang entirely.
+- **Output cache**: Stores each writer's generated output. Subsequent runs
+  skip both parsing and writing.
 
-This hash is stored alongside the generated output, either embedded as a
-comment block or in a sidecar `.hkcache` file. Later, `is_up_to_date()`
-recomputes the hash and compares it to the stored value.
+When the cache is committed to version control, `pip install` and CI builds
+work without libclang installed.
 
-## Python API
+## How it works
 
-### Computing a hash
+The cache uses content-addressed storage with human-readable directory names.
 
-```python
-from headerkit import compute_hash
+1. **Parse phase**: headerkit computes a SHA-256 cache key from the backend
+   name, header content, include dirs, defines, and other args. If the IR
+   cache has a matching entry, it deserializes the cached JSON IR. Otherwise
+   it parses with the backend and writes the result to the IR cache.
 
-digest = compute_hash(
-    header_paths=["include/mylib.h", "include/mylib_types.h"],
-    writer_name="cffi",
-    writer_options={"exclude": "__internal_.*"},
-)
+2. **Write phase**: headerkit computes a second cache key from the IR cache
+   key plus the writer name, writer options, and writer cache version. If the
+   output cache has a matching entry, it returns the cached output. Otherwise
+   it runs the writer and caches the result.
+
+## Directory layout
+
+```
+.hkcache/
+  ir/
+    index.json                          # slug -> cache_key mapping
+    libclang.mylib/                     # one dir per unique parse
+      ir.json                           # serialized Header IR
+      metadata.json                     # cache key, backend, args, timestamp
+    libclang.mylib.d.DEBUG/             # different defines = different entry
+      ir.json
+      metadata.json
+  output/
+    cffi/
+      index.json
+      libclang.mylib/
+        output.py                       # generated cffi output
+        metadata.json
+    ctypes/
+      index.json
+      libclang.mylib/
+        output.py
+        metadata.json
+    json/
+      index.json
+      libclang.mylib/
+        output.json
+        metadata.json
 ```
 
-### Saving a hash
+Slug names are derived from the backend name and header filename. Defines
+and include dirs are encoded into the slug (e.g., `.d.DEBUG`, `.i.include`).
+When a slug collides, a numeric suffix is appended (e.g., `libclang.mylib-2`).
+
+## Using the cache
+
+### Python API
 
 ```python
-from headerkit import save_hash
-from headerkit.writers import get_writer
+from headerkit import generate, generate_all
 
-writer = get_writer("cffi")
+# Single writer: parse + generate cffi output
+output = generate("include/mylib.h", "cffi")
 
-# Embedded: prepends hash as comment block to the output file
-result = save_hash(
-    output_path="bindings/mylib_cffi.py",
-    header_paths=["include/mylib.h"],
-    writer_name="cffi",
-    writer=writer,  # enables embedded storage
-)
+# Second call with same inputs: loaded entirely from cache
+output = generate("include/mylib.h", "cffi")
 
-# Sidecar: creates bindings/mylib.json.hkcache alongside the output
-result = save_hash(
-    output_path="bindings/mylib.json",
-    header_paths=["include/mylib.h"],
-    writer_name="json",
-    writer=get_writer("json"),  # json has no comment format, uses sidecar
-)
-```
-
-### Checking freshness
-
-```python
-from headerkit import is_up_to_date
-
-if is_up_to_date(
-    output_path="bindings/mylib_cffi.py",
-    header_paths=["include/mylib.h"],
-    writer_name="cffi",
-):
-    print("Output is fresh")
-else:
-    print("Output is stale, regenerate")
-```
-
-### Batch checking
-
-```python
-from headerkit.cache import is_up_to_date_batch
-
-results = is_up_to_date_batch([
-    {
-        "output_path": "bindings/mylib_cffi.py",
-        "header_paths": ["include/mylib.h"],
-        "writer_name": "cffi",
+# Multiple writers: parses once, generates each writer
+results = generate_all(
+    "include/mylib.h",
+    writers=["cffi", "ctypes", "json"],
+    output_paths={
+        "cffi": "bindings/mylib_cffi.py",
+        "ctypes": "bindings/mylib_ctypes.py",
+        "json": "bindings/mylib_ir.json",
     },
-    {
-        "output_path": "bindings/mylib_ctypes.py",
-        "header_paths": ["include/mylib.h"],
-        "writer_name": "ctypes",
-    },
-])
+)
 
-for path, fresh in results.items():
-    status = "fresh" if fresh else "STALE"
-    print(f"  {path}: {status}")
+# With backend options
+output = generate(
+    "include/mylib.h",
+    "cffi",
+    include_dirs=["/usr/local/include"],
+    defines=["VERSION=2", "DEBUG"],
+    writer_options={"exclude_patterns": "^__"},
+)
 ```
 
-## CLI Usage
-
-### Saving a hash
+### CLI
 
 ```bash
-# Sidecar storage (default when --writer is not specified)
-headerkit cache-save bindings/mylib.json \
-    --header include/mylib.h \
-    --writer-name json
+# Generate with caching (default behavior)
+headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
 
-# Embedded storage (pass --writer to enable comment embedding)
-headerkit cache-save bindings/mylib_cffi.py \
-    --header include/mylib.h \
-    --writer-name cffi \
-    --writer cffi
+# Second run uses cache automatically
+headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+
+# Multiple writers in one pass
+headerkit include/mylib.h -w cffi:bindings/cffi.py -w ctypes:bindings/ctypes.py
+
+# Custom cache directory
+headerkit include/mylib.h -w cffi --cache-dir /tmp/hkcache
 ```
 
-### Checking freshness
+### PEP 517 build backend
 
-```bash
-# Exit code 0 = up-to-date, 1 = stale
-headerkit cache-check bindings/mylib_cffi.py \
-    --header include/mylib.h \
-    --writer-name cffi
-
-# Use in shell scripts
-if headerkit cache-check bindings/mylib_cffi.py \
-    --header include/mylib.h --writer-name cffi; then
-    echo "Fresh"
-else
-    echo "Stale, regenerating..."
-    headerkit -w cffi:bindings/mylib_cffi.py include/mylib.h
-    headerkit cache-save bindings/mylib_cffi.py \
-        --header include/mylib.h --writer-name cffi --writer cffi
-fi
-```
-
-### Writer options
-
-Pass writer options to ensure the hash matches the generation configuration:
-
-```bash
-headerkit cache-save output.py \
-    --header input.h \
-    --writer-name cffi \
-    --writer-option "exclude=__internal_.*" \
-    --writer-option "prefix=mylib_"
-```
-
-### Extra inputs
-
-Include additional files (build configs, version files) in the hash:
-
-```bash
-headerkit cache-save output.py \
-    --header input.h \
-    --writer-name cffi \
-    --extra-input build.cfg \
-    --extra-input VERSION
-```
-
-## Storage Modes
-
-### Embedded comments
-
-Writers that support comments (cffi, ctypes, cython, lua) can store the
-hash directly in the output file as a comment block at the top:
-
-```python
-# [headerkit-cache]
-# hash = "a1b2c3..."
-# version = "0.9.0"
-# writer = "cffi"
-# generated = "2026-03-23T14:30:00+00:00"
-
-# ... generated bindings below ...
-```
-
-This keeps the hash and output in a single file.
-
-### Sidecar `.hkcache` files
-
-Writers without comment support (json, prompt, diff) use a sidecar file.
-For `bindings.json`, the sidecar is `bindings.json.hkcache`:
+Consumer projects can use headerkit as their build backend. When `pip install`
+or `python -m build` runs, headerkit generates bindings from cached IR before
+delegating to the inner backend (hatchling by default).
 
 ```toml
-[headerkit-cache]
-hash = "a1b2c3..."
-version = "0.9.0"
-writer = "json"
-generated = "2026-03-23T14:30:00+00:00"
+# Consumer project's pyproject.toml
+[build-system]
+requires = ["headerkit", "hatchling"]
+build-backend = "headerkit.build_backend"
+
+[tool.headerkit]
+backend = "libclang"
+writers = ["cffi"]
+
+[tool.headerkit.headers."include/mylib.h"]
+defines = ["VERSION=2"]
+include_dirs = ["/usr/local/include"]
 ```
 
-When `writer=None` is passed to `save_hash()`, sidecar storage is always
-used regardless of the writer name.
+With a committed `.hkcache/`, the build works without libclang. The build
+backend reads from the cache and only falls back to libclang on cache miss.
 
-## Version Control
+## Cache bypass
 
-Commit `.hkcache` sidecar files alongside your generated output. They are
-small (under 200 bytes) and enable any checkout to verify freshness without
-regenerating.
+Disable caching at three levels:
 
-For embedded hashes, the hash block is part of the output file itself, so
-committing the output is sufficient.
+| Scope | CLI flag | Environment variable | Config key |
+|-------|----------|---------------------|------------|
+| All caching | `--no-cache` | `HEADERKIT_NO_CACHE=1` | `no_cache = true` |
+| IR cache only | `--no-ir-cache` | `HEADERKIT_NO_IR_CACHE=1` | `no_ir_cache = true` |
+| Output cache only | `--no-output-cache` | `HEADERKIT_NO_OUTPUT_CACHE=1` | `no_output_cache = true` |
 
-## CI Integration
+Priority order: CLI flags > environment variables > config file.
 
-A typical CI pipeline validates that committed bindings are fresh:
+```bash
+# Skip all caching
+headerkit include/mylib.h -w cffi --no-cache
 
-```yaml
-# .github/workflows/check-bindings.yml
-name: Check bindings freshness
-on: [push, pull_request]
+# Re-parse with libclang but use output cache
+headerkit include/mylib.h -w cffi --no-ir-cache
 
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install headerkit
-      - run: |
-          headerkit cache-check bindings/mylib_cffi.py \
-            --header include/mylib.h \
-            --writer-name cffi
+# Re-run writer but use IR cache
+headerkit include/mylib.h -w cffi --no-output-cache
 ```
 
-This job requires no libclang installation. It only reads the stored hash
-and recomputes from the header files present in the checkout.
+In Python:
+
+```python
+output = generate("include/mylib.h", "cffi", no_cache=True)
+output = generate("include/mylib.h", "cffi", no_ir_cache=True)
+output = generate("include/mylib.h", "cffi", no_output_cache=True)
+```
+
+## Cache management
+
+headerkit provides subcommands for inspecting and managing the cache.
+
+```bash
+# Show cache statistics
+headerkit cache status --cache-dir .hkcache
+
+# Clear all cache entries
+headerkit cache clear --cache-dir .hkcache
+
+# Clear only IR entries (keeps output cache)
+headerkit cache clear --cache-dir .hkcache --ir
+
+# Clear only output entries (keeps IR cache)
+headerkit cache clear --cache-dir .hkcache --output
+
+# Rebuild index.json files from metadata
+headerkit cache rebuild-index --cache-dir .hkcache
+```
+
+`rebuild-index` is useful after manually editing or moving cache entries. It
+scans all `metadata.json` files and regenerates the `index.json` mappings.
+
+## Configuration
+
+Cache settings live in the `[cache]` section of `.headerkit.toml` or
+`[tool.headerkit.cache]` in `pyproject.toml`.
+
+```toml
+# .headerkit.toml
+[cache]
+cache_dir = ".hkcache"
+no_cache = false
+no_ir_cache = false
+no_output_cache = false
+```
+
+```toml
+# pyproject.toml
+[tool.headerkit.cache]
+cache_dir = ".hkcache"
+no_cache = false
+no_ir_cache = false
+no_output_cache = false
+```
+
+## Committing the cache
+
+Commit `.hkcache/` to your repository so that downstream consumers and CI
+can build without libclang:
+
+```bash
+git add .hkcache/
+git commit -m "cache: update headerkit cache"
+```
+
+A typical workflow:
+
+1. Developer with libclang runs `headerkit` to generate bindings.
+2. Cache entries are written to `.hkcache/`.
+3. Developer commits `.hkcache/` alongside the generated output.
+4. CI and downstream `pip install` use the cache, no libclang required.
+
+### CI validation
+
+To verify the committed cache is up-to-date in CI:
+
+```bash
+# Generate with current sources
+headerkit generate mylib.h --writer cffi --output-path bindings.py
+
+# Check for uncommitted changes
+git diff --exit-code .hkcache/ bindings.py
+```
+
+If the diff is non-empty, the cache is stale and needs to be regenerated.
+
+## Writer opt-out
+
+Writers can opt out of output caching by setting `cache_output = False` as
+a class attribute. The IR cache still runs, but the writer's output is
+regenerated on every call.
+
+```python
+from headerkit.writers import Writer, register_writer
+
+class MyWriter(Writer):
+    cache_output = False  # always regenerate output
+
+    def write(self, header):
+        ...
+
+register_writer("mywriter", MyWriter)
+```
+
+The built-in `diff` and `prompt` writers use this because their output
+depends on runtime context (baseline header, verbosity) that is not fully
+captured by the cache key.
+
+Writers can also declare a `cache_version` attribute. Changing this value
+invalidates all cached output for that writer, which is useful when the
+output format changes between versions:
+
+```python
+class MyWriter(Writer):
+    cache_version = "2"  # bump to invalidate old cache entries
+    ...
+```

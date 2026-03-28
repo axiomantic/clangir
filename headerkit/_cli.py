@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.metadata
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,8 +16,22 @@ from headerkit._config import (
     load_config,
     merge_config,
 )
-from headerkit.backends import _load_backend_plugins, get_backend
-from headerkit.writers import WriterBackend, _load_writer_plugins, get_writer
+from headerkit._generate import generate
+from headerkit.backends import _load_backend_plugins
+from headerkit.writers import _load_writer_plugins
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    """Read an environment variable as a boolean.
+
+    Truthy: '1', 'true', 'yes' (case-insensitive).
+    Falsy: '0', 'false', 'no', '' (case-insensitive).
+    Unset: returns *default*.
+    """
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in ("1", "true", "yes")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -25,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="headerkit",
         description="Parse C/C++ header files and emit output via configurable writers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache-check         Check if generated output is up-to-date\n  cache-save          Save cache hash for generated output",
+        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache                Cache management (status, clear, rebuild-index)",
     )
     parser.add_argument(
         "input_files",
@@ -90,6 +105,34 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Disable config file loading",
+    )
+    parser.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        default=False,
+        help="Disable all caching",
+    )
+    parser.add_argument(
+        "--no-ir-cache",
+        dest="no_ir_cache",
+        action="store_true",
+        default=False,
+        help="Disable IR cache only",
+    )
+    parser.add_argument(
+        "--no-output-cache",
+        dest="no_output_cache",
+        action="store_true",
+        default=False,
+        help="Disable output cache only",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        dest="cache_dir",
+        metavar="DIR",
+        default=None,
+        help="Cache directory (default: .hkcache/ in project root)",
     )
     parser.add_argument(
         "--version",
@@ -203,26 +246,6 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
     return code, filename, project_prefixes
 
 
-def _instantiate_writer(spec: WriterSpec) -> WriterBackend:
-    """Instantiate a writer from a WriterSpec.
-
-    Raises ValueError for unknown writer name, TypeError for bad constructor args.
-    Callers are responsible for catching and formatting error messages.
-    """
-    kwargs: dict[str, object] = {}
-    for key, values in spec.options.items():
-        kwargs[key] = values[0] if len(values) == 1 else values
-
-    if spec.name == "diff" and "baseline" not in kwargs:
-        print(
-            "Warning: diff writer used without a baseline; outputting full current header state"
-            " (not a true diff). Use the Python API to supply a baseline Header.",
-            file=sys.stderr,
-        )
-
-    return get_writer(spec.name, **kwargs)
-
-
 def _write_output(spec: WriterSpec, content: str) -> None:
     """Write output to stdout or file per spec.output_path."""
     if spec.output_path is None:
@@ -275,15 +298,25 @@ def main() -> int:
 
         return _install_main(sys.argv[2:])
 
-    if len(sys.argv) > 1 and sys.argv[1] == "cache-check":
-        from headerkit._cache_cli import cache_check_main
+    if len(sys.argv) > 1 and sys.argv[1] == "cache":
+        from headerkit._cache_cli import (
+            cache_clear_main,
+            cache_rebuild_index_main,
+            cache_status_main,
+        )
 
-        return cache_check_main(sys.argv[2:])
-
-    if len(sys.argv) > 1 and sys.argv[1] == "cache-save":
-        from headerkit._cache_cli import cache_save_main
-
-        return cache_save_main(sys.argv[2:])
+        sub_argv = sys.argv[2:]
+        if sub_argv and sub_argv[0] == "status":
+            return cache_status_main(sub_argv[1:])
+        if sub_argv and sub_argv[0] == "clear":
+            return cache_clear_main(sub_argv[1:])
+        if sub_argv and sub_argv[0] == "rebuild-index":
+            return cache_rebuild_index_main(sub_argv[1:])
+        print(
+            "headerkit cache: unknown subcommand. Available: status, clear, rebuild-index",
+            file=sys.stderr,
+        )
+        return 1
 
     parser = _build_parser()
     args = parser.parse_args()
@@ -307,16 +340,20 @@ def main() -> int:
     # Load config
     config: HeaderkitConfig | None = None
     if not no_config:
-        if config_path_raw is not None:
-            explicit_config_path = Path(config_path_raw)
-            if not explicit_config_path.exists():
-                print(f"headerkit: config file not found: {config_path_raw}", file=sys.stderr)
-                return 1
-            config = load_config(explicit_config_path)
-        else:
-            discovered_config_path = find_config_file()
-            if discovered_config_path is not None:
-                config = load_config(discovered_config_path)
+        try:
+            if config_path_raw is not None:
+                explicit_config_path = Path(config_path_raw)
+                if not explicit_config_path.exists():
+                    print(f"headerkit: config file not found: {config_path_raw}", file=sys.stderr)
+                    return 1
+                config = load_config(explicit_config_path)
+            else:
+                discovered_config_path = find_config_file()
+                if discovered_config_path is not None:
+                    config = load_config(discovered_config_path)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     # Merge config into args (CLI wins)
     args = merge_config(config, args)
@@ -327,6 +364,20 @@ def main() -> int:
     backend_args = args.backend_args
     writers_raw = args.writers
     writer_opts_raw = args.writer_opts_raw
+
+    # Resolve cache settings (priority: CLI > env > config > defaults)
+    resolved_no_cache: bool = args.no_cache or _env_bool("HEADERKIT_NO_CACHE")
+    resolved_no_ir_cache: bool = args.no_ir_cache or _env_bool("HEADERKIT_NO_IR_CACHE")
+    resolved_no_output_cache: bool = args.no_output_cache or _env_bool("HEADERKIT_NO_OUTPUT_CACHE")
+    resolved_cache_dir: str | None = args.cache_dir
+    if not resolved_no_cache and config is not None:
+        resolved_no_cache = config.no_cache
+        if not resolved_no_ir_cache:
+            resolved_no_ir_cache = config.no_ir_cache
+        if not resolved_no_output_cache:
+            resolved_no_output_cache = config.no_output_cache
+        if resolved_cache_dir is None:
+            resolved_cache_dir = config.cache_dir
 
     # Load plugins (F3/F7: no --plugins flag; config.plugins loaded here)
     _load_backend_plugins()
@@ -364,33 +415,38 @@ def main() -> int:
     # Build umbrella
     code, filename, project_prefixes = _build_umbrella(input_files)
 
-    # Parse
+    # Generate outputs via cache-aware pipeline
     extra_args = _parse_defines(defines) + backend_args
-    try:
-        backend = get_backend(backend_name)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    try:
-        header = backend.parse(
-            code=code,
-            filename=filename,
-            include_dirs=include_dirs or None,
-            extra_args=extra_args or None,
-            project_prefixes=project_prefixes or None,
-        )
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    # Write outputs
     for spec in specs:
+        writer_kwargs: dict[str, object] = {}
+        for key, values in spec.options.items():
+            writer_kwargs[key] = values[0] if len(values) == 1 else values
+
+        if spec.name == "diff" and "baseline" not in writer_kwargs:
+            print(
+                "Warning: diff writer used without a baseline; outputting full current header state"
+                " (not a true diff). Use the Python API to supply a baseline Header.",
+                file=sys.stderr,
+            )
+
         try:
-            writer = _instantiate_writer(spec)
-        except (ValueError, TypeError) as exc:
-            print(f"headerkit: {exc}", file=sys.stderr)
+            content = generate(
+                header_path=filename,
+                writer_name=spec.name,
+                code=code,
+                backend_name=backend_name,
+                include_dirs=include_dirs or None,
+                extra_args=extra_args or None,
+                writer_options=writer_kwargs or None,
+                cache_dir=resolved_cache_dir,
+                no_cache=resolved_no_cache,
+                no_ir_cache=resolved_no_ir_cache,
+                no_output_cache=resolved_no_output_cache,
+                project_prefixes=project_prefixes or None,
+            )
+        except (ValueError, TypeError, RuntimeError, FileNotFoundError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             return 1
-        content = writer.write(header)
         _write_output(spec, content)
 
     return 0

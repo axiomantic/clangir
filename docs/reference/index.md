@@ -26,6 +26,15 @@ the registry functions mirror the backend API.
 | [Lua](lua.md) | `headerkit.writers.lua` | Generates LuaJIT FFI binding files |
 | [Prompt](prompt.md) | `headerkit.writers.prompt` | Token-optimized output for LLM context |
 
+## Generation Pipeline
+
+| Symbol | Module | Description |
+|--------|--------|-------------|
+| [generate](generate.md) | `headerkit._generate` | Cache-aware single-writer generation |
+| [generate_all](generate.md) | `headerkit._generate` | Cache-aware multi-writer generation |
+| [GenerateResult](generate.md) | `headerkit._generate` | Result dataclass for generation |
+| [json_to_header](generate.md) | `headerkit._ir_json` | Deserialize JSON back to IR |
+
 ## CLI Tools
 
 | Tool | Module | Description |
