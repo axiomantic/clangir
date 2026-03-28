@@ -422,6 +422,7 @@ class TestGenerateAutoInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Default behavior (no kwarg, no env, no config) does NOT auto-install."""
+        monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
         _make_backend_unavailable(monkeypatch)
 
         mock_auto_install = MagicMock(return_value=True)

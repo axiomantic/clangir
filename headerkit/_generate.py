@@ -123,9 +123,17 @@ def _find_project_root(start: Path) -> Path:
 
     Falls back to *start* itself if no ``.git`` marker is found before
     reaching the filesystem root or the user's home directory.
+
+    Uses ``Path.absolute()`` instead of ``Path.resolve()`` so that the
+    traversal sees the same directory entries that the caller created.
+    On Windows, ``resolve()`` can expand 8.3 short names (e.g.
+    ``RUNNER~1`` to ``runneradmin``), producing a canonical path whose
+    parent chain may differ from the path where ``.git`` was physically
+    created -- causing the marker check to miss and the walk to escape
+    the intended project boundary.
     """
-    current = start.resolve()
-    home = Path.home().resolve()
+    current = start.absolute()
+    home = Path.home().absolute()
     while True:
         if (current / ".git").exists():
             return current
