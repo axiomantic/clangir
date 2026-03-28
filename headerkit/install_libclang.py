@@ -197,7 +197,7 @@ def auto_install() -> bool:
     # Redirect stdout to devnull so that print() calls inside the
     # platform-specific installers (and _run / verify_libclang) do not
     # leak output to callers that expect a quiet API.
-    with contextlib.redirect_stdout(open(os.devnull, "w")):  # noqa: SIM115
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
         if sys.platform == "linux":
             ok = install_linux()
         elif sys.platform == "darwin":

@@ -38,7 +38,7 @@ from headerkit._cache_store import (
     write_ir_entry,
     write_output_entry,
 )
-from headerkit._config import _parse_toml
+from headerkit._config import _TOML_DECODE_ERROR, _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit.backends import get_backend
 from headerkit.install_libclang import auto_install
@@ -108,9 +108,10 @@ def _is_auto_install_allowed(
                     pyproject,
                 )
                 return config_val
-        except Exception:
-            # If we can't read the config, fall through to default
-            pass
+        except (FileNotFoundError, KeyError, ValueError, RuntimeError):
+            logger.warning("Could not read auto_install_libclang config from %s", pyproject)
+        except _TOML_DECODE_ERROR:
+            logger.warning("Malformed TOML in %s; ignoring headerkit config", pyproject)
 
     # Layer 4: default (opt-in, so False)
     logger.debug("Auto-install disabled by default (opt-in)")
