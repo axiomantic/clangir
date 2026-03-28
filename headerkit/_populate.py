@@ -527,7 +527,7 @@ def build_docker_command(
     for hp in header_paths:
         hk_cmd_parts.append(shlex.quote(Path(hp).as_posix()))
     for w in writers:
-        hk_cmd_parts.extend(["-w", w])
+        hk_cmd_parts.extend(["-w", shlex.quote(w)])
     if include_dirs:
         for inc_dir in include_dirs:
             hk_cmd_parts.extend(["-I", shlex.quote(Path(inc_dir).as_posix())])
@@ -545,7 +545,7 @@ def build_docker_command(
                         hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={v}")])
                 else:
                     hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={value}")])
-    hk_cmd_parts.extend(["--backend", backend_name])
+    hk_cmd_parts.extend(["--backend", shlex.quote(backend_name)])
     hk_cmd_parts.extend(["--cache-dir", shlex.quote(cache_posix)])
     script_parts.append(" ".join(hk_cmd_parts))
 
