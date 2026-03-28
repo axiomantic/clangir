@@ -582,7 +582,6 @@ def populate(
     backend_name: str | None = None,
     writer_options: dict[str, dict[str, object]] | None = None,
     cache_dir: str | Path | None = None,
-    force: bool = False,
     dry_run: bool = False,
     timeout: int = 300,
 ) -> PopulateResult:
@@ -601,7 +600,6 @@ def populate(
     :param backend_name: Backend name (default: "libclang").
     :param writer_options: Per-writer options.
     :param cache_dir: Cache directory (default: auto-detected .hkcache/).
-    :param force: Overwrite existing entries.
     :param dry_run: Plan without executing.
     :param timeout: Per-container timeout in seconds.
     :returns: PopulateResult with per-entry results.
@@ -688,12 +686,6 @@ def populate(
         hk_source = _find_headerkit_source()
 
     header_path_strs = [str(h) for h in resolved_headers]
-
-    # NOTE: In v1, --force is accepted but the idempotency check (looking up
-    # existing entries in index.json) is not yet implemented.  The container
-    # itself will overwrite cache entries on re-run.  The parameter is kept
-    # so that the CLI flag exists and can be wired in a future version.
-    _ = force
 
     for target in targets:
         start_time = time.monotonic()

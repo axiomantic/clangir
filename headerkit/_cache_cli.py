@@ -243,13 +243,6 @@ def cache_populate_main(argv: list[str]) -> int:
         help="Cache directory path (default: .hkcache/)",
     )
     parser.add_argument(
-        "--force",
-        dest="force",
-        action="store_true",
-        default=False,
-        help="Overwrite existing cache entries",
-    )
-    parser.add_argument(
         "--dry-run",
         dest="dry_run",
         action="store_true",
@@ -311,24 +304,22 @@ def cache_populate_main(argv: list[str]) -> int:
     if args.writer_opts_raw:
         writer_options = {}
         for item in args.writer_opts_raw:
-            colon_pos = item.find(":")
-            if colon_pos == -1:
+            writer_name, sep, rest = item.partition(":")
+            if not sep:
                 print(
                     f"headerkit cache populate: malformed --writer-opt: {item!r}; use WRITER:KEY=VALUE format",
                     file=sys.stderr,
                 )
                 return 1
-            writer_name = item[:colon_pos]
-            rest = item[colon_pos + 1 :]
-            eq_pos = rest.find("=")
-            if eq_pos == -1:
+
+            key, sep, value = rest.partition("=")
+            if not sep:
                 print(
                     f"headerkit cache populate: malformed --writer-opt: {item!r}; expected WRITER:KEY=VALUE",
                     file=sys.stderr,
                 )
                 return 1
-            key = rest[:eq_pos]
-            value = rest[eq_pos + 1 :]
+
             if writer_name not in writer_options:
                 writer_options[writer_name] = {}
             writer_options[writer_name][key] = value
@@ -350,7 +341,6 @@ def cache_populate_main(argv: list[str]) -> int:
             backend_name=args.backend,
             writer_options=writer_options,
             cache_dir=args.cache_dir,
-            force=args.force,
             dry_run=args.dry_run,
             timeout=args.timeout,
         )

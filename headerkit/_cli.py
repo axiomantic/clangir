@@ -174,28 +174,22 @@ def _parse_writer_specs(
     spec_by_name: dict[str, WriterSpec] = {}
 
     for item in raw_writers:
-        colon_pos = item.find(":")
-        if colon_pos == -1:
-            name = item
+        name, sep, output_path_str = item.partition(":")
+        if not sep:
             output_path = None
         else:
-            name = item[:colon_pos]
-            output_path = item[colon_pos + 1 :]
+            output_path = output_path_str
         spec = WriterSpec(name=name, output_path=output_path)
         specs.append(spec)
         spec_by_name[name] = spec
 
     for item in raw_opts:
-        colon_pos = item.find(":")
-        if colon_pos == -1:
+        writer_name, sep, rest = item.partition(":")
+        if not sep:
             raise ValueError(f"unscoped --writer-opt: {item!r}; use WRITER:KEY=VALUE format")
-        writer_name = item[:colon_pos]
-        rest = item[colon_pos + 1 :]
-        eq_pos = rest.find("=")
-        if eq_pos == -1:
+        key, sep, value = rest.partition("=")
+        if not sep:
             raise ValueError(f"malformed --writer-opt: {item!r}; expected WRITER:KEY=VALUE")
-        key = rest[:eq_pos]
-        value = rest[eq_pos + 1 :]
         if writer_name not in spec_by_name:
             print(
                 f"headerkit: warning: --writer-opt for unknown writer {writer_name!r}; ignoring",
