@@ -6,9 +6,15 @@ developers can browse .hkcache/ and understand what each entry is.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
+import logging
+import os
 import re
-from pathlib import PurePosixPath
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from typing import TypedDict
 
 _MAX_SLUG_LENGTH = 120
 _COLLISION_BUDGET = 4  # Reserve for "-NNN" suffix
@@ -143,3 +149,125 @@ def _hash_group(values: list[str]) -> str:
         h.update(v.encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()[:8]
+
+
+# ---------------------------------------------------------------------------
+# Index management
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger("headerkit.cache")
+
+
+class IndexEntry(TypedDict):
+    """A single entry in the cache index."""
+
+    cache_key: str
+    created: str  # ISO 8601 timestamp
+
+
+class CacheIndex(TypedDict):
+    """Top-level structure of index.json."""
+
+    version: int  # always 1
+    entries: dict[str, IndexEntry]
+
+
+def load_index(index_path: Path) -> CacheIndex:
+    """Load index.json. Returns empty index if file missing or corrupt."""
+    if not index_path.exists():
+        return {"version": 1, "entries": {}}
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "entries" in data:
+            return {"version": data.get("version", 1), "entries": data["entries"]}
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "Corrupt index.json in %s, rebuilding from metadata: %s",
+            index_path,
+            exc,
+        )
+        rebuilt = rebuild_index(index_path.parent)
+        with contextlib.suppress(OSError):
+            save_index(index_path, rebuilt)
+        return rebuilt
+    return {"version": 1, "entries": {}}
+
+
+def save_index(index_path: Path, index: CacheIndex) -> None:
+    """Atomically write index.json."""
+    tmp_path = index_path.with_suffix(".json.tmp")
+    content = json.dumps(dict(index), indent=2, sort_keys=True)
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(str(tmp_path), str(index_path))
+
+
+def lookup_slug(index: CacheIndex, cache_key: str) -> str | None:
+    """Find the slug for a given cache key, or None if not indexed."""
+    for slug, entry in index["entries"].items():
+        if entry["cache_key"] == cache_key:
+            return slug
+    return None
+
+
+def register_slug(
+    index: CacheIndex,
+    slug: str,
+    cache_key: str,
+) -> str:
+    """Register a slug for a cache key, handling collisions.
+
+    If the slug is already taken by a different cache_key, appends
+    -2, -3, etc. until a free slot is found.
+
+    :returns: The actual slug used (may have numeric suffix).
+    """
+    # Check if this exact key already has a slug
+    existing = lookup_slug(index, cache_key)
+    if existing is not None:
+        return existing
+
+    now = datetime.now(timezone.utc).isoformat()
+    candidate = slug
+    if candidate not in index["entries"]:
+        index["entries"][candidate] = {"cache_key": cache_key, "created": now}
+        return candidate
+
+    # Collision: try suffixes
+    n = 2
+    while True:
+        candidate = f"{slug}-{n}"
+        if candidate not in index["entries"]:
+            index["entries"][candidate] = {"cache_key": cache_key, "created": now}
+            return candidate
+        if index["entries"][candidate]["cache_key"] == cache_key:
+            return candidate
+        n += 1
+
+
+def rebuild_index(layer_dir: Path) -> CacheIndex:
+    """Rebuild index.json from on-disk metadata.json files.
+
+    :param layer_dir: e.g., .hkcache/ir/ or .hkcache/output/cffi/
+    :returns: Rebuilt CacheIndex.
+    """
+    index: CacheIndex = {"version": 1, "entries": {}}
+    if not layer_dir.is_dir():
+        return index
+    for entry_dir in sorted(layer_dir.iterdir()):
+        if not entry_dir.is_dir():
+            continue
+        metadata_path = entry_dir / "metadata.json"
+        if not metadata_path.exists():
+            continue
+        try:
+            meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            ck = meta.get("cache_key", "")
+            created = meta.get("created", "")
+            if ck:
+                index["entries"][entry_dir.name] = {
+                    "cache_key": ck,
+                    "created": created,
+                }
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Skipping corrupt metadata in %s: %s", entry_dir, exc)
+    return index
