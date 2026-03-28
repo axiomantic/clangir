@@ -46,15 +46,15 @@ def build_slug(
 
     components = [backend_part, header_part]
 
-    # Build variable groups
+    # Build variable groups (sanitize each value for filename safety)
     groups: list[tuple[str, list[str]]] = []
     if defines:
-        groups.append(("d", sorted(defines)))
+        groups.append(("d", sorted(_sanitize(d) for d in defines)))
     if includes:
-        basenames = sorted(PurePosixPath(p).name for p in includes)
+        basenames = sorted(_sanitize(PurePosixPath(p).name) for p in includes)
         groups.append(("i", basenames))
     if other_args:
-        groups.append(("args", sorted(other_args)))
+        groups.append(("args", sorted(_sanitize(a) for a in other_args)))
 
     effective_limit = _MAX_SLUG_LENGTH - _COLLISION_BUDGET
 
@@ -124,22 +124,19 @@ def build_slug(
 
 
 def _sanitize(component: str) -> str:
-    """Sanitize a single slug component.
+    """Sanitize a single slug component for use as a directory name.
 
-    - Replace . with -
-    - Replace / and \\ with -
-    - Replace : with - (Windows drive letters)
-    - Replace spaces with -
-    - Collapse consecutive - into one
-    - Strip leading/trailing -
+    Produces names valid on Linux, macOS, and Windows by:
+    - Replacing unsafe characters with dashes
+    - Collapsing consecutive dashes
+    - Stripping leading/trailing dashes
     """
-    result = component
-    result = result.replace(".", "-")
-    result = result.replace("/", "-")
-    result = result.replace("\\", "-")
-    result = result.replace(":", "-")
-    result = result.replace(" ", "-")
+    # Replace any character that isn't alphanumeric, dash, or underscore
+    # (equals sign is allowed for define values like FOO=1)
+    result = re.sub(r"[^a-zA-Z0-9_=\-]", "-", component)
+    # Collapse consecutive dashes
     result = re.sub(r"-{2,}", "-", result)
+    # Strip leading/trailing dashes
     result = result.strip("-")
     return result
 

@@ -36,7 +36,7 @@ class TestBuildSlugBasic:
             includes=["/a", "/b"],
             other_args=["-std=c11"],
         )
-        assert slug == "libclang.foo.d.BAR.i.a_b.args.-std=c11"
+        assert slug == "libclang.foo.d.BAR.i.a_b.args.std=c11"
 
     def test_multiple_defines_sorted(self) -> None:
         slug = build_slug(
@@ -208,3 +208,112 @@ class TestSlugLengthLimit:
             other_args=[f"-flag{i}" for i in range(5)],
         )
         assert len(slug) <= 116
+
+
+class TestSlugCrossPlatform:
+    """Slugs must be valid directory names on Linux, macOS, and Windows."""
+
+    def test_windows_invalid_chars(self) -> None:
+        """Windows-invalid characters: < > : " | ? *"""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="test.h",
+            defines=["FOO=<bar>", 'BAZ="qux"'],
+            includes=[],
+            other_args=[],
+        )
+        for ch in '<>:"|?*':
+            assert ch not in slug
+
+    def test_control_characters(self) -> None:
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="test.h",
+            defines=["FOO=\x01bar\x1f"],
+            includes=[],
+            other_args=[],
+        )
+        for i in range(0x20):
+            assert chr(i) not in slug
+
+    def test_backslashes(self) -> None:
+        """Windows path separators."""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="C:\\Users\\dev\\test.h",
+            defines=[],
+            includes=[],
+            other_args=[],
+        )
+        assert "\\" not in slug
+
+    def test_colons_drive_letter(self) -> None:
+        """Windows drive letter colons."""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="D:\\projects\\lib.h",
+            defines=[],
+            includes=[],
+            other_args=[],
+        )
+        assert ":" not in slug
+
+    def test_unicode_characters(self) -> None:
+        """Non-ASCII chars should be sanitized."""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="\u65e5\u672c\u8a9e.h",
+            defines=[],
+            includes=[],
+            other_args=[],
+        )
+        # Should only contain safe chars
+        assert all(c in "abcdefghijklmnopqrstuvwxyz0123456789-_=." for c in slug)
+
+    def test_spaces_and_tabs(self) -> None:
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="my lib.h",
+            defines=["FOO BAR"],
+            includes=[],
+            other_args=[],
+        )
+        assert " " not in slug
+        assert "\t" not in slug
+
+    def test_null_bytes(self) -> None:
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="test.h",
+            defines=["FOO\x00BAR"],
+            includes=[],
+            other_args=[],
+        )
+        assert "\x00" not in slug
+
+    def test_only_safe_chars_in_output(self) -> None:
+        """Comprehensive: the slug should only contain safe characters."""
+        import string
+
+        safe = set(string.ascii_letters + string.digits + "-_=.")
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="weird<>|file?.h",
+            defines=["A=1", "B:C", "D*E"],
+            includes=["/path/with spaces/inc"],
+            other_args=["-std=c++17", '--flag="val"'],
+        )
+        assert all(c in safe for c in slug), f"Unsafe chars in slug: {slug}"
+
+    def test_windows_reserved_names_not_bare(self) -> None:
+        """Windows reserved names (CON, PRN, NUL, etc.) as header stem."""
+        slug = build_slug(
+            backend_name="libclang",
+            header_path="CON.h",
+            defines=[],
+            includes=[],
+            other_args=[],
+        )
+        # The slug includes the backend prefix, so "libclang.con" is fine
+        # (not a bare reserved name). Just verify no crash.
+        assert slug == "libclang.con"
