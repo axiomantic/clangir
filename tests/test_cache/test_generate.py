@@ -547,6 +547,7 @@ class TestGenerateAutoInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """auto_install_libclang=false in config disables auto-install."""
+        monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
         pyproject = project_dir / "pyproject.toml"
         pyproject.write_text(
             "[tool.headerkit]\nauto_install_libclang = false\n",
