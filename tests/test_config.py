@@ -306,3 +306,77 @@ class TestMergeConfig:
         assert args.writer_opts == {
             "cffi": {"exclude_patterns": ["^cli_pattern"]},
         }
+
+
+# =============================================================================
+# TestCacheConfig
+# =============================================================================
+
+
+class TestCacheConfig:
+    """Tests for cache-related fields in HeaderkitConfig."""
+
+    def test_cache_config_defaults(self) -> None:
+        """HeaderkitConfig cache fields default to False/None."""
+        cfg = HeaderkitConfig()
+        assert cfg.cache_dir is None
+        assert cfg.no_cache is False
+        assert cfg.no_ir_cache is False
+        assert cfg.no_output_cache is False
+
+    def test_load_cache_section_from_headerkit_toml(self, tmp_path: Path) -> None:
+        """Parses [cache] section from .headerkit.toml."""
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text(
+            'backend = "libclang"\n'
+            "\n"
+            "[cache]\n"
+            'cache_dir = "/tmp/hkcache"\n'
+            "no_cache = true\n"
+            "no_ir_cache = true\n"
+            "no_output_cache = true\n"
+        )
+        cfg = load_config(config_file)
+        assert cfg.backend == "libclang"
+        assert cfg.cache_dir == "/tmp/hkcache"
+        assert cfg.no_cache is True
+        assert cfg.no_ir_cache is True
+        assert cfg.no_output_cache is True
+
+    def test_load_cache_section_from_pyproject(self, tmp_path: Path) -> None:
+        """Parses [tool.headerkit.cache] section from pyproject.toml."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.headerkit]\n"
+            'backend = "libclang"\n'
+            "\n"
+            "[tool.headerkit.cache]\n"
+            'cache_dir = "/custom/cache"\n'
+            "no_cache = false\n"
+            "no_ir_cache = true\n"
+            "no_output_cache = false\n"
+        )
+        cfg = load_config(pyproject)
+        assert cfg.backend == "libclang"
+        assert cfg.cache_dir == "/custom/cache"
+        assert cfg.no_cache is False
+        assert cfg.no_ir_cache is True
+        assert cfg.no_output_cache is False
+
+    def test_load_cache_section_partial(self, tmp_path: Path) -> None:
+        """Partial [cache] section leaves unset fields at defaults."""
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text("[cache]\nno_cache = true\n")
+        cfg = load_config(config_file)
+        assert cfg.no_cache is True
+        assert cfg.no_ir_cache is False
+        assert cfg.no_output_cache is False
+        assert cfg.cache_dir is None
+
+    def test_load_cache_section_wrong_type(self, tmp_path: Path) -> None:
+        """Exits with code 1 when cache_dir is not a string."""
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text("[cache]\ncache_dir = 42\n")
+        with pytest.raises(SystemExit) as exc_info:
+            load_config(config_file)
+        assert exc_info.value.code == 1

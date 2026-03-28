@@ -11,7 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from headerkit._cli import _build_umbrella, _parse_defines, _parse_writer_specs, main
+from headerkit._cli import (
+    _build_parser,
+    _build_umbrella,
+    _env_bool,
+    _parse_defines,
+    _parse_writer_specs,
+    main,
+)
 from headerkit.ir import Header
 
 # =============================================================================
@@ -453,3 +460,76 @@ class TestMain:
         captured = capsys.readouterr()
         help_output = captured.out or captured.err
         assert "install-libclang" in help_output
+
+
+# =============================================================================
+# TestCacheFlags
+# =============================================================================
+
+
+class TestCacheFlags:
+    """Tests for --no-cache, --no-ir-cache, --no-output-cache, --cache-dir flags."""
+
+    def test_no_cache_flag_parsed(self) -> None:
+        """--no-cache sets args.no_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-cache"])
+        assert args.no_cache is True
+
+    def test_no_ir_cache_flag_parsed(self) -> None:
+        """--no-ir-cache sets args.no_ir_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-ir-cache"])
+        assert args.no_ir_cache is True
+
+    def test_no_output_cache_flag_parsed(self) -> None:
+        """--no-output-cache sets args.no_output_cache to True."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--no-output-cache"])
+        assert args.no_output_cache is True
+
+    def test_cache_dir_flag_parsed(self) -> None:
+        """--cache-dir stores the provided path."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--cache-dir", "/tmp/cache"])
+        assert args.cache_dir == "/tmp/cache"
+
+    def test_defaults(self) -> None:
+        """All cache flags default to False/None when not specified."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h"])
+        assert args.no_cache is False
+        assert args.no_ir_cache is False
+        assert args.no_output_cache is False
+        assert args.cache_dir is None
+
+
+# =============================================================================
+# TestEnvBool
+# =============================================================================
+
+
+class TestEnvBool:
+    """Tests for the _env_bool() helper."""
+
+    def test_env_bool_true_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'1', 'true', 'yes' (case-insensitive) return True."""
+        for val in ("1", "true", "TRUE", "True", "yes", "YES", "Yes"):
+            monkeypatch.setenv("TEST_VAR", val)
+            assert _env_bool("TEST_VAR") is True, f"Expected True for {val!r}"
+
+    def test_env_bool_false_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'0', 'false', 'no', '' return False."""
+        for val in ("0", "false", "FALSE", "no", "NO", ""):
+            monkeypatch.setenv("TEST_VAR", val)
+            assert _env_bool("TEST_VAR") is False, f"Expected False for {val!r}"
+
+    def test_env_bool_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unset env var returns False (default)."""
+        monkeypatch.delenv("TEST_VAR", raising=False)
+        assert _env_bool("TEST_VAR") is False
+
+    def test_env_bool_custom_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Custom default is returned when var is unset."""
+        monkeypatch.delenv("TEST_VAR", raising=False)
+        assert _env_bool("TEST_VAR", default=True) is True

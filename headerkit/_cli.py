@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.metadata
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,19 @@ from headerkit._config import (
 )
 from headerkit.backends import _load_backend_plugins, get_backend
 from headerkit.writers import WriterBackend, _load_writer_plugins, get_writer
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    """Read an environment variable as a boolean.
+
+    Truthy: '1', 'true', 'yes' (case-insensitive).
+    Falsy: '0', 'false', 'no', '' (case-insensitive).
+    Unset: returns *default*.
+    """
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in ("1", "true", "yes")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -90,6 +104,34 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Disable config file loading",
+    )
+    parser.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        default=False,
+        help="Disable all caching",
+    )
+    parser.add_argument(
+        "--no-ir-cache",
+        dest="no_ir_cache",
+        action="store_true",
+        default=False,
+        help="Disable IR cache only",
+    )
+    parser.add_argument(
+        "--no-output-cache",
+        dest="no_output_cache",
+        action="store_true",
+        default=False,
+        help="Disable output cache only",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        dest="cache_dir",
+        metavar="DIR",
+        default=None,
+        help="Cache directory (default: .hkcache/ in project root)",
     )
     parser.add_argument(
         "--version",
@@ -327,6 +369,21 @@ def main() -> int:
     backend_args = args.backend_args
     writers_raw = args.writers
     writer_opts_raw = args.writer_opts_raw
+
+    # Resolve cache settings (priority: CLI > env > config > defaults)
+    resolved_no_cache: bool = args.no_cache or _env_bool("HEADERKIT_NO_CACHE")
+    resolved_no_ir_cache: bool = args.no_ir_cache or _env_bool("HEADERKIT_NO_IR_CACHE")
+    resolved_no_output_cache: bool = args.no_output_cache or _env_bool("HEADERKIT_NO_OUTPUT_CACHE")
+    resolved_cache_dir: str | None = args.cache_dir
+    if not resolved_no_cache and config is not None:
+        if not resolved_no_cache:
+            resolved_no_cache = config.no_cache
+        if not resolved_no_ir_cache:
+            resolved_no_ir_cache = config.no_ir_cache
+        if not resolved_no_output_cache:
+            resolved_no_output_cache = config.no_output_cache
+        if resolved_cache_dir is None:
+            resolved_cache_dir = config.cache_dir
 
     # Load plugins (F3/F7: no --plugins flag; config.plugins loaded here)
     _load_backend_plugins()

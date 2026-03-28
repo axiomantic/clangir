@@ -54,6 +54,11 @@ class HeaderkitConfig:
     backend_args: list[str] = field(default_factory=list)
     plugins: list[str] = field(default_factory=list)
     writer_options: dict[str, WriterConfig] = field(default_factory=dict)
+    # Cache settings from [cache] / [tool.headerkit.cache] section
+    cache_dir: str | None = None
+    no_cache: bool = False
+    no_ir_cache: bool = False
+    no_output_cache: bool = False
     # Resolved source path for error reporting
     source_path: Path | None = None
 
@@ -156,6 +161,53 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
     # plugins: optional list of strings
     if "plugins" in data:
         config.plugins = _require_str_list(data["plugins"], "plugins", source)
+
+    # cache settings: [cache] section
+    if "cache" in data:
+        cache_val = data["cache"]
+        if not isinstance(cache_val, dict):
+            print(
+                f"headerkit: config error in {source}: cache must be a table, got {type(cache_val).__name__}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        cache_table: dict[str, object] = cast(dict[str, object], cache_val)
+        if "cache_dir" in cache_table:
+            cd = cache_table["cache_dir"]
+            if not isinstance(cd, str):
+                print(
+                    f"headerkit: config error in {source}: cache.cache_dir must be str, got {type(cd).__name__}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            config.cache_dir = cd
+        if "no_cache" in cache_table:
+            val = cache_table["no_cache"]
+            if not isinstance(val, bool):
+                print(
+                    f"headerkit: config error in {source}: cache.no_cache must be bool, got {type(val).__name__}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            config.no_cache = val
+        if "no_ir_cache" in cache_table:
+            val = cache_table["no_ir_cache"]
+            if not isinstance(val, bool):
+                print(
+                    f"headerkit: config error in {source}: cache.no_ir_cache must be bool, got {type(val).__name__}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            config.no_ir_cache = val
+        if "no_output_cache" in cache_table:
+            val = cache_table["no_output_cache"]
+            if not isinstance(val, bool):
+                print(
+                    f"headerkit: config error in {source}: cache.no_output_cache must be bool, got {type(val).__name__}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            config.no_output_cache = val
 
     # writer options: [writer.NAME] sections -> writer_options[NAME].options
     if "writer" in data:
