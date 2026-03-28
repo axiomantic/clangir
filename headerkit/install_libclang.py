@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import os
 import platform
 import shutil
 import subprocess
 import sys
 import tempfile
+
+logger = logging.getLogger("headerkit.install")
 
 
 def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -168,6 +171,47 @@ def verify_libclang() -> bool:
 
 # Latest stable LLVM version known to have ARM64 Windows builds
 DEFAULT_LLVM_VERSION = "21.1.8"
+
+
+def auto_install() -> bool:
+    """Quietly auto-install libclang if not already available.
+
+    This is the non-interactive counterpart to ``main()``. It is called by
+    ``generate()`` when the libclang backend is needed but unavailable.
+
+    - Idempotent: returns True immediately if libclang is already loadable.
+    - Logs progress via the ``headerkit.install`` logger instead of printing.
+    - Always verifies after installation (no ``--skip-verify``).
+
+    :returns: True if libclang is available after this call, False otherwise.
+    """
+    if verify_libclang():
+        return True
+
+    logger.info("libclang not found; attempting automatic installation")
+    logger.info("Platform: %s (%s)", sys.platform, platform.machine())
+
+    ok: bool
+    if sys.platform == "linux":
+        ok = install_linux()
+    elif sys.platform == "darwin":
+        ok = install_macos()
+    elif sys.platform == "win32":
+        ok = install_windows(DEFAULT_LLVM_VERSION)
+    else:
+        logger.warning("Unsupported platform for auto-install: %s", sys.platform)
+        return False
+
+    if not ok:
+        logger.warning("libclang installation failed")
+        return False
+
+    if not verify_libclang():
+        logger.warning("libclang installed but could not be loaded")
+        return False
+
+    logger.info("libclang auto-installed successfully")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:

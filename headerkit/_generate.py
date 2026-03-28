@@ -20,6 +20,7 @@ The 10-step flow for generate():
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,47 @@ from headerkit._cache_store import (
 )
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit.backends import get_backend
+from headerkit.install_libclang import auto_install
 from headerkit.ir import Header
 from headerkit.writers import get_writer
 
 logger = logging.getLogger("headerkit.cache")
+
+
+def _is_auto_install_allowed(project_root: Path) -> bool:
+    """Check whether auto-install of libclang is allowed.
+
+    Auto-install is disabled when:
+    - ``HEADERKIT_NO_AUTO_INSTALL=1`` environment variable is set
+    - ``auto_install_libclang = false`` in ``[tool.headerkit]`` of the
+      project's ``pyproject.toml``
+
+    :param project_root: Project root directory to search for pyproject.toml.
+    :returns: True if auto-install is allowed, False otherwise.
+    """
+    if os.environ.get("HEADERKIT_NO_AUTO_INSTALL") == "1":
+        logger.debug("Auto-install disabled by HEADERKIT_NO_AUTO_INSTALL env var")
+        return False
+
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            from headerkit._config import _parse_toml
+
+            raw = _parse_toml(pyproject.read_bytes())
+            tool = raw.get("tool", {})
+            section = tool.get("headerkit", {}) if isinstance(tool, dict) else {}
+            if isinstance(section, dict) and section.get("auto_install_libclang") is False:
+                logger.debug(
+                    "Auto-install disabled by auto_install_libclang=false in %s",
+                    pyproject,
+                )
+                return False
+        except Exception:
+            # If we can't read the config, default to allowing auto-install
+            pass
+
+    return True
 
 
 def _find_project_root(start: Path) -> Path:
@@ -438,7 +476,22 @@ def generate(
                 if _result_meta is not None:
                     _result_meta["from_cache"] = True
                 return cached_output
-        raise
+
+        # Output cache miss -- attempt auto-install for libclang backend
+        if backend_name == "libclang" and _is_auto_install_allowed(project_root) and auto_install():
+            logger.info("libclang auto-installed; retrying backend")
+            header, ir_cache_key, ir_slug, ir_from_cache = _get_ir(
+                backend_name=backend_name,
+                header_path=header_path,
+                project_root=project_root,
+                parsed_args=parsed_args,
+                code=code,
+                resolved_cache_dir=resolved_cache_dir,
+                use_ir_cache=use_ir_cache,
+                project_prefixes=project_prefixes,
+            )
+        else:
+            raise
 
     output, output_from_cache = _get_output(
         header=header,

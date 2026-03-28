@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Auto-install libclang when `generate()` needs to parse but the backend is unavailable. Consumers no longer need `before-build` steps to install libclang.
+- `auto_install()` function in `install_libclang` module for quiet, non-interactive libclang installation
+- Config opt-out: `auto_install_libclang = false` in `[tool.headerkit]` disables auto-install
+- Environment variable opt-out: `HEADERKIT_NO_AUTO_INSTALL=1` disables auto-install
+
 ### Fixed
 
 - `generate()` now falls back to the output cache when the backend (libclang) is unavailable, enabling the documented libclang-free build workflow

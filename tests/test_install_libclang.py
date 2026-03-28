@@ -10,6 +10,7 @@ import bigfoot
 
 from headerkit.install_libclang import (
     DEFAULT_LLVM_VERSION,
+    auto_install,
     install_linux,
     install_macos,
     install_windows,
@@ -371,3 +372,79 @@ class TestMain:
         mock_install.assert_called_once_with()
         mock_verify.assert_not_called()
         assert result == 0
+
+
+class TestAutoInstall:
+    """Tests for auto_install() - quiet, non-interactive libclang installer."""
+
+    @patch("headerkit.install_libclang.verify_libclang", return_value=True)
+    def test_already_available_is_noop(self, mock_verify: MagicMock) -> None:
+        """auto_install() returns True without installing if libclang already works."""
+        result = auto_install()
+
+        assert result is True
+        mock_verify.assert_called_once_with()
+
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
+    @patch("headerkit.install_libclang.install_linux", return_value=True)
+    @patch("headerkit.install_libclang.sys")
+    def test_installs_on_linux_and_verifies(
+        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+    ) -> None:
+        """auto_install() installs on Linux, then verifies. Returns True on success."""
+        mock_sys.platform = "linux"
+        result = auto_install()
+
+        assert result is True
+        mock_install.assert_called_once_with()
+        assert mock_verify.call_count == 2
+
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
+    @patch("headerkit.install_libclang.install_macos", return_value=True)
+    @patch("headerkit.install_libclang.sys")
+    def test_installs_on_macos_and_verifies(
+        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+    ) -> None:
+        """auto_install() installs on macOS, then verifies. Returns True on success."""
+        mock_sys.platform = "darwin"
+        result = auto_install()
+
+        assert result is True
+        mock_install.assert_called_once_with()
+        assert mock_verify.call_count == 2
+
+    @patch("headerkit.install_libclang.verify_libclang", return_value=False)
+    @patch("headerkit.install_libclang.install_linux", return_value=False)
+    @patch("headerkit.install_libclang.sys")
+    def test_returns_false_when_install_fails(
+        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+    ) -> None:
+        """auto_install() returns False when the platform installer fails."""
+        mock_sys.platform = "linux"
+        result = auto_install()
+
+        assert result is False
+        mock_install.assert_called_once_with()
+
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, False])
+    @patch("headerkit.install_libclang.install_linux", return_value=True)
+    @patch("headerkit.install_libclang.sys")
+    def test_returns_false_when_verify_fails_after_install(
+        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+    ) -> None:
+        """auto_install() returns False when install succeeds but verify fails."""
+        mock_sys.platform = "linux"
+        result = auto_install()
+
+        assert result is False
+        mock_install.assert_called_once_with()
+        assert mock_verify.call_count == 2
+
+    @patch("headerkit.install_libclang.verify_libclang", return_value=False)
+    @patch("headerkit.install_libclang.sys")
+    def test_returns_false_on_unsupported_platform(self, mock_sys: MagicMock, mock_verify: MagicMock) -> None:
+        """auto_install() returns False on an unsupported platform."""
+        mock_sys.platform = "freebsd"
+        result = auto_install()
+
+        assert result is False
