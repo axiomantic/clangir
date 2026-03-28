@@ -9,10 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Auto-install libclang when `generate()` needs to parse but the backend is unavailable. Consumers no longer need `before-build` steps to install libclang.
+- Opt-in auto-install of libclang when `generate()` needs to parse but the backend is unavailable, with layered configuration (highest precedence first):
+  1. `generate(auto_install_libclang=True)` kwarg
+  2. `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` environment variable
+  3. `auto_install_libclang = true` in `[tool.headerkit]` of pyproject.toml
+  4. Default: disabled (opt-in)
 - `auto_install()` function in `install_libclang` module for quiet, non-interactive libclang installation
-- Config opt-out: `auto_install_libclang = false` in `[tool.headerkit]` disables auto-install
-- Environment variable opt-out: `HEADERKIT_NO_AUTO_INSTALL=1` disables auto-install
+- `headerkit.build_backend_auto` PEP 517 build backend that wraps `headerkit.build_backend` with auto-install enabled (sets `HEADERKIT_AUTO_INSTALL_LIBCLANG=1`)
+
+### Changed
+
+- Auto-install is now opt-in (default disabled) instead of opt-out. Projects that relied on the previous default-enabled behavior should set `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` or use `headerkit.build_backend_auto` as their build backend.
+- Replaced `HEADERKIT_NO_AUTO_INSTALL` env var with `HEADERKIT_AUTO_INSTALL_LIBCLANG` (set to `1` to enable)
 
 ### Fixed
 

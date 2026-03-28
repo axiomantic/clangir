@@ -47,21 +47,44 @@ from headerkit.writers import get_writer
 logger = logging.getLogger("headerkit.cache")
 
 
-def _is_auto_install_allowed(project_root: Path) -> bool:
+def _is_auto_install_allowed(
+    project_root: Path,
+    auto_install_libclang: bool | None = None,
+) -> bool:
     """Check whether auto-install of libclang is allowed.
 
-    Auto-install is disabled when:
-    - ``HEADERKIT_NO_AUTO_INSTALL=1`` environment variable is set
-    - ``auto_install_libclang = false`` in ``[tool.headerkit]`` of the
-      project's ``pyproject.toml``
+    Uses a layered configuration design (highest precedence first):
+
+    1. ``auto_install_libclang`` kwarg (passed from ``generate()``)
+    2. ``HEADERKIT_AUTO_INSTALL_LIBCLANG=1`` environment variable
+    3. ``auto_install_libclang = true`` in ``[tool.headerkit]`` of the
+       project's ``pyproject.toml``
+    4. Default: ``False`` (opt-in)
 
     :param project_root: Project root directory to search for pyproject.toml.
+    :param auto_install_libclang: Explicit kwarg override from caller.
     :returns: True if auto-install is allowed, False otherwise.
     """
-    if os.environ.get("HEADERKIT_NO_AUTO_INSTALL") == "1":
-        logger.debug("Auto-install disabled by HEADERKIT_NO_AUTO_INSTALL env var")
-        return False
+    # Layer 1: explicit kwarg
+    if auto_install_libclang is not None:
+        logger.debug(
+            "Auto-install %s by explicit kwarg",
+            "enabled" if auto_install_libclang else "disabled",
+        )
+        return auto_install_libclang
 
+    # Layer 2: environment variable
+    env_val = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG")
+    if env_val is not None:
+        enabled = env_val == "1"
+        logger.debug(
+            "Auto-install %s by HEADERKIT_AUTO_INSTALL_LIBCLANG=%s",
+            "enabled" if enabled else "disabled",
+            env_val,
+        )
+        return enabled
+
+    # Layer 3: pyproject.toml config
     pyproject = project_root / "pyproject.toml"
     if pyproject.exists():
         try:
@@ -70,17 +93,22 @@ def _is_auto_install_allowed(project_root: Path) -> bool:
             raw = _parse_toml(pyproject.read_bytes())
             tool = raw.get("tool", {})
             section = tool.get("headerkit", {}) if isinstance(tool, dict) else {}
-            if isinstance(section, dict) and section.get("auto_install_libclang") is False:
+            if isinstance(section, dict) and "auto_install_libclang" in section:
+                config_val = bool(section["auto_install_libclang"])
                 logger.debug(
-                    "Auto-install disabled by auto_install_libclang=false in %s",
+                    "Auto-install %s by auto_install_libclang=%s in %s",
+                    "enabled" if config_val else "disabled",
+                    section["auto_install_libclang"],
                     pyproject,
                 )
-                return False
+                return config_val
         except Exception:
-            # If we can't read the config, default to allowing auto-install
+            # If we can't read the config, fall through to default
             pass
 
-    return True
+    # Layer 4: default (opt-in, so False)
+    logger.debug("Auto-install disabled by default (opt-in)")
+    return False
 
 
 def _find_project_root(start: Path) -> Path:
@@ -398,6 +426,7 @@ def generate(
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
     project_prefixes: tuple[str, ...] | None = None,
+    auto_install_libclang: bool | None = None,
     _result_meta: dict[str, object] | None = None,
 ) -> str:
     """Parse a C/C++ header and generate output using a single writer.
@@ -421,6 +450,10 @@ def generate(
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
     :param project_prefixes: Tuple of project prefix directories for backend.
+    :param auto_install_libclang: Explicitly enable (True) or disable (False)
+        automatic libclang installation. When None, falls back to the
+        ``HEADERKIT_AUTO_INSTALL_LIBCLANG`` env var, then pyproject.toml
+        config, then defaults to False.
     :returns: Generated output string.
     :raises FileNotFoundError: If header_path does not exist and code is not provided.
     """
@@ -478,7 +511,11 @@ def generate(
                 return cached_output
 
         # Output cache miss -- attempt auto-install for libclang backend
-        if backend_name == "libclang" and _is_auto_install_allowed(project_root) and auto_install():
+        if (
+            backend_name == "libclang"
+            and _is_auto_install_allowed(project_root, auto_install_libclang)
+            and auto_install()
+        ):
             logger.info("libclang auto-installed; retrying backend")
             header, ir_cache_key, ir_slug, ir_from_cache = _get_ir(
                 backend_name=backend_name,
