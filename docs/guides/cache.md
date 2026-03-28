@@ -131,7 +131,7 @@ build-backend = "headerkit._build_backend"
 backend = "libclang"
 writers = ["cffi"]
 
-[tool.headerkit.headers.include/mylib.h]
+[tool.headerkit.headers."include/mylib.h"]
 defines = ["VERSION=2"]
 include_dirs = ["/usr/local/include"]
 ```
@@ -213,6 +213,8 @@ no_output_cache = false
 [tool.headerkit.cache]
 cache_dir = ".hkcache"
 no_cache = false
+no_ir_cache = false
+no_output_cache = false
 ```
 
 ## Committing the cache

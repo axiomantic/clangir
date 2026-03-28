@@ -29,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Embedded TOML hash comments for cffi, ctypes, cython, and lua writers
-- Sidecar `.hkcache` files for json, prompt, and diff writers
 - `hash_comment_format()` method on CffiWriter, CtypesWriter, CythonWriter, and LuaWriter
 - Python 3.10 support with `tomli` fallback for TOML parsing
 
