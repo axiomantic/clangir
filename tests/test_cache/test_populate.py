@@ -962,6 +962,23 @@ class TestBuildSelectorPlatformFiltering:
         assert platforms == ["linux/amd64"]
         assert python_versions == ["3.12"]
 
+    def test_linux_only_build_no_macos_windows_warning(self, tmp_path: Path) -> None:
+        """build = 'cp312-manylinux*' should not warn about macOS/Windows."""
+        from headerkit._populate import parse_cibuildwheel_config
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[tool.cibuildwheel]\nbuild = "cp312-manylinux*"\n',
+            encoding="utf-8",
+        )
+
+        platforms, python_versions, warnings = parse_cibuildwheel_config(pyproject)
+        assert python_versions == ["3.12"]
+        # Should have linux platforms only
+        assert all(p.startswith("linux/") for p in platforms)
+        # No macOS or Windows warnings
+        assert not any("macOS" in w or "Windows" in w for w in warnings)
+
     def test_build_aarch64_only_excludes_amd64(self, tmp_path: Path) -> None:
         """build = 'cp312-manylinux_aarch64' should not include linux/amd64."""
         from headerkit._populate import parse_cibuildwheel_config

@@ -323,18 +323,23 @@ def parse_cibuildwheel_config(
     has_macos = False
     has_windows = False
 
-    # Check non-Docker platforms for warnings
+    # Check non-Docker platforms for warnings.
+    # Only warn about a platform if at least one (version, cibw_platform)
+    # combination matches a build selector AND is not skipped.
     for cibw_plat in _CIBW_NON_DOCKER_PLATFORMS:
-        all_skipped = True
+        plat_in_matrix = False
         for ver in python_versions:
             major, minor = ver.split(".")
             full_tag = f"cp{major}{minor}-{cibw_plat}"
-            skipped = any(fnmatch.fnmatch(full_tag, sel) for sel in skip_selectors)
-            if not skipped:
-                all_skipped = False
+            matched_build = any(fnmatch.fnmatch(full_tag, sel) for sel in build_selectors if not sel.startswith("pp"))
+            if not matched_build:
+                continue
+            matched_skip = any(fnmatch.fnmatch(full_tag, sel) for sel in skip_selectors)
+            if not matched_skip:
+                plat_in_matrix = True
                 break
 
-        if all_skipped and python_versions:
+        if not plat_in_matrix:
             continue
 
         if "macos" in cibw_plat:

@@ -299,6 +299,26 @@ requires = ["headerkit", "hatchling"]
 build-backend = "headerkit.build_backend"
 ```
 
+### Multi-platform cache population
+
+Generate cache entries for multiple platforms using Docker:
+
+```bash
+# Populate for common Linux targets
+headerkit cache populate mylib.h -w cffi \
+    --platform linux/amd64 --platform linux/arm64
+
+# Auto-detect platforms from cibuildwheel config
+headerkit cache populate mylib.h -w cffi --cibuildwheel
+
+# Commit the populated cache
+git add .hkcache/
+git commit -m "cache: populate for linux amd64 + arm64"
+```
+
+When `.hkcache/` contains entries for all target platforms, downstream
+builds never need libclang installed.
+
 See the [Cache Strategy Guide](docs/guides/cache.md) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](docs/guides/build-backend.md) for full setup instructions.
 
 ## Python API

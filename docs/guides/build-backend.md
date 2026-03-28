@@ -238,6 +238,35 @@ In this example, `include/core.h` is parsed with defines
 `["SHARED_DEFINE", "CORE_API"]` and include dirs
 `["include/common", "include/core"]`.
 
+## Populating the cache for all platforms
+
+When your project targets multiple platforms via cibuildwheel, the cache
+needs entries for each target. The `cache populate` command generates these
+using Docker:
+
+```bash
+# Auto-detect platforms from cibuildwheel config
+headerkit cache populate include/mylib.h -w cffi --cibuildwheel
+
+# Or specify platforms explicitly
+headerkit cache populate include/mylib.h -w cffi \
+    --platform linux/amd64 --platform linux/arm64
+```
+
+The recommended workflow:
+
+1. Run `headerkit cache populate --cibuildwheel` on a machine with Docker.
+2. Docker generates cache entries for all target Linux platforms.
+3. Commit `.hkcache/` to version control.
+4. CI builds use the cache; no libclang needed on any platform.
+
+For macOS and Windows targets, run `headerkit cache populate` natively on
+those platforms or use platform-specific CI jobs to generate their cache
+entries.
+
+See the [Cache Strategy Guide](cache.md#multi-platform-cache-population)
+for Docker setup, configuration, and limitations.
+
 ## Troubleshooting
 
 ### Stale cache

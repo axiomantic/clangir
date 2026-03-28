@@ -253,6 +253,98 @@ git diff --exit-code .hkcache/ bindings.py
 
 If the diff is non-empty, the cache is stale and needs to be regenerated.
 
+## Multi-platform cache population
+
+Cache keys include the target platform (sys.platform, platform.machine())
+and Python version because libclang preprocessor output can differ across
+platforms. For example, a header with `#ifdef __linux__` branches produces
+different IR on Linux vs macOS. This means a cache generated on macOS only
+serves macOS builds.
+
+Projects using cibuildwheel or building for multiple platforms need cache
+entries for every target. The `cache populate` command solves this by running
+headerkit inside Docker containers that match each target platform.
+
+### Basic usage
+
+```bash
+# Populate for specific Linux targets
+headerkit cache populate mylib.h -w cffi \
+    --platform linux/amd64 --platform linux/arm64
+
+# Populate for specific Python versions
+headerkit cache populate mylib.h -w cffi \
+    --platform linux/amd64 \
+    --python 3.12 --python 3.13
+
+# Preview what would be generated (no Docker required)
+headerkit cache populate mylib.h -w cffi \
+    --platform linux/amd64 --platform linux/arm64 --dry-run
+```
+
+### Auto-detect from cibuildwheel
+
+If your project uses cibuildwheel, pass `--cibuildwheel` to auto-detect
+target platforms and Python versions from `[tool.cibuildwheel]` in
+`pyproject.toml`:
+
+```bash
+headerkit cache populate mylib.h -w cffi --cibuildwheel
+```
+
+This reads the `build` and `skip` selectors to determine which CPython
+versions and Linux platforms to target. macOS and Windows targets emit
+warnings because they cannot be emulated via Docker.
+
+### Configuration file
+
+For projects that always target the same platforms, configure defaults in
+`pyproject.toml` or `.headerkit.toml`:
+
+```toml
+# pyproject.toml
+[tool.headerkit.cache.populate]
+platforms = ["linux/amd64", "linux/arm64"]
+python_versions = ["3.12", "3.13"]
+timeout = 600
+
+[tool.headerkit.cache.populate.images]
+"linux/amd64" = "quay.io/pypa/manylinux_2_28_x86_64"
+"linux/arm64" = "quay.io/pypa/manylinux_2_28_aarch64"
+```
+
+### Docker and QEMU setup
+
+Cache populate requires Docker. For cross-architecture targets (e.g.,
+building arm64 entries on an amd64 host), Docker uses QEMU emulation.
+Set up QEMU with:
+
+```bash
+docker run --privileged multiarch/qemu-user-static --reset -p yes
+```
+
+This is a one-time setup. After this, Docker can run containers for any
+architecture that QEMU supports.
+
+### Default Docker images
+
+| Platform | Default image |
+|----------|--------------|
+| linux/amd64 | `quay.io/pypa/manylinux_2_28_x86_64` |
+| linux/arm64 | `quay.io/pypa/manylinux_2_28_aarch64` |
+| linux/386 | `quay.io/pypa/manylinux_2_28_i686` |
+
+Override images with `--docker-image` (applies to all platforms) or
+per-platform via the config file.
+
+### Limitations
+
+- **PyPy**: Not supported by cache populate. Generate PyPy cache entries
+  natively or via CI.
+- **macOS and Windows**: Cannot be emulated via Docker. Run
+  `headerkit cache populate` natively on those platforms, or use CI jobs
+  to generate platform-specific entries.
+
 ## Writer opt-out
 
 Writers can opt out of output caching by setting `cache_output = False` as
