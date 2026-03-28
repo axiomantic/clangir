@@ -108,10 +108,10 @@ def _is_auto_install_allowed(
                     pyproject,
                 )
                 return config_val
-        except (FileNotFoundError, KeyError, ValueError, RuntimeError) as exc:
-            logger.warning("Could not read auto_install_libclang config from %s: %s", pyproject, exc)
         except _TOML_DECODE_ERROR as exc:
             logger.warning("Malformed TOML in %s; ignoring headerkit config: %s", pyproject, exc)
+        except (FileNotFoundError, KeyError, RuntimeError) as exc:
+            logger.warning("Could not read auto_install_libclang config from %s: %s", pyproject, exc)
 
     # Layer 4: default (opt-in, so False)
     logger.debug("Auto-install disabled by default (opt-in)")
