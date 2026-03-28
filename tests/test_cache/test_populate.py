@@ -527,8 +527,10 @@ class TestDockerHelpers:
         assert "-v" in cmd
         v_indices = [i for i, x in enumerate(cmd) if x == "-v"]
         volume_args = [cmd[i + 1] for i in v_indices]
-        assert "/home/user/project:/home/user/project:rw" in volume_args
-        assert "/home/user/headerkit:/headerkit-src:ro" in volume_args
+        project_str = str(Path("/home/user/project"))
+        assert f"{project_str}:{project_str}:rw" in volume_args
+        hk_str = str(Path("/home/user/headerkit"))
+        assert f"{hk_str}:/headerkit-src:ro" in volume_args
 
         # Verify bash -c script contains pip install before headerkit command
         bash_idx = cmd.index("bash")
@@ -594,7 +596,8 @@ class TestDockerHelpers:
         # Verify volume mount as list item
         v_indices = [i for i, x in enumerate(cmd) if x == "-v"]
         volume_args = [cmd[i + 1] for i in v_indices]
-        assert "/usr/local/include/libfoo:/usr/local/include/libfoo:ro" in volume_args
+        inc_str = str(Path("/usr/local/include/libfoo"))
+        assert f"{inc_str}:{inc_str}:ro" in volume_args
 
         # Verify -I in bash script
         bash_idx = cmd.index("bash")
@@ -639,7 +642,7 @@ class TestDockerHelpers:
         # Writer options should be quoted
         assert shlex.quote('cffi:key=val"; cat /etc/passwd') in script
         # Cache dir should be quoted
-        assert shlex.quote("/home/user/project/.hkcache") in script
+        assert shlex.quote(str(Path("/home/user/project/.hkcache"))) in script
 
 
 class TestPopulateFunction:
