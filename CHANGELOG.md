@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-03-28
+
 ### Added
 
 - Two-layer content-addressable cache store (`.hkcache/` directory)
@@ -306,6 +308,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[0.10.0]: https://github.com/axiomantic/headerkit/compare/v0.8.4...v0.10.0
 [0.8.4]: https://github.com/axiomantic/headerkit/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/axiomantic/headerkit/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/axiomantic/headerkit/compare/v0.8.1...v0.8.2
