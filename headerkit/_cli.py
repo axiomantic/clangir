@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="headerkit",
         description="Parse C/C++ header files and emit output via configurable writers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache                Cache management (status, clear, rebuild-index)",
+        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache                Cache management (status, clear, rebuild-index, populate)",
     )
     parser.add_argument(
         "input_files",
@@ -301,6 +301,7 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "cache":
         from headerkit._cache_cli import (
             cache_clear_main,
+            cache_populate_main,
             cache_rebuild_index_main,
             cache_status_main,
         )
@@ -312,8 +313,10 @@ def main() -> int:
             return cache_clear_main(sub_argv[1:])
         if sub_argv and sub_argv[0] == "rebuild-index":
             return cache_rebuild_index_main(sub_argv[1:])
+        if sub_argv and sub_argv[0] == "populate":
+            return cache_populate_main(sub_argv[1:])
         print(
-            "headerkit cache: unknown subcommand. Available: status, clear, rebuild-index",
+            "headerkit cache: unknown subcommand. Available: status, clear, rebuild-index, populate",
             file=sys.stderr,
         )
         return 1

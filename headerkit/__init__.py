@@ -2,6 +2,7 @@
 
 from headerkit._generate import GenerateResult, generate, generate_all
 from headerkit._ir_json import json_to_header
+from headerkit._populate import PopulateResult, PopulateTarget, populate
 from headerkit.backends import get_backend, is_backend_available, list_backends
 from headerkit.ir import (
     Array,
@@ -79,4 +80,8 @@ __all__ = [
     "GenerateResult",
     # IR JSON API
     "json_to_header",
+    # Populate API
+    "populate",
+    "PopulateResult",
+    "PopulateTarget",
 ]

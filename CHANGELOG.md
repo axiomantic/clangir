@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `headerkit cache populate` CLI subcommand for generating cache entries across multiple target platforms using Docker containers
+- `populate()` Python API with `PopulateResult` and `PopulateTarget` data types
+- cibuildwheel config parsing (`--cibuildwheel`) for automatic target detection
+- Per-platform Docker image configuration via `[tool.headerkit.cache.populate.images]`
+- Dry-run mode (`--dry-run`) for previewing planned cache population targets
+
 ### Fixed
 
 - `generate()` now falls back to the output cache when the backend (libclang) is unavailable, enabling the documented libclang-free build workflow
