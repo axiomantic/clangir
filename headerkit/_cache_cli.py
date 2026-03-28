@@ -299,10 +299,11 @@ def cache_populate_main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Parse writer options into dict
+    # Parse writer options into dict, aggregating duplicate keys into lists
+    # to match the main CLI's _parse_writer_specs() behavior.
     writer_options: dict[str, dict[str, object]] | None = None
     if args.writer_opts_raw:
-        writer_options = {}
+        writer_options_lists: dict[str, dict[str, list[str]]] = {}
         for item in args.writer_opts_raw:
             writer_name, sep, rest = item.partition(":")
             if not sep:
@@ -320,9 +321,12 @@ def cache_populate_main(argv: list[str]) -> int:
                 )
                 return 1
 
-            if writer_name not in writer_options:
-                writer_options[writer_name] = {}
-            writer_options[writer_name][key] = value
+            writer_options_lists.setdefault(writer_name, {}).setdefault(key, []).append(value)
+
+        writer_options = {
+            w_name: {k: v[0] if len(v) == 1 else v for k, v in opts.items()}
+            for w_name, opts in writer_options_lists.items()
+        }
 
     from headerkit._populate import populate
 

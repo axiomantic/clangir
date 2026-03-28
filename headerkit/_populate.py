@@ -531,7 +531,11 @@ def build_docker_command(
     if writer_options:
         for w_name, opts in writer_options.items():
             for key, value in opts.items():
-                hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={value}")])
+                if isinstance(value, list):
+                    for v in value:
+                        hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={v}")])
+                else:
+                    hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={value}")])
     hk_cmd_parts.extend(["--backend", backend_name])
     hk_cmd_parts.extend(["--cache-dir", shlex.quote(cache_posix)])
     script_parts.append(" ".join(hk_cmd_parts))

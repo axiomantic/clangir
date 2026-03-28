@@ -648,6 +648,37 @@ class TestDockerHelpers:
         # Bash script paths are always POSIX (runs inside Linux container)
         assert shlex.quote("/home/user/project/.hkcache") in script
 
+    def test_build_docker_command_list_writer_options(self) -> None:
+        """build_docker_command emits separate --writer-opt flags for list values."""
+        from headerkit._populate import PopulateTarget, build_docker_command
+
+        target = PopulateTarget(
+            docker_platform="linux/amd64",
+            python_version="3.12",
+            docker_image="quay.io/pypa/manylinux_2_28_x86_64",
+            python_path="/opt/python/cp312-cp312/bin/python",
+            sys_platform="linux",
+            machine="x86_64",
+            py_impl="cpython312",
+        )
+        cmd = build_docker_command(
+            target=target,
+            project_root=Path("/home/user/project"),
+            headerkit_source=Path("/home/user/headerkit"),
+            header_paths=["/home/user/project/include/mylib.h"],
+            writers=["cffi"],
+            cache_dir=Path("/home/user/project/.hkcache"),
+            writer_options={"cffi": {"exclude": ["^_", "^test_"]}},
+        )
+        bash_idx = cmd.index("bash")
+        script = cmd[bash_idx + 2]
+        # Should contain two separate --writer-opt flags
+        assert shlex.quote("cffi:exclude=^_") in script
+        assert shlex.quote("cffi:exclude=^test_") in script
+        # Should NOT contain a stringified list
+        assert "['^_'" not in script
+        assert "['^_'" not in script
+
 
 class TestPopulateFunction:
     """Tests for the populate() top-level function."""
@@ -1082,6 +1113,49 @@ class TestCachePopulateCli:
         assert exit_code == 1
         captured = capsys.readouterr()
         assert "not found" in captured.err.lower()
+
+    def test_duplicate_writer_opt_aggregates_into_list(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Duplicate --writer-opt keys for the same writer are aggregated into lists."""
+        from headerkit._cache_cli import cache_populate_main
+
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+
+        with patch("headerkit._populate.populate") as mock_populate:
+            mock_populate.return_value = MagicMock(
+                warnings=[],
+                failed=0,
+                succeeded=1,
+                skipped_count=0,
+                total=1,
+                entries=[],
+                planned=[],
+            )
+            cache_populate_main(
+                [
+                    str(header),
+                    "-w",
+                    "cffi",
+                    "--platform",
+                    "linux/amd64",
+                    "--python",
+                    "3.12",
+                    "--cache-dir",
+                    str(tmp_path / ".hkcache"),
+                    "--writer-opt",
+                    "cffi:exclude=^_",
+                    "--writer-opt",
+                    "cffi:exclude=^test_",
+                    "--dry-run",
+                ]
+            )
+            call_kwargs = mock_populate.call_args[1]
+            assert call_kwargs["writer_options"] == {
+                "cffi": {"exclude": ["^_", "^test_"]},
+            }
 
     def test_cli_dispatch_from_main(self) -> None:
         """'headerkit cache populate' dispatches to cache_populate_main."""
