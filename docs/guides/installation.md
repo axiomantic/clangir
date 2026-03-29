@@ -45,7 +45,7 @@ headerkit requires the **libclang** shared library to be installed on your syste
     For a specific LLVM version:
 
     ```bash
-    sudo apt install libclang-17-dev
+    sudo apt install libclang-18-dev
     ```
 
 === "Fedora / RHEL"

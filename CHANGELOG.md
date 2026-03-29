@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-03-29
+
+### Added
+
+- Deploy dev docs on every push to main (docs fixes go live immediately)
+- CI warning when a PR is missing a version bump or changelog entry
+
+### Fixed
+
+- Fix incorrect CLI command in install-libclang reference (`headerkit-install-libclang` -> `headerkit install-libclang`)
+- Fix wrong default writer comment in generate reference (default is cffi, not json)
+- Fix references to non-existent `Writer` base class in cache guide examples
+- Fix broken relative doc links in README (use full docs site URLs)
+- Fix LLVM version example in installation guide (17 -> 18, matching supported range)
+- Update `site_description` in mkdocs.yml to mention all writers
+
+### Changed
+
+- CI and install-libclang workflows now skip on docs-only changes via `paths-ignore`
+
 ## [0.12.3] - 2026-03-29
 
 ### Changed
@@ -379,7 +399,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.12.4...HEAD
+[0.12.4]: https://github.com/axiomantic/headerkit/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/axiomantic/headerkit/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/axiomantic/headerkit/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/axiomantic/headerkit/compare/v0.12.0...v0.12.1

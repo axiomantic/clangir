@@ -1,5 +1,5 @@
 site_name: headerkit
-site_description: C/C++ header parsing toolkit with IR, libclang backend, and CFFI writer
+site_description: C/C++ header parsing toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more
 site_url: https://axiomantic.github.io/headerkit/
 repo_url: https://github.com/axiomantic/headerkit
 repo_name: axiomantic/headerkit

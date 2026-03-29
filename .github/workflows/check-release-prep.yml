@@ -1,0 +1,35 @@
+name: Check release prep
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump
+        run: |
+          BASE_VERSION=$(git show origin/main:pyproject.toml | grep '^version' | sed 's/version = "\(.*\)"/\1/')
+          PR_VERSION=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+
+          if [ "$BASE_VERSION" = "$PR_VERSION" ]; then
+            echo "::warning::Version in pyproject.toml ($PR_VERSION) has not changed. If this PR includes user-facing changes, bump the version before merging."
+          else
+            echo "Version bumped: $BASE_VERSION -> $PR_VERSION"
+          fi
+
+      - name: Check changelog
+        run: |
+          if git diff origin/main...HEAD --name-only | grep -q '^CHANGELOG.md$'; then
+            echo "CHANGELOG.md has been updated."
+          else
+            echo "::warning::CHANGELOG.md has not been modified. If this PR includes user-facing changes, add a changelog entry before merging."
+          fi

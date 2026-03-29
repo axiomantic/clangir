@@ -319,7 +319,7 @@ git commit -m "cache: populate for linux amd64 + arm64"
 When `.hkcache/` contains entries for all target platforms, downstream
 builds never need libclang installed.
 
-See the [Cache Strategy Guide](docs/guides/cache.md) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](docs/guides/build-backend.md) for full setup instructions.
+See the [Cache Strategy Guide](https://axiomantic.github.io/headerkit/guides/cache/) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](https://axiomantic.github.io/headerkit/guides/build-backend/) for full setup instructions.
 
 ## Python API
 

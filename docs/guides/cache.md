@@ -352,10 +352,19 @@ a class attribute. The IR cache still runs, but the writer's output is
 regenerated on every call.
 
 ```python
-from headerkit.writers import Writer, register_writer
+from headerkit.writers import register_writer
 
-class MyWriter(Writer):
+
+class MyWriter:
     cache_output = False  # always regenerate output
+
+    @property
+    def name(self) -> str:
+        return "mywriter"
+
+    @property
+    def format_description(self) -> str:
+        return "My custom output format"
 
     def write(self, header):
         ...
@@ -372,7 +381,8 @@ invalidates all cached output for that writer, which is useful when the
 output format changes between versions:
 
 ```python
-class MyWriter(Writer):
+class MyWriter:
     cache_version = "2"  # bump to invalidate old cache entries
-    ...
+
+    # ... name, format_description, write() as above
 ```
