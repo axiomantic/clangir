@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-install is now opt-in (default disabled) instead of opt-out. Projects that relied on the previous default-enabled behavior should set `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` or use `headerkit.build_backend_auto` as their build backend.
 - Replaced `HEADERKIT_NO_AUTO_INSTALL` env var with `HEADERKIT_AUTO_INSTALL_LIBCLANG` (set to `1` to enable)
 
+## [0.11.1] - 2026-03-28
+
 ### Fixed
 
 - Linux: `install_linux()` now tries the lighter `clang-libs` package before falling back to `clang-devel` on dnf-based distros (RHEL/AlmaLinux/manylinux_2_28)
@@ -333,6 +335,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[0.11.1]: https://github.com/axiomantic/headerkit/compare/v0.10.0...v0.11.1
 [0.10.0]: https://github.com/axiomantic/headerkit/compare/v0.8.4...v0.10.0
 [0.8.4]: https://github.com/axiomantic/headerkit/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/axiomantic/headerkit/compare/v0.8.2...v0.8.3
