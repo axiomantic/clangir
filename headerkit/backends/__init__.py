@@ -26,6 +26,8 @@ Example
         print(name)
 """
 
+import contextlib
+
 from headerkit.ir import (
     ParserBackend,
 )
@@ -215,8 +217,6 @@ def reload_backends() -> None:
         # lookup so the next access re-loads the library.
         _cindex_conf = _cached_cindex.conf
         if hasattr(_cindex_conf, "lib"):
-            import contextlib
-
             with contextlib.suppress(AttributeError):
                 del _cindex_conf.lib
     # Force fresh import of backend modules so registration re-runs

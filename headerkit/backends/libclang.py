@@ -36,6 +36,7 @@ Example
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import os
 import re
@@ -124,6 +125,17 @@ def _get_xcrun_libclang_paths() -> list[str]:
     return []
 
 
+def _add_versioned_so_paths(paths: list[str], base_dir: str) -> None:
+    """Append versioned libclang .so candidates from *base_dir* to *paths*.
+
+    Searches for ``libclang.so.*`` and ``libclang-*.so`` (sorted newest-first),
+    then appends the unversioned ``libclang.so`` as a fallback.
+    """
+    for pattern in ("libclang.so.*", "libclang-*.so"):
+        paths.extend(sorted(glob.glob(os.path.join(base_dir, pattern)), reverse=True))
+    paths.append(os.path.join(base_dir, "libclang.so"))
+
+
 def _get_libclang_search_paths() -> list[str]:
     """Get platform-specific paths to search for libclang.
 
@@ -163,14 +175,9 @@ def _get_libclang_search_paths() -> list[str]:
         # Debian/Ubuntu versioned LLVM packages (sorted newest first)
         paths.extend(sorted(glob.glob("/usr/lib/llvm-*/lib/libclang.so*"), reverse=True))
         # RHEL/Fedora/CentOS (64-bit) -- versioned names from clang-libs
-        paths.extend(sorted(glob.glob("/usr/lib64/libclang.so.*"), reverse=True))
-        paths.extend(sorted(glob.glob("/usr/lib64/libclang-*.so"), reverse=True))
-        # Unversioned (from clang-devel)
-        paths.append("/usr/lib64/libclang.so")
+        _add_versioned_so_paths(paths, "/usr/lib64")
         # Generic Linux -- also check versioned
-        paths.extend(sorted(glob.glob("/usr/lib/libclang.so.*"), reverse=True))
-        paths.extend(sorted(glob.glob("/usr/lib/libclang-*.so"), reverse=True))
-        paths.append("/usr/lib/libclang.so")
+        _add_versioned_so_paths(paths, "/usr/lib")
         paths.append("/usr/local/lib/libclang.so")
 
     elif sys.platform == "win32":
@@ -198,12 +205,9 @@ def _get_libclang_search_paths() -> list[str]:
         if spec and spec.submodule_search_locations:
             native_dir = os.path.join(spec.submodule_search_locations[0], "native")
             if os.path.isdir(native_dir):
-                if sys.platform == "win32":
-                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.dll")))
-                elif sys.platform == "darwin":
-                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.dylib")))
-                else:
-                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.so*")))
+                lib_patterns = {"win32": "libclang*.dll", "darwin": "libclang*.dylib"}
+                pattern = lib_patterns.get(sys.platform, "libclang*.so*")
+                paths.extend(glob.glob(os.path.join(native_dir, pattern)))
     except (ImportError, ValueError):
         pass
 
@@ -274,8 +278,6 @@ def _configure_libclang() -> bool:
             continue
         # On Windows, register the DLL's directory so dependent DLLs can be found
         if sys.platform == "win32":
-            import contextlib
-
             candidate_dir = os.path.dirname(candidate)
             with contextlib.suppress(OSError):
                 os.add_dll_directory(candidate_dir)
