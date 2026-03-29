@@ -2,6 +2,11 @@ name: Documentation
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'headerkit/**'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -44,7 +49,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Extract version from tag
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         id: version
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
@@ -53,9 +58,18 @@ jobs:
           echo "Deploying docs for version: $MINOR"
 
       - name: Deploy versioned docs (tag push)
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           mike deploy --push --update-aliases "${{ steps.version.outputs.version }}" latest
+
+      - name: Set default version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: mike set-default --push latest
+
+      - name: Deploy dev docs (main push)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mike deploy --push dev
 
       - name: Deploy versioned docs (manual)
         if: github.event_name == 'workflow_dispatch'
@@ -65,7 +79,3 @@ jobs:
           else
             mike deploy --push "${{ inputs.version }}"
           fi
-
-      - name: Set default version
-        if: github.event_name == 'push'
-        run: mike set-default --push latest
