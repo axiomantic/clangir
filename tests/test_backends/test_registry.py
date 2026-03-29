@@ -265,13 +265,17 @@ class TestBackendRegistry:
             else:
                 sys.modules.pop("headerkit.backends.libclang", None)
 
-    def test_reload_backends_allows_new_backend_after_install(self):
-        """After clearing and re-registering, a new backend is discoverable.
+    def test_reload_backends_discovers_newly_installed_backend(self):
+        """reload_backends() discovers a backend installed after initial load.
 
-        This is the core auto-install scenario: the backend was unavailable,
-        then the loaded flag is reset, the registry is cleared, and
-        register_backend() makes the backend available to get_backend().
+        This is the core auto-install scenario: the backend was unavailable
+        on first load, then auto_install() installs libclang, and
+        reload_backends() re-imports the module so it can self-register.
         """
+        import sys
+        import types
+        from unittest.mock import patch
+
         import headerkit.backends as b
 
         # Mark as loaded with empty registry (simulating failed initial load)
@@ -281,16 +285,31 @@ class TestBackendRegistry:
         with pytest.raises(ValueError, match="Unknown backend"):
             get_backend("mock")
 
-        # Simulate: auto_install succeeds, then reload_backends is called,
-        # which clears the flag and re-runs _ensure_backends_loaded.
-        # After that, external code registers the new backend.
-        b._BACKENDS_LOADED = False
-        b._BACKEND_REGISTRY.clear()
-        b._DEFAULT_BACKEND = None
-        # Skip the real _ensure_backends_loaded (which tries to import libclang)
-        b._BACKENDS_LOADED = True
-        register_backend("mock", MockBackend, is_default=True)
+        # Create a fake libclang module whose import side-effect registers
+        # a backend, mimicking what the real module does at load time.
+        fake_libclang = types.ModuleType("headerkit.backends.libclang")
+        fake_libclang.__spec__ = None  # type: ignore[attr-defined]
 
-        # Now get_backend should succeed
-        backend = get_backend("mock")
-        assert isinstance(backend, MockBackend)
+        import builtins
+
+        original_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> types.ModuleType:
+            if name == "headerkit.backends.libclang":
+                register_backend("mock", MockBackend, is_default=True)
+                sys.modules[name] = fake_libclang
+                return fake_libclang
+            return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        saved_module = sys.modules.get("headerkit.backends.libclang")
+        try:
+            with patch("builtins.__import__", side_effect=fake_import):
+                reload_backends()
+            # After reload, the mock backend should be discoverable
+            backend = get_backend("mock")
+            assert isinstance(backend, MockBackend)
+        finally:
+            if saved_module is not None:
+                sys.modules["headerkit.backends.libclang"] = saved_module
+            else:
+                sys.modules.pop("headerkit.backends.libclang", None)

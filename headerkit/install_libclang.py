@@ -152,6 +152,11 @@ def _install_windows_arm64(llvm_version: str, *, quiet: bool = False) -> bool:
         return False
 
     _log_or_print(f"LLVM {llvm_version} ARM64 installed successfully.", quiet=quiet)
+
+    # Configure DLL search path (same default location as x64)
+    if os.path.isdir(_WINDOWS_LLVM_BIN):
+        _configure_windows_dll_path(_WINDOWS_LLVM_BIN, quiet=quiet)
+
     return True
 
 

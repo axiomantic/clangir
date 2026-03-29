@@ -192,11 +192,15 @@ def reload_backends() -> None:
     :func:`~headerkit.install_libclang.auto_install`) so that
     :func:`get_backend` can find the newly available backend.
     """
+    import sys
+
     global _BACKENDS_LOADED, _DEFAULT_BACKEND  # pylint: disable=global-statement
 
     _BACKEND_REGISTRY.clear()
     _DEFAULT_BACKEND = None
     _BACKENDS_LOADED = False
+    # Force fresh import of backend modules so registration re-runs
+    sys.modules.pop("headerkit.backends.libclang", None)
     _ensure_backends_loaded()
 
 
