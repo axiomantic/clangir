@@ -38,7 +38,7 @@ from headerkit._cache_store import (
     write_ir_entry,
     write_output_entry,
 )
-from headerkit._config import _TOML_DECODE_ERROR, _parse_toml
+from headerkit._config import _TOML_DECODE_ERROR, _find_project_root, _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit.backends import get_backend
 from headerkit.install_libclang import auto_install
@@ -116,30 +116,6 @@ def _is_auto_install_allowed(
     # Layer 4: default (opt-in, so False)
     logger.debug("Auto-install disabled by default (opt-in)")
     return False
-
-
-def _find_project_root(start: Path) -> Path:
-    """Find project root by walking up from *start* looking for ``.git``.
-
-    Falls back to *start* itself if no ``.git`` marker is found before
-    reaching the filesystem root or the user's home directory.
-
-    Uses ``Path.absolute()`` instead of ``Path.resolve()`` so that the
-    traversal sees the same directory entries that the caller created.
-    On Windows, ``resolve()`` can expand 8.3 short names (e.g.
-    ``RUNNER~1`` to ``runneradmin``), producing a canonical path whose
-    parent chain may differ from the path where ``.git`` was physically
-    created -- causing the marker check to miss and the walk to escape
-    the intended project boundary.
-    """
-    current = start.absolute()
-    home = Path.home().absolute()
-    while True:
-        if (current / ".git").exists():
-            return current
-        if current == current.parent or current == home:
-            return start
-        current = current.parent
 
 
 _WRITER_EXTENSIONS: dict[str, str] = {

@@ -924,13 +924,147 @@ class TestPopulateFunction:
         assert "linux/amd64" in docker_platforms
         assert all(t.python_version == "3.12" for t in result.planned)
 
+    def test_populate_uses_config_platforms(self, tmp_path: Path) -> None:
+        """populate() falls back to config platforms when param is None."""
+        from headerkit._populate import populate
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[tool.headerkit.cache.populate]\nplatforms = ["linux/amd64"]\npython_versions = ["3.12"]\n',
+            encoding="utf-8",
+        )
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+
+        result = populate(
+            header_paths=header,
+            writers=["json"],
+            cache_dir=tmp_path / ".hkcache",
+            dry_run=True,
+        )
+        assert len(result.planned) == 1
+        assert result.planned[0].docker_platform == "linux/amd64"
+        assert result.planned[0].python_version == "3.12"
+
+    def test_populate_uses_config_python_versions(self, tmp_path: Path) -> None:
+        """populate() falls back to config python_versions when param is None."""
+        from headerkit._populate import populate
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[tool.headerkit.cache.populate]\npython_versions = ["3.13"]\n',
+            encoding="utf-8",
+        )
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+
+        result = populate(
+            header_paths=header,
+            writers=["json"],
+            platforms=["linux/amd64"],
+            cache_dir=tmp_path / ".hkcache",
+            dry_run=True,
+        )
+        assert len(result.planned) == 1
+        assert result.planned[0].python_version == "3.13"
+
+    def test_populate_uses_config_timeout(self, tmp_path: Path) -> None:
+        """populate() falls back to config timeout when param is the default."""
+        from headerkit._populate import populate
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.headerkit.cache.populate]\ntimeout = 600\n",
+            encoding="utf-8",
+        )
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+
+        with (
+            patch("headerkit._populate.check_docker_available"),
+            patch(
+                "headerkit._populate._find_headerkit_source",
+                return_value=tmp_path,
+            ),
+            patch("headerkit._populate.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            populate(
+                header_paths=header,
+                writers=["json"],
+                platforms=["linux/amd64"],
+                python_versions=["3.12"],
+                cache_dir=tmp_path / ".hkcache",
+            )
+            # Verify the timeout passed to subprocess.run is 600 (from config)
+            call_kwargs = mock_run.call_args[1]
+            assert call_kwargs["timeout"] == 600
+
+    def test_populate_explicit_params_override_config(self, tmp_path: Path) -> None:
+        """Explicit params override config file values."""
+        from headerkit._populate import populate
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[tool.headerkit.cache.populate]\nplatforms = ["linux/arm64"]\npython_versions = ["3.11"]\ntimeout = 600\n',
+            encoding="utf-8",
+        )
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+
+        result = populate(
+            header_paths=header,
+            writers=["json"],
+            platforms=["linux/amd64"],
+            python_versions=["3.12"],
+            cache_dir=tmp_path / ".hkcache",
+            dry_run=True,
+            timeout=120,
+        )
+        # Explicit values should win
+        assert len(result.planned) == 1
+        assert result.planned[0].docker_platform == "linux/amd64"
+        assert result.planned[0].python_version == "3.12"
+
+    def test_populate_cibuildwheel_ignores_config_platforms(self, tmp_path: Path) -> None:
+        """from_cibuildwheel=True ignores config platforms."""
+        from headerkit._populate import populate
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "test"\n'
+            "[tool.headerkit.cache.populate]\n"
+            'platforms = ["linux/arm64"]\n'
+            '[tool.cibuildwheel]\nbuild = "cp312-manylinux_x86_64"\n',
+            encoding="utf-8",
+        )
+        header = tmp_path / "test.h"
+        header.write_text("int foo(void);\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+
+        result = populate(
+            header_paths=header,
+            writers=["json"],
+            from_cibuildwheel=True,
+            cache_dir=tmp_path / ".hkcache",
+            dry_run=True,
+        )
+        docker_platforms = [t.docker_platform for t in result.planned]
+        # Should use cibuildwheel platforms (linux/amd64), not config (linux/arm64)
+        assert "linux/amd64" in docker_platforms
+        assert "linux/arm64" not in docker_platforms
+
 
 class TestFindProjectRoot:
     """Tests for _find_project_root()."""
 
     def test_finds_git_root(self, tmp_path: Path) -> None:
         """Finds project root by walking up from a subdirectory."""
-        from headerkit._populate import _find_project_root
+        from headerkit._config import _find_project_root
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
@@ -942,13 +1076,37 @@ class TestFindProjectRoot:
 
     def test_falls_back_to_start(self, tmp_path: Path) -> None:
         """Falls back to start directory when no .git found."""
-        from headerkit._populate import _find_project_root
+        from headerkit._config import _find_project_root
 
         nested = tmp_path / "no_git" / "deep"
         nested.mkdir(parents=True)
 
         result = _find_project_root(nested)
         assert result == nested
+
+    def test_uses_absolute_not_resolve(self) -> None:
+        """_find_project_root uses absolute() to avoid 8.3 short-name expansion."""
+        import inspect
+
+        from headerkit._config import _find_project_root
+
+        source = inspect.getsource(_find_project_root)
+        # Strip the docstring: everything after the closing triple-quotes
+        # is executable code.
+        body_start = source.find('"""', source.find('"""') + 3) + 3
+        code_body = source[body_start:]
+        # The code body must use .absolute() for the traversal
+        assert ".absolute()" in code_body
+        # The code body must NOT use .resolve() which causes 8.3 short-name issues
+        assert ".resolve()" not in code_body
+
+    def test_importable_from_populate(self) -> None:
+        """_find_project_root is importable from _populate for backwards compat."""
+        from headerkit._populate import _find_project_root  # noqa: F401
+
+    def test_importable_from_generate(self) -> None:
+        """_find_project_root is importable from _generate for backwards compat."""
+        from headerkit._generate import _find_project_root  # noqa: F401
 
 
 class TestVersionValidation:
