@@ -19,7 +19,7 @@ Parse a header and produce output using a single writer, with caching.
 ```python
 from headerkit import generate
 
-# Parse and generate JSON (default writer)
+# Parse and generate CFFI output (default writer)
 output = generate("mylib.h")
 
 # Generate CFFI bindings with custom include dirs

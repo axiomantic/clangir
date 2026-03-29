@@ -5,7 +5,7 @@ CLI tool for installing the libclang system dependency.
 ## CLI Usage
 
 ```
-headerkit-install-libclang [--version VERSION] [--skip-verify]
+headerkit install-libclang [--version VERSION] [--skip-verify]
 python -m headerkit.install_libclang [--version VERSION] [--skip-verify]
 ```
 

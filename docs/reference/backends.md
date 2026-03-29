@@ -42,6 +42,10 @@ full protocol definition including `parse()`, `name`, `supports_macros`, and
     options:
       show_source: false
 
+::: headerkit.backends.reload_backends
+    options:
+      show_source: false
+
 ::: headerkit.backends.get_backend_info
     options:
       show_source: false
