@@ -162,9 +162,14 @@ def _get_libclang_search_paths() -> list[str]:
     elif sys.platform == "linux":
         # Debian/Ubuntu versioned LLVM packages (sorted newest first)
         paths.extend(sorted(glob.glob("/usr/lib/llvm-*/lib/libclang.so*"), reverse=True))
-        # RHEL/Fedora/CentOS (64-bit)
+        # RHEL/Fedora/CentOS (64-bit) -- versioned names from clang-libs
+        paths.extend(sorted(glob.glob("/usr/lib64/libclang.so.*"), reverse=True))
+        paths.extend(sorted(glob.glob("/usr/lib64/libclang-*.so"), reverse=True))
+        # Unversioned (from clang-devel)
         paths.append("/usr/lib64/libclang.so")
-        # Generic Linux
+        # Generic Linux -- also check versioned
+        paths.extend(sorted(glob.glob("/usr/lib/libclang.so.*"), reverse=True))
+        paths.extend(sorted(glob.glob("/usr/lib/libclang-*.so"), reverse=True))
         paths.append("/usr/lib/libclang.so")
         paths.append("/usr/local/lib/libclang.so")
 
@@ -184,6 +189,23 @@ def _get_libclang_search_paths() -> list[str]:
         # a reliable environment variable for its install dir outside MSYS2 shells)
         for msys2_env in ("mingw64", "ucrt64", "clang64"):
             paths.append(os.path.join("C:\\msys64", msys2_env, "bin", "libclang.dll"))
+
+    # pip install libclang: the PyPI package installs to site-packages/clang/native/
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec("clang")
+        if spec and spec.submodule_search_locations:
+            native_dir = os.path.join(spec.submodule_search_locations[0], "native")
+            if os.path.isdir(native_dir):
+                if sys.platform == "win32":
+                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.dll")))
+                elif sys.platform == "darwin":
+                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.dylib")))
+                else:
+                    paths.extend(glob.glob(os.path.join(native_dir, "libclang*.so*")))
+    except (ImportError, ValueError):
+        pass
 
     return paths
 
@@ -250,6 +272,13 @@ def _configure_libclang() -> bool:
     for candidate in _get_libclang_search_paths():
         if not os.path.isfile(candidate):
             continue
+        # On Windows, register the DLL's directory so dependent DLLs can be found
+        if sys.platform == "win32":
+            import contextlib
+
+            candidate_dir = os.path.dirname(candidate)
+            with contextlib.suppress(OSError):
+                os.add_dll_directory(candidate_dir)
         _cindex.Config.set_library_file(candidate)
         try:
             _cindex.Config().get_cindex_library()

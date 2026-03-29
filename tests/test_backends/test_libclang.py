@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ from dirty_equals import AnyThing
 
 from headerkit.backends.libclang import (
     LibclangBackend,
+    _configure_libclang,
     _deduplicate_declarations,
     _get_libclang_search_paths,
     _is_system_header,
@@ -1085,3 +1087,241 @@ class TestMacroParsing:
         max_consts = [c for c in constants if c.name == "MAX"]
         # Function-like macros should not produce Constants
         assert len(max_consts) == 0
+
+
+class TestLinuxVersionedSearchPaths:
+    """Tests that versioned .so names are included in Linux search paths."""
+
+    def test_versioned_so_in_lib64_paths(self):
+        """RHEL/Fedora versioned names (libclang.so.18) appear in search paths."""
+        with patch("headerkit.backends.libclang.sys.platform", "linux"):
+            # Create fake versioned .so files in a temporary /usr/lib64-like dir
+            # We patch glob.glob to return controlled results for the /usr/lib64 patterns
+            original_glob = glob.glob
+
+            def patched_glob(pattern: str, **kwargs: object) -> list[str]:
+                if "/usr/lib64/libclang.so.*" in pattern:
+                    return ["/usr/lib64/libclang.so.18", "/usr/lib64/libclang.so.17"]
+                if "/usr/lib64/libclang-*.so" in pattern:
+                    return ["/usr/lib64/libclang-18.so"]
+                if "/usr/lib/libclang.so.*" in pattern:
+                    return ["/usr/lib/libclang.so.18"]
+                if "/usr/lib/libclang-*.so" in pattern:
+                    return ["/usr/lib/libclang-18.so"]
+                return original_glob(pattern, **kwargs)
+
+            with patch("headerkit.backends.libclang.glob.glob", side_effect=patched_glob):
+                paths = _get_libclang_search_paths()
+
+            # Versioned names should appear before the unversioned ones
+            assert "/usr/lib64/libclang.so.18" in paths
+            assert "/usr/lib64/libclang.so.17" in paths
+            assert "/usr/lib64/libclang-18.so" in paths
+            assert "/usr/lib64/libclang.so" in paths
+            assert "/usr/lib/libclang.so.18" in paths
+            assert "/usr/lib/libclang-18.so" in paths
+
+            # Versioned paths should come before unversioned
+            idx_versioned = paths.index("/usr/lib64/libclang.so.18")
+            idx_unversioned = paths.index("/usr/lib64/libclang.so")
+            assert idx_versioned < idx_unversioned
+
+    def test_generic_lib_versioned_so_paths(self):
+        """Generic /usr/lib versioned names appear in search paths."""
+        with patch("headerkit.backends.libclang.sys.platform", "linux"):
+            paths = _get_libclang_search_paths()
+            # The unversioned /usr/lib/libclang.so must always be present
+            assert "/usr/lib/libclang.so" in paths
+            assert "/usr/local/lib/libclang.so" in paths
+
+
+class TestPipClangNativeSearchPath:
+    """Tests that pip-installed clang/native/ path is included."""
+
+    def test_clang_native_dir_included_linux(self):
+        """When clang package is findable, its native dir is searched."""
+        import importlib.util
+        import types
+
+        mock_spec = types.SimpleNamespace(
+            submodule_search_locations=["/fake/site-packages/clang"],
+        )
+        with (
+            patch("headerkit.backends.libclang.sys.platform", "linux"),
+            patch.object(importlib.util, "find_spec", return_value=mock_spec),
+            patch("os.path.isdir", return_value=True),
+            patch(
+                "headerkit.backends.libclang.glob.glob",
+                side_effect=lambda pattern, **_kw: (
+                    ["/fake/site-packages/clang/native/libclang.so.18"] if "native" in pattern else []
+                ),
+            ),
+        ):
+            paths = _get_libclang_search_paths()
+            assert any("clang/native" in p for p in paths), f"Expected clang/native path in search paths, got: {paths}"
+
+    def test_clang_native_dir_included_darwin(self):
+        """On macOS, clang/native/*.dylib is searched."""
+        import importlib.util
+        import types
+
+        mock_spec = types.SimpleNamespace(
+            submodule_search_locations=["/fake/site-packages/clang"],
+        )
+        with (
+            patch("headerkit.backends.libclang.sys.platform", "darwin"),
+            patch.object(importlib.util, "find_spec", return_value=mock_spec),
+            patch("os.path.isdir", return_value=True),
+            patch(
+                "headerkit.backends.libclang.glob.glob",
+                side_effect=lambda pattern, **_kw: (
+                    ["/fake/site-packages/clang/native/libclang.dylib"] if "native" in pattern else []
+                ),
+            ),
+        ):
+            paths = _get_libclang_search_paths()
+            assert any("clang/native" in p for p in paths)
+
+    def test_clang_native_dir_included_win32(self):
+        """On Windows, clang/native/*.dll is searched."""
+        import importlib.util
+        import types
+
+        mock_spec = types.SimpleNamespace(
+            submodule_search_locations=["C:\\fake\\site-packages\\clang"],
+        )
+        with (
+            patch("headerkit.backends.libclang.sys.platform", "win32"),
+            patch.dict(
+                os.environ,
+                {
+                    "PROGRAMFILES": r"C:\Program Files",
+                    "PROGRAMFILES(X86)": r"C:\Program Files (x86)",
+                },
+            ),
+            patch.object(importlib.util, "find_spec", return_value=mock_spec),
+            patch("os.path.isdir", return_value=True),
+            patch(
+                "headerkit.backends.libclang.glob.glob",
+                side_effect=lambda pattern, **_kw: (
+                    ["C:\\fake\\site-packages\\clang\\native\\libclang.dll"] if "native" in pattern else []
+                ),
+            ),
+        ):
+            paths = _get_libclang_search_paths()
+            assert any("native" in p.lower() for p in paths)
+
+    def test_clang_package_not_found_is_harmless(self):
+        """When clang package is not installed, search paths still work."""
+        import importlib.util
+
+        with (
+            patch("headerkit.backends.libclang.sys.platform", "linux"),
+            patch.object(importlib.util, "find_spec", return_value=None),
+        ):
+            paths = _get_libclang_search_paths()
+            # Should still return the standard Linux paths
+            assert any("libclang" in p for p in paths)
+
+
+class TestWindowsAddDllDirectory:
+    """Tests that os.add_dll_directory is called on Windows during configure."""
+
+    def test_add_dll_directory_called_on_windows(self):
+        """os.add_dll_directory is invoked before loading on Windows."""
+        import headerkit.backends.libclang as mod
+
+        saved_configured = mod._libclang_configured
+        saved_cindex = mod._cindex
+
+        try:
+            mod._libclang_configured = False
+
+            mock_cindex = type("MockCindex", (), {})()
+            mock_config_cls = type(
+                "Config",
+                (),
+                {
+                    "loaded": False,
+                    "library_file": None,
+                    "library_path": None,
+                    "compatibility_check": True,
+                },
+            )
+
+            class MockLibclangError(Exception):
+                pass
+
+            mock_cindex.Config = mock_config_cls
+            mock_cindex.LibclangError = MockLibclangError
+            mock_cindex.CursorKind = type("CK", (), {})()
+            mock_cindex.TypeKind = type("TK", (), {})()
+
+            # set_compatibility_check should succeed when not loaded
+            mock_config_cls.set_compatibility_check = staticmethod(lambda _v: None)
+
+            def mock_set_library_file(_f: str) -> None:
+                pass
+
+            mock_config_cls.set_library_file = staticmethod(mock_set_library_file)
+
+            def mock_get_library(_self: object) -> object:
+                raise MockLibclangError("not found")
+
+            mock_config_cls.get_cindex_library = mock_get_library
+
+            # Use a forward-slash path so os.path.dirname works on all platforms.
+            # On actual Windows, both separators work; we test the add_dll_directory
+            # call site, not Windows path semantics.
+            candidate_path = "C:/LLVM/bin/libclang.dll"
+            expected_dir = os.path.dirname(candidate_path)
+
+            # Patch _get_cindex to return our mock
+            with (
+                patch.object(mod, "_cindex", None),
+                patch("headerkit.backends.libclang._get_cindex", return_value=mock_cindex),
+                patch("headerkit.backends.libclang.sys.platform", "win32"),
+                patch(
+                    "headerkit.backends.libclang._get_libclang_search_paths",
+                    return_value=[candidate_path],
+                ),
+                patch("os.path.isfile", return_value=True),
+                patch("os.add_dll_directory", create=True) as mock_add_dll,
+            ):
+                # Configure will fail (mock raises), but add_dll_directory should be called
+                _configure_libclang()
+                mock_add_dll.assert_called_once_with(expected_dir)
+        finally:
+            mod._libclang_configured = saved_configured
+            mod._cindex = saved_cindex
+
+
+class TestReloadBackendsCindexReset:
+    """Tests that reload_backends() resets vendored cindex Config state."""
+
+    def test_reload_resets_cindex_config(self):
+        """After reload_backends(), cindex Config.loaded is False."""
+        from headerkit._clang import _cached_cindex
+
+        if _cached_cindex is None:
+            pytest.skip("cindex not loaded")
+
+        # Save original state
+        orig_loaded = _cached_cindex.Config.loaded
+        orig_library_file = _cached_cindex.Config.library_file
+
+        try:
+            # Simulate a loaded state
+            _cached_cindex.Config.loaded = True
+            _cached_cindex.Config.library_file = "/fake/libclang.so"
+
+            from headerkit.backends import reload_backends
+
+            reload_backends()
+
+            assert _cached_cindex.Config.loaded is False
+            assert _cached_cindex.Config.library_file is None
+        finally:
+            # Restore original state
+            _cached_cindex.Config.loaded = orig_loaded
+            _cached_cindex.Config.library_file = orig_library_file

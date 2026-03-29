@@ -199,6 +199,26 @@ def reload_backends() -> None:
     _BACKEND_REGISTRY.clear()
     _DEFAULT_BACKEND = None
     _BACKENDS_LOADED = False
+    # Reset the vendored cindex Config so library search re-runs.
+    # The cindex module persists across reloads of headerkit.backends.libclang,
+    # so its class-level Config state (loaded, library_file, library_path) and
+    # the module-level conf singleton's cached lib property must be cleared.
+    from headerkit._clang import _cached_cindex
+
+    if _cached_cindex is not None:
+        _cindex_config = _cached_cindex.Config
+        _cindex_config.loaded = False
+        _cindex_config.library_file = None
+        _cindex_config.library_path = None
+        # The CachedProperty descriptor replaces itself on the instance with
+        # the loaded CDLL.  Deleting the instance attribute restores descriptor
+        # lookup so the next access re-loads the library.
+        _cindex_conf = _cached_cindex.conf
+        if hasattr(_cindex_conf, "lib"):
+            import contextlib
+
+            with contextlib.suppress(AttributeError):
+                del _cindex_conf.lib
     # Force fresh import of backend modules so registration re-runs
     sys.modules.pop("headerkit.backends.libclang", None)
     _ensure_backends_loaded()
