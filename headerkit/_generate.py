@@ -40,7 +40,7 @@ from headerkit._cache_store import (
 )
 from headerkit._config import _TOML_DECODE_ERROR, _find_project_root, _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
-from headerkit.backends import get_backend
+from headerkit.backends import get_backend, reload_backends
 from headerkit.install_libclang import auto_install
 from headerkit.ir import Header
 from headerkit.writers import get_writer
@@ -511,6 +511,7 @@ def generate(
             and auto_install()
         ):
             logger.info("libclang auto-installed; retrying backend")
+            reload_backends()
             header, ir_cache_key, ir_slug, ir_from_cache = _resolve_ir()
         else:
             raise

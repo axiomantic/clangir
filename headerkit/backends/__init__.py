@@ -36,6 +36,16 @@ _BACKEND_REGISTRY: dict[str, type[ParserBackend]] = {}
 _DEFAULT_BACKEND: str | None = None
 _BACKENDS_LOADED: bool = False  # Track if we've tried to load all backends
 
+__all__ = [
+    "get_backend",
+    "get_backend_info",
+    "get_default_backend",
+    "is_backend_available",
+    "list_backends",
+    "register_backend",
+    "reload_backends",
+]
+
 
 def register_backend(name: str, backend_class: type[ParserBackend], is_default: bool = False) -> None:
     """Register a parser backend.
@@ -173,6 +183,25 @@ def get_default_backend() -> str:
     if _DEFAULT_BACKEND is None:
         raise ValueError("No backends available")
     return _DEFAULT_BACKEND
+
+
+def reload_backends() -> None:
+    """Clear cached backend state and re-discover available backends.
+
+    Call after dynamically installing a backend (e.g. via
+    :func:`~headerkit.install_libclang.auto_install`) so that
+    :func:`get_backend` can find the newly available backend.
+    """
+    import sys
+
+    global _BACKENDS_LOADED, _DEFAULT_BACKEND  # pylint: disable=global-statement
+
+    _BACKEND_REGISTRY.clear()
+    _DEFAULT_BACKEND = None
+    _BACKENDS_LOADED = False
+    # Force fresh import of backend modules so registration re-runs
+    sys.modules.pop("headerkit.backends.libclang", None)
+    _ensure_backends_loaded()
 
 
 def _ensure_backends_loaded() -> None:

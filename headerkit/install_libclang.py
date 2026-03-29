@@ -7,7 +7,7 @@ Usage::
 This module installs the libclang shared library so that headerkit's libclang
 backend can function. It handles platform-specific installation:
 
-- **Linux (RHEL/Fedora/AlmaLinux)**: ``dnf install clang-devel``
+- **Linux (RHEL/Fedora/AlmaLinux)**: ``dnf install clang-libs`` (falls back to ``clang-devel``)
 - **Linux (Debian/Ubuntu)**: ``apt-get install libclang-dev``
 - **Linux (Alpine)**: ``apk add clang-dev``
 - **macOS**: ``brew install llvm`` (via Homebrew)
@@ -64,6 +64,11 @@ def install_linux(*, quiet: bool = False) -> bool:
     # Try dnf first (RHEL/Fedora/AlmaLinux/manylinux_2_28)
     if _is_command_available("dnf"):
         _log_or_print("Detected dnf package manager (RHEL/Fedora/AlmaLinux)", quiet=quiet)
+        # Try clang-libs first (lighter, provides just libclang.so)
+        result = _run(["dnf", "install", "-y", "clang-libs"], check=False, quiet=quiet)
+        if result.returncode == 0:
+            return True
+        # Fall back to clang-devel (heavier but also provides libclang.so)
         result = _run(["dnf", "install", "-y", "clang-devel"], check=False, quiet=quiet)
         if result.returncode == 0:
             return True
@@ -147,11 +152,41 @@ def _install_windows_arm64(llvm_version: str, *, quiet: bool = False) -> bool:
         return False
 
     _log_or_print(f"LLVM {llvm_version} ARM64 installed successfully.", quiet=quiet)
+
+    # Configure DLL search path (same default location as x64)
+    if os.path.isdir(_WINDOWS_LLVM_BIN):
+        _configure_windows_dll_path(_WINDOWS_LLVM_BIN, quiet=quiet)
+
     return True
+
+
+def _configure_windows_dll_path(llvm_bin: str, *, quiet: bool = False) -> None:
+    """Add *llvm_bin* to PATH and register it with :func:`os.add_dll_directory`.
+
+    On Python 3.8+ :func:`os.add_dll_directory` is the sanctioned way to
+    make a DLL discoverable by :mod:`ctypes`.  We also prepend to ``PATH``
+    for older code paths and subprocesses.
+    """
+    path_entries = [os.path.normcase(os.path.normpath(p)) for p in os.environ.get("PATH", "").split(os.pathsep)]
+    if os.path.normcase(os.path.normpath(llvm_bin)) not in path_entries:
+        os.environ["PATH"] = llvm_bin + os.pathsep + os.environ.get("PATH", "")
+        _log_or_print(f"Added {llvm_bin} to PATH", quiet=quiet)
+
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(llvm_bin)
+        _log_or_print(f"Registered {llvm_bin} via os.add_dll_directory()", quiet=quiet)
+
+
+_WINDOWS_LLVM_BIN = r"C:\Program Files\LLVM\bin"
+_WINDOWS_LIBCLANG_DLL = os.path.join(_WINDOWS_LLVM_BIN, "libclang.dll")
 
 
 def _install_windows_x64(llvm_version: str, *, quiet: bool = False) -> bool:
     """Install LLVM on x64 Windows using Chocolatey.
+
+    Before attempting a Chocolatey install, checks whether LLVM is already
+    present at the default install location.  If so, configures the DLL
+    search path and returns immediately.
 
     Pins to *llvm_version* so the installed library matches the vendored
     cindex bindings.  Chocolatey's default (unpinned) LLVM may lag behind
@@ -159,6 +194,12 @@ def _install_windows_x64(llvm_version: str, *, quiet: bool = False) -> bool:
     ``LibclangError: function 'clang_getFullyQualifiedName' not found``
     and similar failures at load time.
     """
+    # Check for pre-installed LLVM before trying Chocolatey
+    if os.path.isfile(_WINDOWS_LIBCLANG_DLL):
+        _log_or_print("Found pre-installed LLVM at " + _WINDOWS_LLVM_BIN, quiet=quiet)
+        _configure_windows_dll_path(_WINDOWS_LLVM_BIN, quiet=quiet)
+        return True
+
     if not _is_command_available("choco"):
         _log_or_print("ERROR: Chocolatey not found. Install it from https://chocolatey.org/", quiet=quiet)
         return False
@@ -169,7 +210,13 @@ def _install_windows_x64(llvm_version: str, *, quiet: bool = False) -> bool:
         check=False,
         quiet=quiet,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+
+    # After successful Chocolatey install, configure DLL search path
+    if os.path.isdir(_WINDOWS_LLVM_BIN):
+        _configure_windows_dll_path(_WINDOWS_LLVM_BIN, quiet=quiet)
+    return True
 
 
 def verify_libclang(*, quiet: bool = False) -> bool:
@@ -199,6 +246,23 @@ def verify_libclang(*, quiet: bool = False) -> bool:
 
 # Latest stable LLVM version known to have ARM64 Windows builds
 DEFAULT_LLVM_VERSION = "21.1.8"
+
+
+def _try_pip_install_libclang(*, quiet: bool = False) -> bool:
+    """Try installing the ``libclang`` PyPI package as a last-resort fallback.
+
+    Uses :data:`sys.executable` to ensure ``pip`` runs in the same
+    environment as the calling process.
+
+    :returns: True if pip exited successfully, False otherwise.
+    """
+    _log_or_print("Attempting pip install libclang as fallback...", quiet=quiet)
+    result = _run(
+        [sys.executable, "-m", "pip", "install", "libclang"],
+        check=False,
+        quiet=quiet,
+    )
+    return result.returncode == 0
 
 
 def auto_install() -> bool:
@@ -232,16 +296,19 @@ def auto_install() -> bool:
         logger.warning("Unsupported platform for auto-install: %s", sys.platform)
         return False
 
-    if not ok:
-        logger.warning("libclang installation failed")
-        return False
+    if ok and verify_libclang(quiet=True):
+        logger.info("libclang auto-installed successfully")
+        return True
 
-    if not verify_libclang(quiet=True):
-        logger.warning("libclang installed but could not be loaded")
-        return False
+    # Platform install failed or libclang not loadable after install
+    # Try pip install libclang as universal fallback
+    if _try_pip_install_libclang(quiet=True):
+        if verify_libclang(quiet=True):
+            logger.info("libclang installed via pip")
+            return True
 
-    logger.info("libclang auto-installed successfully")
-    return True
+    logger.warning("libclang installation failed")
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:

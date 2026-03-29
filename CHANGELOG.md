@@ -34,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_find_project_root()` no longer uses `Path.resolve()`, which on Windows can expand 8.3 short names and cause the `.git` marker walk to escape the intended project boundary, potentially triggering unwanted auto-install
 - CI test matrix reduced to full Python range on Ubuntu only, with latest Python on macOS and Windows
 
+## [0.12.1] - 2026-03-28
+
+### Fixed
+
+- Linux: `install_linux()` now tries the lighter `clang-libs` package before falling back to `clang-devel` on dnf-based distros (RHEL/AlmaLinux/manylinux_2_28)
+- Windows x64: `_install_windows_x64()` now detects pre-installed LLVM at the default location before attempting Chocolatey, and configures PATH/`os.add_dll_directory()` so ctypes can find libclang.dll
+- `auto_install()` now falls back to `pip install libclang` when platform-specific installation fails or the library is not loadable after install
+- Backend registry caching bug: after `auto_install()` installs libclang at runtime, `get_backend("libclang")` now correctly discovers the newly available backend instead of returning the stale "no backends available" result
+
 ## [0.10.0] - 2026-03-28
 
 ### Added
@@ -335,6 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[0.12.1]: https://github.com/axiomantic/headerkit/compare/v0.12.0...v0.12.1
 [0.10.0]: https://github.com/axiomantic/headerkit/compare/v0.8.4...v0.10.0
 [0.8.4]: https://github.com/axiomantic/headerkit/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/axiomantic/headerkit/compare/v0.8.2...v0.8.3

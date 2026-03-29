@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
 import bigfoot
 
 from headerkit.install_libclang import (
+    _WINDOWS_LIBCLANG_DLL,
+    _WINDOWS_LLVM_BIN,
     DEFAULT_LLVM_VERSION,
+    _try_pip_install_libclang,
     auto_install,
     install_linux,
     install_macos,
@@ -20,9 +24,32 @@ from headerkit.install_libclang import (
 
 
 class TestInstallLinux:
-    def test_install_linux_dnf(self) -> None:
-        """When dnf is available, install_linux runs 'dnf install -y clang-devel'."""
+    def test_install_linux_dnf_clang_libs(self) -> None:
+        """When dnf is available, install_linux tries clang-libs first."""
         bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=0)
+
+        with bigfoot:
+            result = install_linux()
+
+        assert result is True
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="dnf",
+            returns="/usr/bin/dnf",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["dnf", "install", "-y", "clang-libs"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    def test_install_linux_dnf_clang_libs_fails_falls_back_to_clang_devel(self) -> None:
+        """When clang-libs fails, install_linux falls back to clang-devel."""
+        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
         bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=0)
 
         with bigfoot:
@@ -33,6 +60,13 @@ class TestInstallLinux:
             bigfoot.subprocess_mock.which,
             name="dnf",
             returns="/usr/bin/dnf",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["dnf", "install", "-y", "clang-libs"],
+            returncode=1,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
@@ -112,9 +146,10 @@ class TestInstallLinux:
         bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apk", returns=None)
 
     def test_install_linux_dnf_fails_falls_through_to_apt(self) -> None:
-        """When dnf fails (returncode=1), install_linux falls through to apt-get."""
+        """When both dnf packages fail, install_linux falls through to apt-get."""
         bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
         bigfoot.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
+        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
         bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=1)
         bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
         bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
@@ -127,6 +162,13 @@ class TestInstallLinux:
             bigfoot.subprocess_mock.which,
             name="dnf",
             returns="/usr/bin/dnf",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["dnf", "install", "-y", "clang-libs"],
+            returncode=1,
+            stdout="",
+            stderr="",
         )
         bigfoot.assert_interaction(
             bigfoot.subprocess_mock.run,
@@ -192,7 +234,7 @@ class TestInstallMacos:
 
 class TestInstallWindows:
     def test_install_windows_x64(self) -> None:
-        """On x64 Windows with choco, install_windows pins the LLVM version."""
+        """On x64 Windows with choco (no pre-installed LLVM), install_windows pins the LLVM version."""
         bigfoot.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
         bigfoot.subprocess_mock.mock_run(
             ["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
@@ -201,6 +243,9 @@ class TestInstallWindows:
 
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            patch("headerkit.install_libclang.os.path.isfile", return_value=False),
+            patch("headerkit.install_libclang.os.path.isdir", return_value=True),
+            patch("headerkit.install_libclang._configure_windows_dll_path"),
             bigfoot,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
@@ -220,11 +265,12 @@ class TestInstallWindows:
         )
 
     def test_install_windows_x64_no_choco(self) -> None:
-        """On x64 Windows without choco, install_windows returns False."""
+        """On x64 Windows without choco (no pre-installed LLVM), install_windows returns False."""
         bigfoot.subprocess_mock.install()
 
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            patch("headerkit.install_libclang.os.path.isfile", return_value=False),
             bigfoot,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
@@ -427,36 +473,45 @@ class TestAutoInstall:
         mock_install.assert_called_once_with(DEFAULT_LLVM_VERSION, quiet=True)
         assert mock_verify.call_count == 2
 
+    @patch("headerkit.install_libclang._try_pip_install_libclang", return_value=False)
     @patch("headerkit.install_libclang.verify_libclang", return_value=False)
     @patch("headerkit.install_libclang.install_linux", return_value=False)
     @patch("headerkit.install_libclang.sys")
     def test_returns_false_when_install_fails(
-        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+        self,
+        mock_sys: MagicMock,
+        mock_install: MagicMock,
+        mock_verify: MagicMock,
+        mock_pip: MagicMock,
     ) -> None:
-        """auto_install() returns False when the platform installer fails."""
+        """auto_install() returns False when platform installer and pip fallback both fail."""
         mock_sys.platform = "linux"
         result = auto_install()
 
         assert result is False
         mock_install.assert_called_once_with(quiet=True)
-        # Early exit on install failure means verify is only called once
-        # (the initial availability check), not a second time post-install.
-        assert mock_verify.call_count == 1
+        mock_pip.assert_called_once_with(quiet=True)
 
+    @patch("headerkit.install_libclang._try_pip_install_libclang", return_value=False)
     @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, False])
     @patch("headerkit.install_libclang.install_linux", return_value=True)
     @patch("headerkit.install_libclang.sys")
     def test_returns_false_when_verify_fails_after_install(
-        self, mock_sys: MagicMock, mock_install: MagicMock, mock_verify: MagicMock
+        self,
+        mock_sys: MagicMock,
+        mock_install: MagicMock,
+        mock_verify: MagicMock,
+        mock_pip: MagicMock,
     ) -> None:
-        """auto_install() returns False when install succeeds but verify fails."""
+        """auto_install() returns False when install succeeds but verify fails, and pip fails."""
         mock_sys.platform = "linux"
         result = auto_install()
 
         assert result is False
         mock_install.assert_called_once_with(quiet=True)
-        assert mock_verify.call_count == 2
+        mock_pip.assert_called_once_with(quiet=True)
 
+    @patch("headerkit.install_libclang._try_pip_install_libclang", return_value=False)
     @patch("headerkit.install_libclang.install_windows")
     @patch("headerkit.install_libclang.install_macos")
     @patch("headerkit.install_libclang.install_linux")
@@ -469,6 +524,7 @@ class TestAutoInstall:
         mock_install_linux: MagicMock,
         mock_install_macos: MagicMock,
         mock_install_windows: MagicMock,
+        mock_pip: MagicMock,
     ) -> None:
         """auto_install() returns False on an unsupported platform."""
         mock_sys.platform = "freebsd"
@@ -478,3 +534,138 @@ class TestAutoInstall:
         mock_install_linux.assert_not_called()
         mock_install_macos.assert_not_called()
         mock_install_windows.assert_not_called()
+        mock_pip.assert_not_called()
+
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, True])
+    @patch("headerkit.install_libclang._try_pip_install_libclang", return_value=True)
+    @patch("headerkit.install_libclang.install_linux", return_value=False)
+    @patch("headerkit.install_libclang.sys")
+    def test_pip_fallback_when_platform_install_fails(
+        self,
+        mock_sys: MagicMock,
+        mock_install: MagicMock,
+        mock_pip: MagicMock,
+        mock_verify: MagicMock,
+    ) -> None:
+        """auto_install() tries pip when platform installer fails, and succeeds.
+
+        When ok=False, the `ok and verify()` short-circuits so verify is
+        only called twice: initial check (False) and post-pip check (True).
+        """
+        mock_sys.platform = "linux"
+        result = auto_install()
+
+        assert result is True
+        mock_install.assert_called_once_with(quiet=True)
+        mock_pip.assert_called_once_with(quiet=True)
+        assert mock_verify.call_count == 2
+
+    @patch("headerkit.install_libclang.verify_libclang", side_effect=[False, False, True])
+    @patch("headerkit.install_libclang._try_pip_install_libclang", return_value=True)
+    @patch("headerkit.install_libclang.install_linux", return_value=True)
+    @patch("headerkit.install_libclang.sys")
+    def test_pip_fallback_when_verify_fails_after_platform_install(
+        self,
+        mock_sys: MagicMock,
+        mock_install: MagicMock,
+        mock_pip: MagicMock,
+        mock_verify: MagicMock,
+    ) -> None:
+        """auto_install() tries pip when platform install succeeds but verify fails."""
+        mock_sys.platform = "linux"
+        result = auto_install()
+
+        assert result is True
+        mock_install.assert_called_once_with(quiet=True)
+        mock_pip.assert_called_once_with(quiet=True)
+
+
+class TestTryPipInstallLibclang:
+    """Tests for _try_pip_install_libclang() - pip fallback installer."""
+
+    def test_pip_install_success(self) -> None:
+        """_try_pip_install_libclang() returns True when pip succeeds."""
+        bigfoot.subprocess_mock.mock_run(
+            [sys.executable, "-m", "pip", "install", "libclang"],
+            returncode=0,
+        )
+
+        with bigfoot:
+            result = _try_pip_install_libclang()
+
+        assert result is True
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[sys.executable, "-m", "pip", "install", "libclang"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    def test_pip_install_failure(self) -> None:
+        """_try_pip_install_libclang() returns False when pip fails."""
+        bigfoot.subprocess_mock.mock_run(
+            [sys.executable, "-m", "pip", "install", "libclang"],
+            returncode=1,
+        )
+
+        with bigfoot:
+            result = _try_pip_install_libclang()
+
+        assert result is False
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=[sys.executable, "-m", "pip", "install", "libclang"],
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+
+
+class TestInstallWindowsPreInstalled:
+    """Tests for Windows pre-installed LLVM detection."""
+
+    def test_detects_pre_installed_llvm(self) -> None:
+        """install_windows returns True when libclang.dll already exists."""
+        with (
+            patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            patch("headerkit.install_libclang.os.path.isfile", return_value=True) as mock_isfile,
+            patch("headerkit.install_libclang._configure_windows_dll_path") as mock_configure,
+        ):
+            result = install_windows(DEFAULT_LLVM_VERSION)
+
+        assert result is True
+        mock_isfile.assert_called_once_with(_WINDOWS_LIBCLANG_DLL)
+        mock_configure.assert_called_once_with(_WINDOWS_LLVM_BIN, quiet=False)
+
+    def test_falls_through_to_choco_when_not_pre_installed(self) -> None:
+        """install_windows tries Chocolatey when pre-installed LLVM is absent."""
+        bigfoot.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
+        bigfoot.subprocess_mock.mock_run(
+            ["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
+            returncode=0,
+        )
+
+        with (
+            patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
+            patch("headerkit.install_libclang.os.path.isfile", return_value=False),
+            patch("headerkit.install_libclang.os.path.isdir", return_value=True),
+            patch("headerkit.install_libclang._configure_windows_dll_path") as mock_configure,
+            bigfoot,
+        ):
+            result = install_windows(DEFAULT_LLVM_VERSION)
+
+        assert result is True
+        mock_configure.assert_called_once_with(_WINDOWS_LLVM_BIN, quiet=False)
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.which,
+            name="choco",
+            returns=r"C:\ProgramData\chocolatey\bin\choco.exe",
+        )
+        bigfoot.assert_interaction(
+            bigfoot.subprocess_mock.run,
+            command=["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )

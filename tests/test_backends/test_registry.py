@@ -9,6 +9,7 @@ from headerkit.backends import (
     is_backend_available,
     list_backends,
     register_backend,
+    reload_backends,
 )
 from headerkit.ir import Header
 
@@ -228,3 +229,87 @@ class TestBackendRegistry:
         assert b._BACKENDS_LOADED is True
         # Registry should be empty since the import failed and no backend registered
         assert len(b._BACKEND_REGISTRY) == 0
+
+    def test_reload_backends_clears_cache_and_rediscovers(self):
+        """reload_backends() resets the loaded flag and re-runs discovery.
+
+        This simulates the scenario where a backend is installed at runtime
+        (e.g. auto_install() installs libclang) and the registry needs to
+        pick it up without restarting the process.
+        """
+        import headerkit.backends as b
+
+        # Start with a registered backend and mark as loaded
+        register_backend("mock", MockBackend, is_default=True)
+        b._BACKENDS_LOADED = True
+        assert list_backends() == ["mock"]
+
+        # Simulate the libclang module being available after install
+        # by injecting a mock module that registers on import
+        import sys
+        import types
+
+        fake_libclang = types.ModuleType("headerkit.backends.libclang")
+        fake_libclang.__spec__ = None  # type: ignore[attr-defined]
+        saved_module = sys.modules.get("headerkit.backends.libclang")
+        sys.modules["headerkit.backends.libclang"] = fake_libclang
+        try:
+            reload_backends()
+            # After reload, the mock backend is gone (registry was cleared)
+            # and only whatever _ensure_backends_loaded discovers is present.
+            # Since our fake module doesn't call register_backend, registry is empty.
+            assert b._BACKENDS_LOADED is True
+        finally:
+            if saved_module is not None:
+                sys.modules["headerkit.backends.libclang"] = saved_module
+            else:
+                sys.modules.pop("headerkit.backends.libclang", None)
+
+    def test_reload_backends_discovers_newly_installed_backend(self):
+        """reload_backends() discovers a backend installed after initial load.
+
+        This is the core auto-install scenario: the backend was unavailable
+        on first load, then auto_install() installs libclang, and
+        reload_backends() re-imports the module so it can self-register.
+        """
+        import sys
+        import types
+        from unittest.mock import patch
+
+        import headerkit.backends as b
+
+        # Mark as loaded with empty registry (simulating failed initial load)
+        b._BACKENDS_LOADED = True
+        assert list_backends() == []
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            get_backend("mock")
+
+        # Create a fake libclang module whose import side-effect registers
+        # a backend, mimicking what the real module does at load time.
+        fake_libclang = types.ModuleType("headerkit.backends.libclang")
+        fake_libclang.__spec__ = None  # type: ignore[attr-defined]
+
+        import builtins
+
+        original_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> types.ModuleType:
+            if name == "headerkit.backends.libclang":
+                register_backend("mock", MockBackend, is_default=True)
+                sys.modules[name] = fake_libclang
+                return fake_libclang
+            return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        saved_module = sys.modules.get("headerkit.backends.libclang")
+        try:
+            with patch("builtins.__import__", side_effect=fake_import):
+                reload_backends()
+            # After reload, the mock backend should be discoverable
+            backend = get_backend("mock")
+            assert isinstance(backend, MockBackend)
+        finally:
+            if saved_module is not None:
+                sys.modules["headerkit.backends.libclang"] = saved_module
+            else:
+                sys.modules.pop("headerkit.backends.libclang", None)
