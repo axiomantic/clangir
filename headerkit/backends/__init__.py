@@ -26,8 +26,6 @@ Example
         print(name)
 """
 
-import contextlib
-
 from headerkit.ir import (
     ParserBackend,
 )
@@ -208,17 +206,19 @@ def reload_backends() -> None:
     from headerkit._clang import _cached_cindex
 
     if _cached_cindex is not None:
+        # The CachedProperty descriptor for ``conf.lib`` replaces itself on
+        # the instance with the loaded CDLL.  Delete the cached instance
+        # attribute FIRST (check ``__dict__`` to avoid triggering the
+        # descriptor's ``__get__`` which would re-load the library and set
+        # ``Config.loaded = True``).
+        _cindex_conf = _cached_cindex.conf
+        if "lib" in _cindex_conf.__dict__:
+            del _cindex_conf.__dict__["lib"]
+        # Now reset Config class state so the next access re-searches.
         _cindex_config = _cached_cindex.Config
         _cindex_config.loaded = False
         _cindex_config.library_file = None
         _cindex_config.library_path = None
-        # The CachedProperty descriptor replaces itself on the instance with
-        # the loaded CDLL.  Deleting the instance attribute restores descriptor
-        # lookup so the next access re-loads the library.
-        _cindex_conf = _cached_cindex.conf
-        if hasattr(_cindex_conf, "lib"):
-            with contextlib.suppress(AttributeError):
-                del _cindex_conf.lib
     # Force fresh import of backend modules so registration re-runs
     sys.modules.pop("headerkit.backends.libclang", None)
     _ensure_backends_loaded()

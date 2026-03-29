@@ -1268,26 +1268,40 @@ class TestReloadBackendsCindexReset:
     """Tests that reload_backends() resets vendored cindex Config state."""
 
     def test_reload_resets_cindex_config(self):
-        """After reload_backends(), cindex Config.loaded is False."""
+        """reload_backends() resets cindex Config.loaded and library_file.
+
+        Uses a ``side_effect`` on ``_ensure_backends_loaded`` to capture
+        Config state at the exact moment between the reset and re-discovery
+        (on CI where libclang is installed, re-discovery would set them back).
+        """
+        from unittest.mock import patch
+
         from headerkit._clang import _cached_cindex
 
         if _cached_cindex is None:
             pytest.skip("cindex not loaded")
 
-        # Save original state
         orig_loaded = _cached_cindex.Config.loaded
         orig_library_file = _cached_cindex.Config.library_file
 
+        captured: dict[str, object] = {}
+
+        def capture_state() -> None:
+            captured["loaded"] = _cached_cindex.Config.loaded
+            captured["library_file"] = _cached_cindex.Config.library_file
+
         try:
-            # Simulate a loaded state
             _cached_cindex.Config.loaded = True
             _cached_cindex.Config.library_file = "/fake/libclang.so"
 
-            reload_backends()
+            with patch(
+                "headerkit.backends._ensure_backends_loaded",
+                side_effect=capture_state,
+            ):
+                reload_backends()
 
-            assert _cached_cindex.Config.loaded is False
-            assert _cached_cindex.Config.library_file is None
+            assert captured["loaded"] is False
+            assert captured["library_file"] is None
         finally:
-            # Restore original state
             _cached_cindex.Config.loaded = orig_loaded
             _cached_cindex.Config.library_file = orig_library_file
