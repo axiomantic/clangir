@@ -277,8 +277,6 @@ def _configure_libclang() -> bool:
     # If the library is already loaded, just return True -- the library
     # will not disappear during the process lifetime.
     if _cindex.Config.loaded:
-        CursorKind = _cindex.CursorKind
-        TypeKind = _cindex.TypeKind
         return True
 
     # Reset any stale cindex state from a previous failed attempt so that
