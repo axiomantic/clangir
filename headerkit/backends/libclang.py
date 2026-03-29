@@ -2106,7 +2106,11 @@ class LibclangBackend:
         # Ensure libclang is configured before parsing.  This is a no-op
         # after the first successful load (short-circuits on Config.loaded).
         if not _configure_libclang():
-            raise RuntimeError("libclang shared library not found. Install LLVM/clang or run: pip install libclang")
+            from headerkit.backends import LibclangUnavailableError
+
+            raise LibclangUnavailableError(
+                "libclang shared library not found. Install LLVM/clang or run: pip install libclang"
+            )
 
         args: list[str] = []
 
