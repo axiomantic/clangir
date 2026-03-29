@@ -14,11 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cibuildwheel config parsing (`--cibuildwheel`) for automatic target detection
 - Per-platform Docker image configuration via `[tool.headerkit.cache.populate.images]`
 - Dry-run mode (`--dry-run`) for previewing planned cache population targets
+- Opt-in auto-install of libclang when `generate()` needs to parse but the backend is unavailable, with layered configuration (highest precedence first):
+  1. `generate(auto_install_libclang=True)` kwarg
+  2. `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` environment variable
+  3. `auto_install_libclang = true` in `[tool.headerkit]` of pyproject.toml
+  4. Default: disabled (opt-in)
+- `auto_install()` function in `install_libclang` module for quiet, non-interactive libclang installation
+- `headerkit.build_backend_auto` PEP 517 build backend that wraps `headerkit.build_backend` with auto-install enabled (sets `HEADERKIT_AUTO_INSTALL_LIBCLANG=1`)
+
+### Changed
+
+- Auto-install is now opt-in (default disabled) instead of opt-out. Projects that relied on the previous default-enabled behavior should set `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` or use `headerkit.build_backend_auto` as their build backend.
+- Replaced `HEADERKIT_NO_AUTO_INSTALL` env var with `HEADERKIT_AUTO_INSTALL_LIBCLANG` (set to `1` to enable)
 
 ### Fixed
 
 - `generate()` now falls back to the output cache when the backend (libclang) is unavailable, enabling the documented libclang-free build workflow
 - `parse_cibuildwheel_config()` no longer emits spurious macOS/Windows warnings when those platforms are not in the build matrix (e.g., `build = "cp312-manylinux*"`)
+- `_find_project_root()` no longer uses `Path.resolve()`, which on Windows can expand 8.3 short names and cause the `.git` marker walk to escape the intended project boundary, potentially triggering unwanted auto-install
+- CI test matrix reduced to full Python range on Ubuntu only, with latest Python on macOS and Windows
 
 ## [0.10.0] - 2026-03-28
 

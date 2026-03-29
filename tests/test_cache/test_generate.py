@@ -305,3 +305,266 @@ class TestGenerateFileNotFound:
                 writer_name="json",
                 cache_dir=project_dir / ".hkcache",
             )
+
+
+def _invalidate_all_caches(project_dir: Path) -> None:
+    """Ensure both IR and output caches are empty."""
+    cache_path = project_dir / ".hkcache"
+    if cache_path.exists():
+        shutil.rmtree(cache_path)
+    cache_path.mkdir(parents=True, exist_ok=True)
+
+
+class TestGenerateAutoInstall:
+    """Test that generate() auto-installs libclang when opted in and backend unavailable."""
+
+    def _make_backend_unavailable_then_available(self, header_file: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Patch get_backend to fail first, then succeed after auto_install."""
+        call_count = 0
+
+        def mock_get_backend(name: str) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError(f"Unknown backend: {name!r}. Available: (none)")
+            mock_header = Header(
+                str(header_file),
+                [Function("add", CType("int"), [Parameter("a", CType("int")), Parameter("b", CType("int"))])],
+            )
+            backend = MagicMock()
+            backend.parse.return_value = mock_header
+            return backend
+
+        monkeypatch.setattr("headerkit._generate.get_backend", mock_get_backend)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+        return mock_auto_install
+
+    def test_auto_installs_via_kwarg(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """generate(auto_install_libclang=True) enables auto-install."""
+        _invalidate_all_caches(project_dir)
+        mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
+
+        cache_path = project_dir / ".hkcache"
+        result = generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+            cache_dir=cache_path,
+            auto_install_libclang=True,
+        )
+
+        mock_auto_install.assert_called_once_with()
+        parsed = json.loads(result)
+        assert parsed["declarations"][0]["name"] == "add"
+        assert parsed["declarations"][0]["kind"] == "function"
+
+    def test_auto_installs_via_env_var(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """HEADERKIT_AUTO_INSTALL_LIBCLANG=1 enables auto-install."""
+        _invalidate_all_caches(project_dir)
+        monkeypatch.setenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", "1")
+        mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
+
+        cache_path = project_dir / ".hkcache"
+        result = generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+            cache_dir=cache_path,
+        )
+
+        mock_auto_install.assert_called_once_with()
+        parsed = json.loads(result)
+        assert parsed["declarations"][0]["name"] == "add"
+
+    def test_auto_installs_via_config(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """auto_install_libclang=true in pyproject.toml enables auto-install."""
+        _invalidate_all_caches(project_dir)
+        pyproject = project_dir / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.headerkit]\nauto_install_libclang = true\n",
+            encoding="utf-8",
+        )
+        mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
+
+        cache_path = project_dir / ".hkcache"
+        result = generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+            cache_dir=cache_path,
+        )
+
+        mock_auto_install.assert_called_once_with()
+        parsed = json.loads(result)
+        assert parsed["declarations"][0]["name"] == "add"
+
+    def test_default_does_not_auto_install(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Default behavior (no kwarg, no env, no config) does NOT auto-install."""
+        monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+        _make_backend_unavailable(monkeypatch)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="libclang",
+                cache_dir=project_dir / ".hkcache",
+            )
+
+        mock_auto_install.assert_not_called()
+
+    def test_kwarg_false_overrides_env_var(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """generate(auto_install_libclang=False) disables even when env var is set."""
+        monkeypatch.setenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", "1")
+        _make_backend_unavailable(monkeypatch)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="libclang",
+                cache_dir=project_dir / ".hkcache",
+                auto_install_libclang=False,
+            )
+
+        mock_auto_install.assert_not_called()
+
+    def test_env_var_overrides_config(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """HEADERKIT_AUTO_INSTALL_LIBCLANG=0 disables even when config says true."""
+        pyproject = project_dir / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.headerkit]\nauto_install_libclang = true\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", "0")
+        _make_backend_unavailable(monkeypatch)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="libclang",
+                cache_dir=project_dir / ".hkcache",
+            )
+
+        mock_auto_install.assert_not_called()
+
+    def test_no_cache_no_backend_raises_when_auto_install_fails(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """generate() raises ValueError when auto_install is enabled but fails."""
+        _make_backend_unavailable(monkeypatch)
+
+        mock_auto_install = MagicMock(return_value=False)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="libclang",
+                cache_dir=project_dir / ".hkcache",
+                auto_install_libclang=True,
+            )
+
+        mock_auto_install.assert_called_once_with()
+
+    def test_does_not_auto_install_for_non_libclang_backend(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """generate() does NOT auto-install when the failing backend is not 'libclang'."""
+
+        def raise_no_backend(name: str) -> None:
+            raise ValueError(f"Unknown backend: {name!r}. Available: (none)")
+
+        monkeypatch.setattr("headerkit._generate.get_backend", raise_no_backend)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="custom_backend",
+                cache_dir=project_dir / ".hkcache",
+                auto_install_libclang=True,
+            )
+
+        mock_auto_install.assert_not_called()
+
+    def test_config_opt_out_disables_auto_install(
+        self,
+        project_dir: Path,
+        header_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """auto_install_libclang=false in config disables auto-install."""
+        monkeypatch.delenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", raising=False)
+        pyproject = project_dir / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.headerkit]\nauto_install_libclang = false\n",
+            encoding="utf-8",
+        )
+
+        _make_backend_unavailable(monkeypatch)
+
+        mock_auto_install = MagicMock(return_value=True)
+        monkeypatch.setattr("headerkit._generate.auto_install", mock_auto_install)
+
+        with pytest.raises(ValueError, match="Unknown backend"):
+            generate(
+                header_path=header_file,
+                writer_name="json",
+                backend_name="libclang",
+                cache_dir=project_dir / ".hkcache",
+            )
+
+        mock_auto_install.assert_not_called()

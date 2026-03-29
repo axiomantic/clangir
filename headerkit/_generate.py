@@ -20,6 +20,7 @@ The 10-step flow for generate():
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,12 +38,84 @@ from headerkit._cache_store import (
     write_ir_entry,
     write_output_entry,
 )
+from headerkit._config import _TOML_DECODE_ERROR, _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit.backends import get_backend
+from headerkit.install_libclang import auto_install
 from headerkit.ir import Header
 from headerkit.writers import get_writer
 
 logger = logging.getLogger("headerkit.cache")
+
+
+def _is_auto_install_allowed(
+    project_root: Path,
+    auto_install_libclang: bool | None = None,
+) -> bool:
+    """Check whether auto-install of libclang is allowed.
+
+    The feature is **opt-in by default**: auto-install is disabled unless
+    explicitly enabled through one of the configuration layers below.
+
+    Precedence (highest first):
+
+    1. ``auto_install_libclang`` kwarg -- ``True`` or ``False`` from the
+       caller (e.g. ``generate(auto_install_libclang=True)``).  When set,
+       all other layers are skipped.
+    2. ``HEADERKIT_AUTO_INSTALL_LIBCLANG`` environment variable -- set to
+       ``"1"`` to enable, any other value to disable.
+    3. ``auto_install_libclang`` key in the ``[tool.headerkit]`` section of
+       the project's ``pyproject.toml`` -- ``true`` to enable, ``false`` to
+       disable.
+    4. Default: ``False`` (auto-install disabled).
+
+    :param project_root: Project root directory to search for pyproject.toml.
+    :param auto_install_libclang: Explicit kwarg override from caller.
+    :returns: True if auto-install is allowed, False otherwise.
+    """
+    # Layer 1: explicit kwarg
+    if auto_install_libclang is not None:
+        logger.debug(
+            "Auto-install %s by explicit kwarg",
+            "enabled" if auto_install_libclang else "disabled",
+        )
+        return auto_install_libclang
+
+    # Layer 2: environment variable
+    env_val = os.environ.get("HEADERKIT_AUTO_INSTALL_LIBCLANG")
+    if env_val is not None:
+        enabled = env_val == "1"
+        logger.debug(
+            "Auto-install %s by HEADERKIT_AUTO_INSTALL_LIBCLANG=%s",
+            "enabled" if enabled else "disabled",
+            env_val,
+        )
+        return enabled
+
+    # Layer 3: pyproject.toml config
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            raw = _parse_toml(pyproject.read_bytes())
+            tool = raw.get("tool", {})
+            section = tool.get("headerkit", {}) if isinstance(tool, dict) else {}
+            if isinstance(section, dict) and "auto_install_libclang" in section:
+                config_val = bool(section["auto_install_libclang"])
+                logger.debug(
+                    "Auto-install %s by auto_install_libclang=%s in %s",
+                    "enabled" if config_val else "disabled",
+                    section["auto_install_libclang"],
+                    pyproject,
+                )
+                return config_val
+        except _TOML_DECODE_ERROR as exc:
+            logger.warning("Malformed TOML in %s; ignoring headerkit config: %s", pyproject, exc)
+        except (FileNotFoundError, KeyError, RuntimeError) as exc:
+            logger.warning("Could not read auto_install_libclang config from %s: %s", pyproject, exc)
+
+    # Layer 4: default (opt-in, so False)
+    logger.debug("Auto-install disabled by default (opt-in)")
+    return False
 
 
 def _find_project_root(start: Path) -> Path:
@@ -50,9 +123,17 @@ def _find_project_root(start: Path) -> Path:
 
     Falls back to *start* itself if no ``.git`` marker is found before
     reaching the filesystem root or the user's home directory.
+
+    Uses ``Path.absolute()`` instead of ``Path.resolve()`` so that the
+    traversal sees the same directory entries that the caller created.
+    On Windows, ``resolve()`` can expand 8.3 short names (e.g.
+    ``RUNNER~1`` to ``runneradmin``), producing a canonical path whose
+    parent chain may differ from the path where ``.git`` was physically
+    created -- causing the marker check to miss and the walk to escape
+    the intended project boundary.
     """
-    current = start.resolve()
-    home = Path.home().resolve()
+    current = start.absolute()
+    home = Path.home().absolute()
     while True:
         if (current / ".git").exists():
             return current
@@ -360,6 +441,7 @@ def generate(
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
     project_prefixes: tuple[str, ...] | None = None,
+    auto_install_libclang: bool | None = None,
     _result_meta: dict[str, object] | None = None,
 ) -> str:
     """Parse a C/C++ header and generate output using a single writer.
@@ -383,6 +465,10 @@ def generate(
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
     :param project_prefixes: Tuple of project prefix directories for backend.
+    :param auto_install_libclang: Explicitly enable (True) or disable (False)
+        automatic libclang installation. When None, falls back to the
+        ``HEADERKIT_AUTO_INSTALL_LIBCLANG`` env var, then pyproject.toml
+        config, then defaults to False.
     :returns: Generated output string.
     :raises FileNotFoundError: If header_path does not exist and code is not provided.
     """
@@ -407,8 +493,8 @@ def generate(
     use_ir_cache = not no_cache and not no_ir_cache and resolved_cache_dir is not None
     use_output_cache = not no_cache and not no_output_cache and resolved_cache_dir is not None
 
-    try:
-        header, ir_cache_key, ir_slug, ir_from_cache = _get_ir(
+    def _resolve_ir() -> tuple[Header, str, str, bool]:
+        return _get_ir(
             backend_name=backend_name,
             header_path=header_path,
             project_root=project_root,
@@ -418,6 +504,9 @@ def generate(
             use_ir_cache=use_ir_cache,
             project_prefixes=project_prefixes,
         )
+
+    try:
+        header, ir_cache_key, ir_slug, ir_from_cache = _resolve_ir()
     except ValueError:
         # Backend unavailable -- try output cache before giving up
         if use_output_cache:
@@ -438,7 +527,17 @@ def generate(
                 if _result_meta is not None:
                     _result_meta["from_cache"] = True
                 return cached_output
-        raise
+
+        # Output cache miss -- attempt auto-install for libclang backend
+        if (
+            backend_name == "libclang"
+            and _is_auto_install_allowed(project_root, auto_install_libclang)
+            and auto_install()
+        ):
+            logger.info("libclang auto-installed; retrying backend")
+            header, ir_cache_key, ir_slug, ir_from_cache = _resolve_ir()
+        else:
+            raise
 
     output, output_from_cache = _get_output(
         header=header,
@@ -474,6 +573,7 @@ def generate_all(
     no_cache: bool = False,
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
+    auto_install_libclang: bool | None = None,
 ) -> list[GenerateResult]:
     """Parse a C/C++ header and generate output for multiple writers.
 
@@ -493,6 +593,8 @@ def generate_all(
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
+    :param auto_install_libclang: Explicitly enable (True) or disable (False)
+        automatic libclang installation. Passed through to ``generate()``.
     :returns: List of GenerateResult, one per writer.
     :raises FileNotFoundError: If header_path does not exist.
     """
@@ -523,6 +625,7 @@ def generate_all(
             no_cache=no_cache,
             no_ir_cache=no_ir_cache,
             no_output_cache=no_output_cache,
+            auto_install_libclang=auto_install_libclang,
             _result_meta=meta,
         )
 
