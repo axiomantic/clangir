@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-03-28
+
+### Fixed
+
+- Linux: `install_linux()` now tries the lighter `clang-libs` package before falling back to `clang-devel` on dnf-based distros (RHEL/AlmaLinux/manylinux_2_28)
+- Windows x64: `_install_windows_x64()` now detects pre-installed LLVM at the default location before attempting Chocolatey, and configures PATH/`os.add_dll_directory()` so ctypes can find libclang.dll
+- `auto_install()` now falls back to `pip install libclang` when platform-specific installation fails or the library is not loadable after install
+- Backend registry caching bug: after `auto_install()` installs libclang at runtime, `get_backend("libclang")` now correctly discovers the newly available backend instead of returning the stale "no backends available" result
+- `_find_project_root()` regression from cache populate PR: restored use of `absolute()` instead of `resolve()` to prevent Windows 8.3 short-name expansion
+- Wired `load_populate_config()` defaults into `populate()` and CLI for platforms, python_versions, and timeout
+
+## [0.12.0] - 2026-03-28
+
 ### Added
 
 - `headerkit cache populate` CLI subcommand for generating cache entries across multiple target platforms using Docker containers
@@ -14,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cibuildwheel config parsing (`--cibuildwheel`) for automatic target detection
 - Per-platform Docker image configuration via `[tool.headerkit.cache.populate.images]`
 - Dry-run mode (`--dry-run`) for previewing planned cache population targets
+
+### Fixed
+
+- `parse_cibuildwheel_config()` no longer emits spurious macOS/Windows warnings when those platforms are not in the build matrix (e.g., `build = "cp312-manylinux*"`)
+
+## [0.11.0] - 2026-03-28
+
+### Added
+
 - Opt-in auto-install of libclang when `generate()` needs to parse but the backend is unavailable, with layered configuration (highest precedence first):
   1. `generate(auto_install_libclang=True)` kwarg
   2. `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` environment variable
@@ -26,22 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Auto-install is now opt-in (default disabled) instead of opt-out. Projects that relied on the previous default-enabled behavior should set `HEADERKIT_AUTO_INSTALL_LIBCLANG=1` or use `headerkit.build_backend_auto` as their build backend.
 - Replaced `HEADERKIT_NO_AUTO_INSTALL` env var with `HEADERKIT_AUTO_INSTALL_LIBCLANG` (set to `1` to enable)
+- CI test matrix reduced to full Python range on Ubuntu only, with latest Python on macOS and Windows
+
+### Fixed
+
+- `_find_project_root()` no longer uses `Path.resolve()`, which on Windows can expand 8.3 short names and cause the `.git` marker walk to escape the intended project boundary, potentially triggering unwanted auto-install
+
+## [0.10.1] - 2026-03-28
 
 ### Fixed
 
 - `generate()` now falls back to the output cache when the backend (libclang) is unavailable, enabling the documented libclang-free build workflow
-- `parse_cibuildwheel_config()` no longer emits spurious macOS/Windows warnings when those platforms are not in the build matrix (e.g., `build = "cp312-manylinux*"`)
-- `_find_project_root()` no longer uses `Path.resolve()`, which on Windows can expand 8.3 short names and cause the `.git` marker walk to escape the intended project boundary, potentially triggering unwanted auto-install
-- CI test matrix reduced to full Python range on Ubuntu only, with latest Python on macOS and Windows
-
-## [0.12.1] - 2026-03-28
-
-### Fixed
-
-- Linux: `install_linux()` now tries the lighter `clang-libs` package before falling back to `clang-devel` on dnf-based distros (RHEL/AlmaLinux/manylinux_2_28)
-- Windows x64: `_install_windows_x64()` now detects pre-installed LLVM at the default location before attempting Chocolatey, and configures PATH/`os.add_dll_directory()` so ctypes can find libclang.dll
-- `auto_install()` now falls back to `pip install libclang` when platform-specific installation fails or the library is not loadable after install
-- Backend registry caching bug: after `auto_install()` installs libclang at runtime, `get_backend("libclang")` now correctly discovers the newly available backend instead of returning the stale "no backends available" result
 
 ## [0.10.0] - 2026-03-28
 
@@ -344,7 +361,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.12.1...HEAD
 [0.12.1]: https://github.com/axiomantic/headerkit/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/axiomantic/headerkit/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/axiomantic/headerkit/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/axiomantic/headerkit/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/axiomantic/headerkit/compare/v0.8.4...v0.10.0
 [0.8.4]: https://github.com/axiomantic/headerkit/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/axiomantic/headerkit/compare/v0.8.2...v0.8.3
