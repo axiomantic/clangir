@@ -311,14 +311,37 @@ def cache_populate_main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    from headerkit._populate import populate
+    # Load populate config so config-file values serve as defaults that
+    # CLI flags override.
+    from headerkit._config import _find_project_root
+    from headerkit._populate import _empty_populate_config, load_populate_config, populate
+
+    cfg = _empty_populate_config()
+    if args.input_files:
+        first_header = Path(args.input_files[0])
+        if first_header.exists():
+            proj_root = _find_project_root(first_header.parent)
+            pyproject = proj_root / "pyproject.toml"
+            if pyproject.exists():
+                cfg = load_populate_config(pyproject)
+
+    # Apply config defaults where CLI flags were not provided
+    cli_platforms: list[str] = args.platforms
+    if not cli_platforms and not args.cibuildwheel and cfg.platforms:
+        cli_platforms = cfg.platforms
+    cli_python_versions: list[str] = args.python_versions
+    if not cli_python_versions and cfg.python_versions:
+        cli_python_versions = cfg.python_versions
+    cli_timeout: int = args.timeout
+    if args.timeout == 300 and cfg.timeout is not None:
+        cli_timeout = cfg.timeout
 
     try:
         result: PopulateResult = populate(
             header_paths=args.input_files,
             writers=args.writers or None,
-            platforms=args.platforms or None,
-            python_versions=args.python_versions or None,
+            platforms=cli_platforms or None,
+            python_versions=cli_python_versions or None,
             from_cibuildwheel=args.cibuildwheel,
             docker_image=args.docker_image,
             headerkit_version=args.headerkit_version,
@@ -329,7 +352,7 @@ def cache_populate_main(argv: list[str]) -> int:
             writer_options=writer_options,
             cache_dir=args.cache_dir,
             dry_run=args.dry_run,
-            timeout=args.timeout,
+            timeout=cli_timeout,
         )
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

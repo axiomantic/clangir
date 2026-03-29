@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from headerkit._config import _parse_toml
+from headerkit._config import _find_project_root, _parse_toml
 
 # ---------------------------------------------------------------------------
 # Platform constants
@@ -556,26 +556,6 @@ def build_docker_command(
 
 
 # ---------------------------------------------------------------------------
-# Project root detection
-# ---------------------------------------------------------------------------
-
-
-def _find_project_root(start: Path) -> Path:
-    """Find project root by walking up from start looking for .git.
-
-    Falls back to start itself if no .git marker is found.
-    """
-    current = start.resolve()
-    home = Path.home().resolve()
-    while True:
-        if (current / ".git").exists():
-            return current
-        if current == current.parent or current == home:
-            return start
-        current = current.parent
-
-
-# ---------------------------------------------------------------------------
 # Main populate() function
 # ---------------------------------------------------------------------------
 
@@ -649,6 +629,24 @@ def populate(
     else:
         resolved_cache_dir = project_root / ".hkcache"
 
+    # Load populate config from pyproject.toml for defaults
+    config_images: dict[str, str] | None = None
+    cfg = _empty_populate_config()
+    pyproject_for_config = project_root / "pyproject.toml"
+    if pyproject_for_config.exists():
+        cfg = load_populate_config(pyproject_for_config)
+        if cfg.images:
+            config_images = cfg.images
+
+    # Apply config defaults for platforms, python_versions, and timeout
+    # when the caller did not provide explicit values.
+    if platforms is None and not from_cibuildwheel and cfg.platforms:
+        platforms = cfg.platforms
+    if python_versions is None and cfg.python_versions:
+        python_versions = cfg.python_versions
+    if timeout == 300 and cfg.timeout is not None:
+        timeout = cfg.timeout
+
     # Resolve targets
     all_warnings: list[str] = []
 
@@ -667,14 +665,6 @@ def populate(
 
     if not effective_platforms:
         raise ValueError("Specify at least one --platform or use --cibuildwheel.")
-
-    # Load config images from pyproject.toml
-    config_images: dict[str, str] | None = None
-    pyproject_for_config = project_root / "pyproject.toml"
-    if pyproject_for_config.exists():
-        cfg = load_populate_config(pyproject_for_config)
-        if cfg.images:
-            config_images = cfg.images
 
     targets, build_warnings = build_targets(
         platforms=effective_platforms,
