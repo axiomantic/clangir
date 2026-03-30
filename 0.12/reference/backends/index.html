@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="C/C++ header parsing toolkit with IR, libclang backend, and CFFI writer">
+        <meta name="description" content="C/C++ header parsing toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more">
       
       
       
@@ -1937,6 +1937,10 @@ for name in list_backends():
     <div class="doc doc-contents first">
 
         <p>Check if a backend is available for use.</p>
+<p>For backends that require external libraries (e.g. libclang), this
+performs a real load test -- not just a registry lookup.  The result
+is <strong>not</strong> cached on failure so that a subsequent <code>auto_install()</code>
+can make the library appear.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -1985,7 +1989,8 @@ for name in list_backends():
             </td>
             <td>
               <div class="doc-md-description">
-                <p>True if the backend is registered and can be instantiated.</p>
+                <p>True if the backend is registered <strong>and</strong> its underlying
+library is loadable.</p>
               </div>
             </td>
           </tr>
