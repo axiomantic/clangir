@@ -83,6 +83,8 @@ class HeaderkitConfig:
     no_cache: bool = False
     no_ir_cache: bool = False
     no_output_cache: bool = False
+    # Target triple for cross-compilation
+    target: str | None = None
     # Resolved source path for error reporting
     source_path: Path | None = None
 
@@ -177,6 +179,13 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
     # plugins: optional list of strings
     if "plugins" in data:
         config.plugins = _require_str_list(data["plugins"], "plugins", source)
+
+    # target: optional string (target triple for cross-compilation)
+    if "target" in data:
+        val = data["target"]
+        if not isinstance(val, str):
+            raise ValueError(f"headerkit: config error in {source}: target must be str, got {type(val).__name__}")
+        config.target = val
 
     # cache settings: [cache] section
     if "cache" in data:
@@ -284,6 +293,10 @@ def merge_config(config: HeaderkitConfig | None, args: argparse.Namespace) -> ar
     # backend: use config value only when CLI did not set one
     if getattr(args, "backend", None) is None and config.backend is not None:
         args.backend = config.backend
+
+    # target: use config value only when CLI did not set one
+    if getattr(args, "target", None) is None and config.target is not None:
+        args.target = config.target
 
     # include_dirs: prepend config dirs (config provides defaults; CLI adds more)
     cli_include_dirs: list[str] = list(getattr(args, "include_dirs", None) or [])

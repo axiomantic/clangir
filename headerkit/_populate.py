@@ -3,8 +3,8 @@
 Provides the ``populate()`` function and supporting data types for
 generating cache entries across Docker-emulated target platforms.
 Each (platform, python_version, writer) combination runs headerkit
-inside a Docker container that matches the target's sys.platform,
-platform.machine(), and Python implementation.
+inside a Docker container that matches the target triple for the
+emulated architecture.
 """
 
 from __future__ import annotations
@@ -28,11 +28,11 @@ DEFAULT_IMAGES: dict[str, str] = {
     "linux/386": "quay.io/pypa/manylinux_2_28_i686",
 }
 
-PLATFORM_MAP: dict[str, tuple[str, str]] = {
-    "linux/amd64": ("linux", "x86_64"),
-    "linux/arm64": ("linux", "aarch64"),
-    "linux/386": ("linux", "i686"),
-    "linux/arm/v7": ("linux", "armv7l"),
+PLATFORM_MAP: dict[str, str] = {
+    "linux/amd64": "x86_64-unknown-linux-gnu",
+    "linux/arm64": "aarch64-unknown-linux-gnu",
+    "linux/386": "i686-unknown-linux-gnu",
+    "linux/arm/v7": "armv7-unknown-linux-gnueabihf",
 }
 
 DEFAULT_PYTHON_VERSIONS: list[str] = ["3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -63,17 +63,6 @@ def python_path_for_version(version: str) -> str:
     return f"/opt/python/{tag}-{tag}/bin/python"
 
 
-def py_impl_for_version(version: str) -> str:
-    """Return the cache-key-compatible Python implementation string.
-
-    :param version: Version string like "3.12".
-    :returns: String like "cpython312".
-    :raises ValueError: If version is not in MAJOR.MINOR format.
-    """
-    major, minor = _parse_version(version)
-    return f"cpython{major}{minor}"
-
-
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -87,9 +76,7 @@ class PopulateTarget:
     python_version: str
     docker_image: str
     python_path: str
-    sys_platform: str = ""
-    machine: str = ""
-    py_impl: str = ""
+    target_triple: str = ""
 
 
 @dataclass
@@ -187,10 +174,9 @@ def build_targets(
         # Resolve platform mapping
         if plat not in PLATFORM_MAP:
             warnings.append(f"Unknown platform '{plat}'; attempting to use it with Docker --platform.")
-            sys_platform = "linux"
-            machine = plat.split("/")[-1]
+            target_triple = f"{plat.split('/')[-1]}-unknown-linux-gnu"
         else:
-            sys_platform, machine = PLATFORM_MAP[plat]
+            target_triple = PLATFORM_MAP[plat]
 
         # Resolve Docker image
         image: str | None = None
@@ -214,9 +200,7 @@ def build_targets(
                     python_version=ver,
                     docker_image=image,
                     python_path=python_path_for_version(ver),
-                    sys_platform=sys_platform,
-                    machine=machine,
-                    py_impl=py_impl_for_version(ver),
+                    target_triple=target_triple,
                 )
             )
 
@@ -546,6 +530,7 @@ def build_docker_command(
                 else:
                     hk_cmd_parts.extend(["--writer-opt", shlex.quote(f"{w_name}:{key}={value}")])
     hk_cmd_parts.extend(["--backend", shlex.quote(backend_name)])
+    hk_cmd_parts.extend(["--target", shlex.quote(target.target_triple)])
     hk_cmd_parts.extend(["--cache-dir", shlex.quote(cache_posix)])
     script_parts.append(" ".join(hk_cmd_parts))
 

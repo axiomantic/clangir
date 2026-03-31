@@ -171,6 +171,7 @@ def _get_ir(
     resolved_cache_dir: Path | None,
     use_ir_cache: bool,
     project_prefixes: tuple[str, ...] | None,
+    target: str,
 ) -> tuple[Header, str, str, bool]:
     """Resolve IR from cache or by parsing with the backend.
 
@@ -182,6 +183,7 @@ def _get_ir(
         project_root=project_root,
         parsed_args=parsed_args,
         code=code,
+        target=target,
     )
 
     ir_slug = build_slug(
@@ -190,6 +192,7 @@ def _get_ir(
         defines=parsed_args.defines,
         includes=parsed_args.includes,
         other_args=parsed_args.other_args,
+        target=target,
     )
 
     header: Header | None = None
@@ -209,7 +212,7 @@ def _get_ir(
     if header is None:
         backend = get_backend(backend_name)
         parse_code = code if code is not None else header_path.read_text(encoding="utf-8")
-        all_args: list[str] = []
+        all_args: list[str] = ["-target", target]
         for d in parsed_args.defines:
             all_args.append(f"-D{d}")
         for inc in parsed_args.includes:
@@ -236,6 +239,7 @@ def _get_ir(
                     defines=parsed_args.defines,
                     includes=parsed_args.includes,
                     other_args=parsed_args.other_args,
+                    target=target,
                 )
             except OSError as exc:
                 logger.warning("Failed to write IR cache entry: %s", exc)
@@ -374,6 +378,7 @@ def _try_output_cache_fallback(
     writer_name: str,
     writer_options: dict[str, object],
     code: str | None,
+    target: str,
 ) -> str | None:
     """Try to serve from the output cache without needing a backend.
 
@@ -386,6 +391,7 @@ def _try_output_cache_fallback(
         project_root=project_root,
         parsed_args=parsed_args,
         code=code,
+        target=target,
     )
 
     _writer_inst, output_cache_key, output_ext = _compute_output_cache_info(
@@ -418,6 +424,7 @@ def generate(
     no_output_cache: bool = False,
     project_prefixes: tuple[str, ...] | None = None,
     auto_install_libclang: bool | None = None,
+    target: str | None = None,
     _result_meta: dict[str, object] | None = None,
 ) -> str:
     """Parse a C/C++ header and generate output using a single writer.
@@ -445,6 +452,9 @@ def generate(
         automatic libclang installation. When None, falls back to the
         ``HEADERKIT_AUTO_INSTALL_LIBCLANG`` env var, then pyproject.toml
         config, then defaults to False.
+    :param target: Target triple for cross-compilation (e.g.,
+        ``"aarch64-apple-darwin"``). When ``None``, auto-detects the host
+        triple.
     :returns: Generated output string.
     :raises FileNotFoundError: If header_path does not exist and code is not provided.
     """
@@ -466,6 +476,11 @@ def generate(
 
     parsed_args = parse_extra_args(extra_args, include_dirs, defines)
     project_root = _find_project_root(header_path.parent)
+
+    from headerkit._target import resolve_target
+
+    resolved_target = resolve_target(target=target, project_root=project_root)
+
     use_ir_cache = not no_cache and not no_ir_cache and resolved_cache_dir is not None
     use_output_cache = not no_cache and not no_output_cache and resolved_cache_dir is not None
 
@@ -479,6 +494,7 @@ def generate(
             resolved_cache_dir=resolved_cache_dir,
             use_ir_cache=use_ir_cache,
             project_prefixes=project_prefixes,
+            target=resolved_target,
         )
 
     # For libclang, check availability before parsing to enable the
@@ -497,6 +513,7 @@ def generate(
                 writer_name=writer_name,
                 writer_options=writer_options,
                 code=code,
+                target=resolved_target,
             )
             if cached_output is not None:
                 if output_path is not None:
@@ -557,6 +574,7 @@ def generate_all(
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
     auto_install_libclang: bool | None = None,
+    target: str | None = None,
 ) -> list[GenerateResult]:
     """Parse a C/C++ header and generate output for multiple writers.
 
@@ -578,6 +596,8 @@ def generate_all(
     :param no_output_cache: Disable output cache only.
     :param auto_install_libclang: Explicitly enable (True) or disable (False)
         automatic libclang installation. Passed through to ``generate()``.
+    :param target: Target triple for cross-compilation. Passed through
+        to ``generate()``.
     :returns: List of GenerateResult, one per writer.
     :raises FileNotFoundError: If header_path does not exist.
     """
@@ -609,6 +629,7 @@ def generate_all(
             no_ir_cache=no_ir_cache,
             no_output_cache=no_output_cache,
             auto_install_libclang=auto_install_libclang,
+            target=target,
             _result_meta=meta,
         )
 

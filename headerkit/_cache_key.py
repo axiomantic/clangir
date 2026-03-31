@@ -1,7 +1,7 @@
 """Cache key computation for headerkit's two-layer cache.
 
-IR cache key: SHA-256 of (ir_schema_version, backend, platform, arch,
-python, header content, defines, includes, other_args).
+IR cache key: SHA-256 of (ir_schema_version, backend, target,
+header content, defines, includes, other_args).
 
 Output cache key: SHA-256 of (ir_cache_key, writer_name, writer_options,
 writer_cache_version).
@@ -11,14 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import platform as platform_mod
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 # Bump when IR dataclass structure changes in a way that invalidates
 # cached JSON. This is NOT the headerkit version.
-_IR_SCHEMA_VERSION = "1"
+_IR_SCHEMA_VERSION = "2"
 
 
 @dataclass
@@ -96,6 +94,7 @@ def _relative_header_path(header_path: Path, project_root: Path) -> str:
 def compute_ir_cache_key(
     *,
     backend_name: str,
+    target: str,
     header_path: Path,
     project_root: Path,
     parsed_args: ParsedArgs,
@@ -104,6 +103,7 @@ def compute_ir_cache_key(
     """Compute SHA-256 cache key for IR layer.
 
     :param backend_name: Parser backend name.
+    :param target: Normalized LLVM target triple.
     :param header_path: Path to the C/C++ header file.
     :param project_root: Project root directory (contains .hkcache/ or is git root).
     :param parsed_args: Structured representation of extra_args.
@@ -114,11 +114,7 @@ def compute_ir_cache_key(
 
     hasher.update(f"ir-schema:{_IR_SCHEMA_VERSION}\0".encode())
     hasher.update(f"backend:{backend_name}\0".encode())
-    hasher.update(f"platform:{sys.platform}\0".encode())
-    hasher.update(f"arch:{platform_mod.machine()}\0".encode())
-
-    py_impl = f"{sys.implementation.name}{sys.version_info.major}{sys.version_info.minor}"
-    hasher.update(f"python:{py_impl}\0".encode())
+    hasher.update(f"target:{target}\0".encode())
 
     # Header content -- use path relative to project root for portability
     content = code if code is not None else header_path.read_text(encoding="utf-8")

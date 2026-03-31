@@ -374,10 +374,10 @@ def _print_dry_run(result: PopulateResult) -> None:
     """Print dry-run output showing planned targets."""
     print("\nPlanned cache population (dry run):\n")
     for i, target in enumerate(result.planned, 1):
-        print(f"  Target {i}: {target.docker_platform} + {target.py_impl}")
+        print(f"  Target {i}: {target.docker_platform} ({target.target_triple})")
         print(f"    Image: {target.docker_image}")
         print(f"    Python: {target.python_path}")
-        print(f"    Cache key fields: platform={target.sys_platform}, arch={target.machine}, python={target.py_impl}")
+        print(f"    Target triple: {target.target_triple}")
         print()
 
     total = len(result.planned)
@@ -397,4 +397,6 @@ def _print_results(result: PopulateResult) -> None:
         print("\nFailures:")
         for entry in result.entries:
             if not entry.success and not entry.skipped:
-                print(f"  {entry.target.docker_platform} + {entry.target.py_impl} [{entry.writer_name}]: {entry.error}")
+                print(
+                    f"  {entry.target.docker_platform} ({entry.target.target_triple}) [{entry.writer_name}]: {entry.error}"
+                )
