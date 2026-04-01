@@ -230,7 +230,7 @@ def detect_process_triple() -> str:
                 parts = triple.split("-")
                 parts[0] = _correct_arch_for_pointer_width(parts[0])
                 return "-".join(parts)
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, ValueError):
         pass
 
     # 5. Construct from Python platform info
