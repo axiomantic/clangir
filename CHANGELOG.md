@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-01
+
+### Added
+
+- Target triple support for cross-compilation: `generate(target="aarch64-apple-darwin")`
+- `detect_host_triple()` and `resolve_target()` public API functions
+- `--target` CLI flag for specifying target triple
+- `HEADERKIT_TARGET` environment variable for target triple configuration
+- `[tool.headerkit] target` config key in pyproject.toml
+- Target triple included in cache directory slugs for readability
+- `normalize_triple()` inserts `unknown` vendor for 3-component triples (e.g., `x86_64-linux-gnu` -> `x86_64-unknown-linux-gnu`)
+
+### Changed
+
+- **Breaking:** Cache keys now use LLVM target triple instead of `sys.platform` + `platform.machine()` + Python version. Existing `.hkcache/` entries will be regenerated on first use (IR schema version bumped to 2).
+- **Breaking:** `compute_ir_cache_key()` requires `target` parameter instead of reading platform/arch at runtime
+- **Breaking:** `PopulateTarget` uses `target_triple` field instead of `sys_platform`, `machine`, `py_impl`
+- **Breaking:** `PLATFORM_MAP` values are target triple strings instead of `(platform, machine)` tuples
+- **Breaking:** Removed `py_impl_for_version()` from `_populate` module
+- Python version removed from IR cache key (IR represents parsed C declarations, not Python-specific output)
+- `-target` flag automatically passed to libclang for correct cross-platform parsing
+- Bump `bigfoot` test dependency minimum to 0.19
+
+### Fixed
+
+- Add positional-only parameter markers to vendored clang binding stubs (v18-v21) to fix stubtest failures
+
 ## [0.12.5] - 2026-03-29
 
 ### Fixed

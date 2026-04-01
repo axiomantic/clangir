@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from headerkit._cache_key import _IR_SCHEMA_VERSION
 from headerkit._cache_store import (
     find_cache_dir,
     read_ir_entry,
@@ -56,6 +57,7 @@ class TestWriteReadIrEntry:
             header=header,
             backend_name="libclang",
             header_path="/path/to/test.h",
+            target="x86_64-pc-linux-gnu",
             defines=["FOO"],
             includes=["/usr/include"],
             other_args=["-std=c11"],
@@ -86,6 +88,7 @@ class TestWriteReadIrEntry:
             header=header,
             backend_name="libclang",
             header_path="/path/to/test.h",
+            target="x86_64-pc-linux-gnu",
             defines=[],
             includes=[],
             other_args=[],
@@ -107,7 +110,7 @@ class TestWriteReadIrEntry:
         (cache_dir / "ir" / "libclang.bad").mkdir(parents=True)
         (cache_dir / "ir" / "libclang.bad" / "ir.json").write_text("not json")
         (cache_dir / "ir" / "libclang.bad" / "metadata.json").write_text(
-            json.dumps({"ir_schema_version": "1", "cache_key": "x", "created": "t"})
+            json.dumps({"ir_schema_version": _IR_SCHEMA_VERSION, "cache_key": "x", "created": "t"})
         )
 
         result = read_ir_entry(cache_dir=cache_dir, slug="libclang.bad")

@@ -28,12 +28,10 @@ class TestPopulateTarget:
         assert target.python_version == "3.12"
         assert target.docker_image == "quay.io/pypa/manylinux_2_28_x86_64"
         assert target.python_path == "/opt/python/cp312-cp312/bin/python"
-        assert target.sys_platform == ""
-        assert target.machine == ""
-        assert target.py_impl == ""
+        assert target.target_triple == ""
 
-    def test_target_with_computed_fields(self) -> None:
-        """PopulateTarget computed fields can be set."""
+    def test_target_with_target_triple(self) -> None:
+        """PopulateTarget target_triple field can be set."""
         from headerkit._populate import PopulateTarget
 
         target = PopulateTarget(
@@ -41,13 +39,9 @@ class TestPopulateTarget:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
-        assert target.sys_platform == "linux"
-        assert target.machine == "x86_64"
-        assert target.py_impl == "cpython312"
+        assert target.target_triple == "x86_64-unknown-linux-gnu"
 
 
 class TestPopulateEntryResult:
@@ -167,14 +161,14 @@ class TestPlatformConstants:
         }
 
     def test_platform_mapping(self) -> None:
-        """PLATFORM_MAP maps docker platforms to (sys_platform, machine)."""
+        """PLATFORM_MAP maps docker platforms to target triples."""
         from headerkit._populate import PLATFORM_MAP
 
         assert PLATFORM_MAP == {
-            "linux/amd64": ("linux", "x86_64"),
-            "linux/arm64": ("linux", "aarch64"),
-            "linux/386": ("linux", "i686"),
-            "linux/arm/v7": ("linux", "armv7l"),
+            "linux/amd64": "x86_64-unknown-linux-gnu",
+            "linux/arm64": "aarch64-unknown-linux-gnu",
+            "linux/386": "i686-unknown-linux-gnu",
+            "linux/arm/v7": "armv7-unknown-linux-gnueabihf",
         }
 
     def test_default_python_versions(self) -> None:
@@ -190,13 +184,6 @@ class TestPlatformConstants:
         assert python_path_for_version("3.12") == "/opt/python/cp312-cp312/bin/python"
         assert python_path_for_version("3.10") == "/opt/python/cp310-cp310/bin/python"
         assert python_path_for_version("3.14") == "/opt/python/cp314-cp314/bin/python"
-
-    def test_py_impl_for_version(self) -> None:
-        """py_impl_for_version returns cache-key-compatible string."""
-        from headerkit._populate import py_impl_for_version
-
-        assert py_impl_for_version("3.12") == "cpython312"
-        assert py_impl_for_version("3.10") == "cpython310"
 
 
 class TestBuildTargets:
@@ -264,7 +251,7 @@ class TestBuildTargets:
         assert targets[0].docker_image == "cli-override:latest"
 
     def test_target_computed_fields_populated(self) -> None:
-        """Targets have sys_platform, machine, and py_impl populated."""
+        """Targets have target_triple populated."""
         from headerkit._populate import build_targets
 
         targets, _ = build_targets(
@@ -272,9 +259,7 @@ class TestBuildTargets:
             python_versions=["3.12"],
         )
         t = targets[0]
-        assert t.sys_platform == "linux"
-        assert t.machine == "x86_64"
-        assert t.py_impl == "cpython312"
+        assert t.target_triple == "x86_64-unknown-linux-gnu"
         assert t.python_path == "/opt/python/cp312-cp312/bin/python"
 
     def test_macos_platform_warns_and_skips(self) -> None:
@@ -321,7 +306,7 @@ class TestBuildTargets:
         )
         assert len(targets) == 1
         assert targets[0].docker_platform == "linux/arm/v7"
-        assert targets[0].machine == "armv7l"
+        assert targets[0].target_triple == "armv7-unknown-linux-gnueabihf"
 
     def test_pypy_version_rejected(self) -> None:
         """PyPy version strings are rejected with an error."""
@@ -506,9 +491,7 @@ class TestDockerHelpers:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
         cmd = build_docker_command(
             target=target,
@@ -550,9 +533,7 @@ class TestDockerHelpers:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
         cmd = build_docker_command(
             target=target,
@@ -581,9 +562,7 @@ class TestDockerHelpers:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
         cmd = build_docker_command(
             target=target,
@@ -616,9 +595,7 @@ class TestDockerHelpers:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
         malicious_path = '/tmp/evil"; rm -rf ~'
         cmd = build_docker_command(
@@ -657,9 +634,7 @@ class TestDockerHelpers:
             python_version="3.12",
             docker_image="quay.io/pypa/manylinux_2_28_x86_64",
             python_path="/opt/python/cp312-cp312/bin/python",
-            sys_platform="linux",
-            machine="x86_64",
-            py_impl="cpython312",
+            target_triple="x86_64-unknown-linux-gnu",
         )
         cmd = build_docker_command(
             target=target,
@@ -1126,20 +1101,6 @@ class TestVersionValidation:
         with pytest.raises(ValueError, match="Expected MAJOR.MINOR"):
             python_path_for_version("312")
 
-    def test_py_impl_rejects_full_version(self) -> None:
-        """py_impl_for_version rejects '3.12.1'."""
-        from headerkit._populate import py_impl_for_version
-
-        with pytest.raises(ValueError, match="Expected MAJOR.MINOR"):
-            py_impl_for_version("3.12.1")
-
-    def test_py_impl_rejects_single_component(self) -> None:
-        """py_impl_for_version rejects '312'."""
-        from headerkit._populate import py_impl_for_version
-
-        with pytest.raises(ValueError, match="Expected MAJOR.MINOR"):
-            py_impl_for_version("312")
-
 
 class TestBuildSelectorPlatformFiltering:
     """Tests for cibuildwheel build selector platform filtering."""
@@ -1222,7 +1183,7 @@ class TestCachePopulateCli:
         captured = capsys.readouterr()
         assert "Planned cache population" in captured.out
         assert "linux/amd64" in captured.out
-        assert "cpython312" in captured.out
+        assert "x86_64-unknown-linux-gnu" in captured.out
 
     def test_no_platform_or_cibuildwheel_error(
         self,

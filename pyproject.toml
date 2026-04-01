@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "headerkit"
-version = "0.12.5"
+version = "0.13.0"
 description = "C/C++ header analysis toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more"
 readme = "README.md"
 license = "MIT AND Apache-2.0 WITH LLVM-exception"
@@ -46,7 +46,7 @@ Documentation = "https://axiomantic.github.io/headerkit/"
 headerkit = "headerkit._cli:main"
 
 [project.optional-dependencies]
-test = ["pytest>=9,<10", "pytest-timeout>=2,<3", "bigfoot>=0.17,<1", "dirty-equals>=0.11,<1"]
+test = ["pytest>=9,<10", "pytest-timeout>=2,<3", "bigfoot>=0.19,<1", "dirty-equals>=0.11,<1"]
 lint = ["ruff>=0.14,<1", "mypy>=1,<2"]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10", "mkdocstrings[python]>=0.27,<2", "mike>=2.1,<3"]
 dev = ["headerkit[test,lint,docs]"]

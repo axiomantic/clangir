@@ -75,8 +75,12 @@ class TestComputeIrCacheKey:
         h = tmp_path / "test.h"
         h.write_text("int x;")
         pa = ParsedArgs(defines=[], includes=[], other_args=[])
-        k1 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa)
-        k2 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa)
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
         assert k1 == k2
 
     def test_different_content_different_key(self, tmp_path: Path) -> None:
@@ -85,8 +89,12 @@ class TestComputeIrCacheKey:
         h2 = tmp_path / "b.h"
         h2.write_text("int y;")
         pa = ParsedArgs(defines=[], includes=[], other_args=[])
-        k1 = compute_ir_cache_key(backend_name="libclang", header_path=h1, project_root=tmp_path, parsed_args=pa)
-        k2 = compute_ir_cache_key(backend_name="libclang", header_path=h2, project_root=tmp_path, parsed_args=pa)
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h1, project_root=tmp_path, parsed_args=pa
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h2, project_root=tmp_path, parsed_args=pa
+        )
         assert k1 != k2
 
     def test_different_defines_different_key(self, tmp_path: Path) -> None:
@@ -94,16 +102,37 @@ class TestComputeIrCacheKey:
         h.write_text("int x;")
         pa1 = ParsedArgs(defines=["FOO"], includes=[], other_args=[])
         pa2 = ParsedArgs(defines=["BAR"], includes=[], other_args=[])
-        k1 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa1)
-        k2 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa2)
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa1
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa2
+        )
         assert k1 != k2
 
     def test_different_backend_different_key(self, tmp_path: Path) -> None:
         h = tmp_path / "test.h"
         h.write_text("int x;")
         pa = ParsedArgs(defines=[], includes=[], other_args=[])
-        k1 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa)
-        k2 = compute_ir_cache_key(backend_name="other", header_path=h, project_root=tmp_path, parsed_args=pa)
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="other", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
+        assert k1 != k2
+
+    def test_different_target_different_key(self, tmp_path: Path) -> None:
+        """Different target triples produce different cache keys."""
+        h = tmp_path / "test.h"
+        h.write_text("int x;")
+        pa = ParsedArgs(defines=[], includes=[], other_args=[])
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="libclang", target="aarch64-apple-darwin", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
         assert k1 != k2
 
     def test_order_independent(self, tmp_path: Path) -> None:
@@ -112,15 +141,21 @@ class TestComputeIrCacheKey:
         pa1 = ParsedArgs(defines=["A", "B"], includes=[], other_args=[])
         pa2 = ParsedArgs(defines=["B", "A"], includes=[], other_args=[])
         # Both should be sorted internally
-        k1 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa1)
-        k2 = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa2)
+        k1 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa1
+        )
+        k2 = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa2
+        )
         assert k1 == k2
 
     def test_returns_hex_string(self, tmp_path: Path) -> None:
         h = tmp_path / "test.h"
         h.write_text("int x;")
         pa = ParsedArgs(defines=[], includes=[], other_args=[])
-        k = compute_ir_cache_key(backend_name="libclang", header_path=h, project_root=tmp_path, parsed_args=pa)
+        k = compute_ir_cache_key(
+            backend_name="libclang", target="x86_64-pc-linux-gnu", header_path=h, project_root=tmp_path, parsed_args=pa
+        )
         assert isinstance(k, str)
         assert len(k) == 64  # SHA-256 hex
         int(k, 16)  # must be valid hex

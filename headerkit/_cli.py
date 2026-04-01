@@ -168,6 +168,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cache directory (default: .hkcache/ in project root)",
     )
     parser.add_argument(
+        "--target",
+        dest="target",
+        metavar="TRIPLE",
+        default=None,
+        help=(
+            "Target triple for cross-compilation "
+            "(e.g., aarch64-apple-darwin). "
+            "Default: auto-detect host. "
+            "Env: HEADERKIT_TARGET"
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {importlib.metadata.version('headerkit')}",
@@ -473,6 +485,7 @@ def main() -> int:
                 no_ir_cache=resolved_no_ir_cache,
                 no_output_cache=resolved_no_output_cache,
                 project_prefixes=project_prefixes or None,
+                target=args.target,
             )
         except (ValueError, TypeError, RuntimeError, FileNotFoundError) as exc:
             print(f"Error: {exc}", file=sys.stderr)

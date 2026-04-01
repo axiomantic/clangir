@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
+from headerkit._target import short_target
+
 _MAX_SLUG_LENGTH = 120
 _COLLISION_BUDGET = 4  # Reserve for "-NNN" suffix
 
@@ -27,6 +29,7 @@ def build_slug(
     defines: list[str],
     includes: list[str],
     other_args: list[str],
+    target: str = "",
 ) -> str:
     """Build a human-readable slug for a cache entry.
 
@@ -35,6 +38,7 @@ def build_slug(
     :param defines: Sorted -D values (without the -D prefix).
     :param includes: Sorted -I values (without the -I prefix).
     :param other_args: Sorted remaining extra_args.
+    :param target: Normalized LLVM target triple (optional).
     :returns: Slug string suitable for use as a directory name.
     """
     # Backend: lowercased, sanitized
@@ -45,6 +49,9 @@ def build_slug(
     header_part = _sanitize(stem.lower())
 
     components = [backend_part, header_part]
+
+    if target:
+        components.append(short_target(target))
 
     # Build variable groups (sanitize each value for filename safety)
     groups: list[tuple[str, list[str]]] = []
