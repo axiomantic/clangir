@@ -97,6 +97,30 @@ defines = ["VERSION=2", "UTILS_ONLY"]
 cache_dir = ".hkcache"
 ```
 
+### Cross-compilation example
+
+To target a specific architecture explicitly:
+
+```toml
+[build-system]
+requires = ["headerkit", "hatchling"]
+build-backend = "headerkit.build_backend"
+
+[project]
+name = "mylib-bindings"
+version = "1.0.0"
+requires-python = ">=3.10"
+
+[tool.headerkit]
+backend = "libclang"
+writers = ["cffi"]
+target = "aarch64-unknown-linux-gnu"
+
+[tool.headerkit.headers."include/mylib.h"]
+defines = ["VERSION=2"]
+include_dirs = ["/usr/local/include"]
+```
+
 ## How it works
 
 When pip or build invokes `build_wheel()` or `build_sdist()`:
@@ -111,6 +135,31 @@ When pip or build invokes `build_wheel()` or `build_sdist()`:
 5. After generation completes, the inner backend (hatchling by default)
    runs its normal `build_wheel()` or `build_sdist()`, packaging the
    generated files into the distribution.
+
+## Cross-compilation
+
+By default, headerkit auto-detects the target architecture from the build
+environment. It respects `_PYTHON_HOST_PLATFORM`, `ARCHFLAGS`, and other
+cross-compilation signals set by tools like cibuildwheel.
+
+For explicit cross-compilation, set `target` in `[tool.headerkit]`:
+
+```toml
+[tool.headerkit]
+backend = "libclang"
+writers = ["cffi"]
+target = "aarch64-unknown-linux-gnu"
+```
+
+Or set the `HEADERKIT_TARGET` environment variable in CI:
+
+```bash
+HEADERKIT_TARGET=aarch64-unknown-linux-gnu pip install .
+```
+
+When using cibuildwheel, auto-detection usually works without any extra
+configuration. cibuildwheel sets `_PYTHON_HOST_PLATFORM` for each target
+architecture, and headerkit picks it up automatically.
 
 ## Configuration reference
 
@@ -129,6 +178,7 @@ When pip or build invokes `build_wheel()` or `build_sdist()`:
 | `writers` | list of strings | all registered | Writers to run for each header |
 | `include_dirs` | list of strings | `[]` | Global include directories applied to all headers |
 | `defines` | list of strings | `[]` | Global preprocessor defines applied to all headers |
+| `target` | string | auto-detect | LLVM target triple for cross-compilation (e.g., `aarch64-unknown-linux-gnu`) |
 
 ### `[tool.headerkit.headers."path/to/header.h"]` keys
 
@@ -156,6 +206,7 @@ Pass these via `pip install --config-settings` or `python -m build -C`:
 | `no-cache` | Set to `"true"` to disable all caching for this build |
 | `no-ir-cache` | Set to `"true"` to disable IR cache for this build |
 | `no-output-cache` | Set to `"true"` to disable output cache for this build |
+| `target` | Override target triple for this build (e.g., `aarch64-unknown-linux-gnu`) |
 
 Example:
 

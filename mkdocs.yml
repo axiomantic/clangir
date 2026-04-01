@@ -76,6 +76,7 @@ nav:
     - Quick Start: guides/quickstart.md
   - Guides:
     - Architecture Overview: guides/architecture.md
+    - Target Triples: design/target-triples.md
     - Cache System: guides/cache.md
     - Build Backend: guides/build-backend.md
     - Using CFFI Writer: guides/cffi.md

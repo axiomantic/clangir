@@ -37,33 +37,37 @@ The cache uses content-addressed storage with human-readable directory names.
 .hkcache/
   ir/
     index.json                          # slug -> cache_key mapping
-    libclang.mylib/                     # one dir per unique parse
+    libclang.mylib.x86_64-linux/        # one dir per unique parse (includes target)
       ir.json                           # serialized Header IR
       metadata.json                     # cache key, backend, args, timestamp
-    libclang.mylib.d.DEBUG/             # different defines = different entry
+    libclang.mylib.x86_64-linux.d.DEBUG/ # different defines = different entry
+      ir.json
+      metadata.json
+    libclang.mylib.aarch64-linux/       # different target = different entry
       ir.json
       metadata.json
   output/
     cffi/
       index.json
-      libclang.mylib/
+      libclang.mylib.x86_64-linux/
         output.py                       # generated cffi output
         metadata.json
     ctypes/
       index.json
-      libclang.mylib/
+      libclang.mylib.x86_64-linux/
         output.py
         metadata.json
     json/
       index.json
-      libclang.mylib/
+      libclang.mylib.x86_64-linux/
         output.json
         metadata.json
 ```
 
-Slug names are derived from the backend name and header filename. Defines
-and include dirs are encoded into the slug (e.g., `.d.DEBUG`, `.i.include`).
-When a slug collides, a numeric suffix is appended (e.g., `libclang.mylib-2`).
+Slug names are derived from the backend name, header filename, and target
+triple (in short `arch-os` form). Defines and include dirs are also encoded
+into the slug (e.g., `.d.DEBUG`, `.i.include`). When a slug collides, a
+numeric suffix is appended (e.g., `libclang.mylib.x86_64-linux-2`).
 
 ## Using the cache
 
@@ -96,6 +100,13 @@ output = generate(
     include_dirs=["/usr/local/include"],
     defines=["VERSION=2", "DEBUG"],
     writer_options={"exclude_patterns": "^__"},
+)
+
+# Cross-compile: generate ARM64 Linux bindings on any host
+output = generate(
+    "include/mylib.h",
+    "cffi",
+    target="aarch64-unknown-linux-gnu",
 )
 ```
 
@@ -255,11 +266,18 @@ If the diff is non-empty, the cache is stale and needs to be regenerated.
 
 ## Multi-platform cache population
 
-Cache keys include the target platform (sys.platform, platform.machine())
-and Python version because libclang preprocessor output can differ across
-platforms. For example, a header with `#ifdef __linux__` branches produces
-different IR on Linux vs macOS. This means a cache generated on macOS only
-serves macOS builds.
+Cache keys include the LLVM target triple (e.g., `x86_64-pc-linux-gnu`,
+`aarch64-apple-darwin`) because libclang preprocessor output can differ
+across platforms. For example, a header with `#ifdef __linux__` branches
+produces different IR on Linux vs macOS. Python version is not part of the
+IR cache key because C preprocessing is Python-version-independent.
+
+headerkit auto-detects the target triple from the running Python process
+via `detect_process_triple()`, which respects cross-compilation signals
+such as the `_PYTHON_HOST_PLATFORM` environment variable. You can also
+set the target explicitly using `--target TRIPLE` (CLI flag), the `target`
+key in `[tool.headerkit]` config, or the `HEADERKIT_TARGET` environment
+variable. This allows cross-compilation without Docker.
 
 Projects using cibuildwheel or building for multiple platforms need cache
 entries for every target. The `cache populate` command solves this by running
@@ -272,7 +290,8 @@ headerkit inside Docker containers that match each target platform.
 headerkit cache populate mylib.h -w cffi \
     --platform linux/amd64 --platform linux/arm64
 
-# Populate for specific Python versions
+# Populate for specific Python versions (selects which Python
+# runs headerkit inside the Docker container)
 headerkit cache populate mylib.h -w cffi \
     --platform linux/amd64 \
     --python 3.12 --python 3.13
@@ -280,7 +299,16 @@ headerkit cache populate mylib.h -w cffi \
 # Preview what would be generated (no Docker required)
 headerkit cache populate mylib.h -w cffi \
     --platform linux/amd64 --platform linux/arm64 --dry-run
+
+# Use --target for direct target triple specification (no Docker)
+headerkit mylib.h -w cffi --target x86_64-unknown-linux-gnu
 ```
+
+The `--platform` flag uses Docker platform format, which headerkit maps to
+LLVM target triples internally (e.g., `linux/amd64` maps to
+`x86_64-unknown-linux-gnu`, `linux/arm64` maps to
+`aarch64-unknown-linux-gnu`). For direct control without Docker, use
+`--target` with a full LLVM target triple instead.
 
 ### Auto-detect from cibuildwheel
 
