@@ -72,7 +72,7 @@ class TestCorrectArchForPointerWidth:
 
     def test_32bit_downgrades_aarch64(self) -> None:
         with patch("headerkit._target._process_pointer_bits", return_value=32):
-            assert _correct_arch_for_pointer_width("aarch64") == "armv7l"
+            assert _correct_arch_for_pointer_width("aarch64") == "armv7"
 
     def test_64bit_keeps_x86_64(self) -> None:
         with patch("headerkit._target._process_pointer_bits", return_value=64):

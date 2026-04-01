@@ -37,7 +37,7 @@ _ARCH_ALIASES: dict[str, str] = {
 # 64-bit arch to 32-bit arch mapping for pointer-width correction
 _ARCH_64_TO_32: dict[str, str] = {
     "x86_64": "i686",
-    "aarch64": "armv7l",
+    "aarch64": "armv7",
     "ppc64le": "ppc",
     "s390x": "s390",
     "riscv64": "riscv32",
@@ -123,7 +123,7 @@ def _parse_vscmd_tgt_arch() -> str | None:
     vs_arch_map: dict[str, str] = {
         "x86": "i686",
         "x64": "x86_64",
-        "arm": "armv7l",
+        "arm": "armv7",
         "arm64": "aarch64",
     }
     return vs_arch_map.get(vs_arch.lower())
