@@ -3,7 +3,7 @@
 from headerkit._generate import GenerateResult, generate, generate_all
 from headerkit._ir_json import json_to_header
 from headerkit._populate import PopulateResult, PopulateTarget, populate
-from headerkit._target import detect_host_triple, resolve_target
+from headerkit._target import detect_process_triple, resolve_target
 from headerkit.backends import (
     LibclangUnavailableError,
     get_backend,
@@ -95,6 +95,6 @@ __all__ = [
     # Install API
     "auto_install",
     # Target detection API
-    "detect_host_triple",
+    "detect_process_triple",
     "resolve_target",
 ]

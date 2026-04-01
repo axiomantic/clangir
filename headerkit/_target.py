@@ -1,16 +1,28 @@
 """Target triple detection and resolution for headerkit.
 
-Provides functions to detect the host platform's LLVM target triple,
+Provides functions to detect the current process's LLVM target triple,
 normalize user-provided triples, and resolve the effective target
 using the standard headerkit config precedence.
+
+The detection integrates with Python cross-compilation signals:
+
+- ``_PYTHON_HOST_PLATFORM`` (set by CPython cross-builds, crossenv,
+  cibuildwheel)
+- ``ARCHFLAGS`` (set by macOS build tools, cibuildwheel)
+- ``VSCMD_ARG_TGT_ARCH`` (set by Visual Studio on Windows)
+- ``struct.calcsize("P")`` to detect the process pointer width
+  (handles 32-bit Python on 64-bit host)
 """
 
 from __future__ import annotations
 
 import os
 import platform as platform_mod
+import re
+import struct
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 # Arch aliases: normalize to LLVM canonical names
@@ -20,6 +32,12 @@ _ARCH_ALIASES: dict[str, str] = {
     "i386": "i686",
     "i586": "i686",
     "i686": "i686",
+}
+
+# 64-bit arch to 32-bit arch mapping for pointer-width correction
+_ARCH_64_TO_32: dict[str, str] = {
+    "x86_64": "i686",
+    "aarch64": "armv7l",
 }
 
 # Platform to triple suffix mapping
@@ -32,17 +50,158 @@ _PLATFORM_SUFFIXES: dict[str, str] = {
     "netbsd": "unknown-netbsd",
 }
 
+# _PYTHON_HOST_PLATFORM platform tag to LLVM triple OS+vendor mapping.
+# sysconfig.get_platform() returns strings like "linux-x86_64",
+# "macosx-14.0-arm64", "win-amd64", "win-arm64".
+_PLAT_TAG_OS: dict[str, str] = {
+    "linux": "unknown-linux-gnu",
+    "macosx": "apple-darwin",
+    "win": "pc-windows-msvc",
+    "freebsd": "unknown-freebsd",
+    "openbsd": "unknown-openbsd",
+    "netbsd": "unknown-netbsd",
+}
 
-def detect_host_triple() -> str:
-    """Detect the host platform's LLVM target triple.
 
-    Strategy:
-    1. Try ``cc -dumpmachine`` (respects user's configured compiler).
-    2. Fall back to constructing from ``sys.platform`` and
-       ``platform.machine()``.
+def _process_pointer_bits() -> int:
+    """Return the pointer width of the current Python process in bits."""
+    return struct.calcsize("P") * 8
+
+
+def _correct_arch_for_pointer_width(arch: str) -> str:
+    """Downgrade a 64-bit arch to 32-bit if the process is 32-bit.
+
+    This handles the case where ``platform.machine()`` or
+    ``cc -dumpmachine`` reports the host arch (e.g., ``x86_64``) but
+    the Python process is 32-bit (e.g., 32-bit Python on 64-bit
+    Windows via cibuildwheel).
+
+    :param arch: Normalized architecture string.
+    :returns: Architecture corrected for process pointer width.
+    """
+    if _process_pointer_bits() == 32 and arch in _ARCH_64_TO_32:
+        return _ARCH_64_TO_32[arch]
+    return arch
+
+
+def _parse_archflags() -> str | None:
+    """Extract architecture from the ``ARCHFLAGS`` environment variable.
+
+    ``ARCHFLAGS`` is set by macOS build tools and cibuildwheel to
+    communicate the target architecture. Format: ``-arch <name>``.
+
+    :returns: Normalized arch string, or None if not set or ambiguous.
+    """
+    archflags = os.environ.get("ARCHFLAGS", "")
+    if not archflags:
+        return None
+
+    # Extract all -arch values
+    arches = re.findall(r"-arch\s+(\S+)", archflags)
+    if len(arches) == 1:
+        arch: str = arches[0].lower()
+        return _ARCH_ALIASES.get(arch, arch)
+    # Multiple arches (universal2) or no arches: can't determine single target
+    return None
+
+
+def _parse_vscmd_tgt_arch() -> str | None:
+    """Extract architecture from Visual Studio's ``VSCMD_ARG_TGT_ARCH``.
+
+    Set by the Visual Studio Developer Command Prompt and vcvarsall.bat.
+    Values: ``x86``, ``x64``, ``arm``, ``arm64``.
+
+    :returns: Normalized arch string, or None if not set.
+    """
+    vs_arch = os.environ.get("VSCMD_ARG_TGT_ARCH", "")
+    if not vs_arch:
+        return None
+
+    vs_arch_map: dict[str, str] = {
+        "x86": "i686",
+        "x64": "x86_64",
+        "arm": "armv7l",
+        "arm64": "aarch64",
+    }
+    return vs_arch_map.get(vs_arch.lower())
+
+
+def _triple_from_platform_tag(plat_tag: str) -> str | None:
+    """Convert a sysconfig platform tag to an LLVM target triple.
+
+    Platform tags come from ``sysconfig.get_platform()`` (which respects
+    ``_PYTHON_HOST_PLATFORM``) and look like:
+
+    - ``linux-x86_64``
+    - ``linux-aarch64``
+    - ``macosx-14.0-arm64``
+    - ``win-amd64``
+    - ``win-arm64``
+    - ``freebsd-14.1-RELEASE-amd64``
+
+    :param plat_tag: Platform tag string.
+    :returns: Normalized LLVM triple, or None if unparseable.
+    """
+    parts = plat_tag.split("-")
+    if len(parts) < 2:
+        return None
+
+    os_name = parts[0].lower()
+    # Architecture is always the last component
+    raw_arch = parts[-1].lower()
+    arch = _ARCH_ALIASES.get(raw_arch, raw_arch)
+
+    suffix = _PLAT_TAG_OS.get(os_name)
+    if suffix is None:
+        return None
+
+    return f"{arch}-{suffix}"
+
+
+def detect_process_triple() -> str:
+    """Detect the target triple for the current Python process.
+
+    Unlike ``cc -dumpmachine`` (which reports the host compiler's default
+    target), this function determines the triple appropriate for the
+    running Python interpreter. This handles:
+
+    - 32-bit Python on 64-bit OS (arch downgrade via pointer width)
+    - Cross-compilation signals (``_PYTHON_HOST_PLATFORM``,
+      ``ARCHFLAGS``, ``VSCMD_ARG_TGT_ARCH``)
+    - ``sysconfig.get_platform()`` which integrates several of these
+
+    Strategy (in order):
+
+    1. ``sysconfig.get_platform()`` -- respects ``_PYTHON_HOST_PLATFORM``
+       and cross-compilation environments like crossenv.
+    2. ``ARCHFLAGS`` -- macOS cross-compilation signal (single arch only).
+    3. ``VSCMD_ARG_TGT_ARCH`` -- Visual Studio target arch.
+    4. ``cc -dumpmachine`` with pointer-width correction.
+    5. Construct from ``sys.platform`` + ``platform.machine()`` with
+       pointer-width correction.
 
     :returns: Normalized LLVM target triple string.
     """
+    # 1. sysconfig.get_platform() respects _PYTHON_HOST_PLATFORM and
+    #    crossenv monkeypatching. This is the closest thing to a
+    #    standard cross-compilation signal in Python.
+    plat = sysconfig.get_platform()
+    triple = _triple_from_platform_tag(plat)
+    if triple is not None:
+        return normalize_triple(triple)
+
+    # 2. ARCHFLAGS (macOS)
+    archflags_arch = _parse_archflags()
+    if archflags_arch is not None:
+        suffix = _PLATFORM_SUFFIXES.get(sys.platform, f"unknown-{sys.platform}")
+        return normalize_triple(f"{archflags_arch}-{suffix}")
+
+    # 3. VSCMD_ARG_TGT_ARCH (Windows Visual Studio)
+    vs_arch = _parse_vscmd_tgt_arch()
+    if vs_arch is not None:
+        return normalize_triple(f"{vs_arch}-pc-windows-msvc")
+
+    # 4. cc -dumpmachine with pointer-width correction
     try:
         result = subprocess.run(
             ["cc", "-dumpmachine"],
@@ -53,20 +212,28 @@ def detect_host_triple() -> str:
         if result.returncode == 0:
             raw = result.stdout.strip()
             if raw:
-                return normalize_triple(raw)
+                triple = normalize_triple(raw)
+                parts = triple.split("-")
+                parts[0] = _correct_arch_for_pointer_width(parts[0])
+                return "-".join(parts)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
+    # 5. Construct from Python platform info
     return _construct_triple_from_python()
 
 
 def _construct_triple_from_python() -> str:
     """Build a best-effort LLVM triple from Python platform info.
 
+    Uses ``struct.calcsize("P")`` to determine the correct arch when
+    the process pointer width differs from the host machine word size.
+
     :returns: Triple like ``x86_64-unknown-linux-gnu``.
     """
     arch = platform_mod.machine().lower()
     arch = _ARCH_ALIASES.get(arch, arch)
+    arch = _correct_arch_for_pointer_width(arch)
 
     suffix = _PLATFORM_SUFFIXES.get(sys.platform, f"unknown-{sys.platform}")
     return f"{arch}-{suffix}"
@@ -111,10 +278,12 @@ def resolve_target(
     """Resolve the effective target triple with config precedence.
 
     Precedence (highest to lowest):
-    1. *target* kwarg
+
+    1. *target* kwarg (explicit API parameter)
     2. ``HEADERKIT_TARGET`` environment variable
     3. ``[tool.headerkit] target`` in pyproject.toml
-    4. :func:`detect_host_triple`
+    4. :func:`detect_process_triple` (auto-detect from process and
+       cross-compilation signals)
 
     :param target: Explicit target triple (highest precedence).
     :param project_root: Project root for config file lookup.
@@ -136,7 +305,7 @@ def resolve_target(
             return normalize_triple(config_target)
 
     # 4. Auto-detect
-    return detect_host_triple()
+    return detect_process_triple()
 
 
 def _read_target_from_config(project_root: Path) -> str | None:

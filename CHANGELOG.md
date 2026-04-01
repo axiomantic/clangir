@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-04-01
+
+### Added
+
+- Detect cross-compilation target from Python build system signals:
+  `_PYTHON_HOST_PLATFORM` (CPython cross-builds, crossenv, cibuildwheel),
+  `ARCHFLAGS` (macOS), `VSCMD_ARG_TGT_ARCH` (Visual Studio)
+- `detect_process_triple()` replaces `detect_host_triple()` with
+  process-aware detection using `struct.calcsize("P")` for pointer width
+- `_triple_from_platform_tag()` converts `sysconfig.get_platform()` output
+  to LLVM triples
+
+### Fixed
+
+- 32-bit Python on 64-bit host now correctly produces 32-bit target triple
+  (e.g., `i686-pc-windows-msvc` instead of `x86_64-pc-windows-msvc`)
+
+### Changed
+
+- **Breaking:** `detect_host_triple()` removed; use `detect_process_triple()`
+- Target detection now uses `sysconfig.get_platform()` as primary signal
+  (integrates with crossenv and `_PYTHON_HOST_PLATFORM`)
+
 ## [0.13.0] - 2026-04-01
 
 ### Added
