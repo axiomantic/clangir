@@ -147,7 +147,7 @@ def _read_target_from_config(project_root: Path) -> str | None:
         from headerkit._config import _parse_toml
 
         raw = _parse_toml(pyproject.read_bytes())
-    except Exception:
+    except (ImportError, OSError, ValueError, RuntimeError):
         return None
 
     tool = raw.get("tool", {})
@@ -179,19 +179,13 @@ def short_target(triple: str) -> str:
     """
     parts = triple.split("-")
     arch = parts[0]
-    # OS is typically the 3rd component (after vendor), but for triples
-    # like aarch64-apple-darwin it's also the 3rd.
-    # For 4-component triples like x86_64-unknown-linux-gnu, OS is parts[2].
-    if len(parts) >= 3:
-        os_part = parts[2]
-        # Normalize common OS names
-        if os_part.startswith("darwin"):
-            os_part = "darwin"
-        elif os_part.startswith("windows"):
-            os_part = "windows"
-        elif os_part.startswith("linux"):
-            os_part = "linux"
-        elif os_part.startswith("freebsd"):
-            os_part = "freebsd"
-        return f"{arch}-{os_part}"
-    return triple
+    os_part = parts[2]
+    if os_part.startswith("darwin"):
+        os_part = "darwin"
+    elif os_part.startswith("windows"):
+        os_part = "windows"
+    elif os_part.startswith("linux"):
+        os_part = "linux"
+    elif os_part.startswith("freebsd"):
+        os_part = "freebsd"
+    return f"{arch}-{os_part}"

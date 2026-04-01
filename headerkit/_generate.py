@@ -40,6 +40,7 @@ from headerkit._cache_store import (
 )
 from headerkit._config import _TOML_DECODE_ERROR, _find_project_root, _parse_toml
 from headerkit._slug import build_slug, load_index, lookup_slug
+from headerkit._target import resolve_target
 from headerkit.backends import LibclangUnavailableError, get_backend, is_backend_available
 from headerkit.install_libclang import auto_install
 from headerkit.ir import Header
@@ -476,8 +477,6 @@ def generate(
 
     parsed_args = parse_extra_args(extra_args, include_dirs, defines)
     project_root = _find_project_root(header_path.parent)
-
-    from headerkit._target import resolve_target
 
     resolved_target = resolve_target(target=target, project_root=project_root)
 

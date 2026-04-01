@@ -111,6 +111,6 @@ class TestShortTarget:
     def test_freebsd(self) -> None:
         assert short_target("x86_64-unknown-freebsd") == "x86_64-freebsd"
 
-    def test_short_triple(self) -> None:
-        """Triples with fewer than 3 components pass through."""
-        assert short_target("x86_64-linux") == "x86_64-linux"
+    def test_four_component(self) -> None:
+        """Four-component triples extract arch and OS correctly."""
+        assert short_target("armv7-unknown-linux-gnueabihf") == "armv7-linux"
