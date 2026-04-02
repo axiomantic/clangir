@@ -66,58 +66,12 @@ This gives the **host** platform, not the **target**. They differ when:
 - Cross-compiling for a different architecture entirely
 - Running in an emulated environment (QEMU, Rosetta 2)
 
-### `platform.machine()` lies
-
-`platform.machine()` returns the host CPU architecture, not the process
-architecture. A 32-bit Python running on 64-bit Windows reports `AMD64`, not
-`i686`. This was identified as a real problem in
-[PyO3 PR #830](https://github.com/PyO3/pyo3/pull/830).
-
-### `struct.calcsize("P")` tells the truth
-
-`struct.calcsize("P")` returns the size of a C `void*` pointer in the current
-Python process. This is 4 bytes on 32-bit and 8 bytes on 64-bit, regardless
-of the host OS bitness. headerkit does not need this because `HOST_GNU_TYPE`
-is already process-aware (see [detection algorithm](#headerkits-detection-algorithm)),
-but it is documented here as background on why naive approaches fail.
-
-```python
-import struct
-pointer_bits = struct.calcsize("P") * 8  # 32 or 64
-```
-
-Other methods and their pitfalls:
-
-| Method | Reliable? | Notes |
-|--------|-----------|-------|
-| `struct.calcsize("P") * 8` | Yes | Measures actual pointer size |
-| `sys.maxsize > 2**32` | Mostly | Checks address space |
-| `platform.architecture()` | No | Unreliable on macOS (universal binaries) |
-| `platform.machine()` | No | Reports host, not process |
-
-### `cc -dumpmachine`
-
-Running `cc -dumpmachine` (or `gcc -dumpmachine`, `clang -dumpmachine`) returns
-the compiler's default target triple. This is useful because:
-
-- It includes OS version information (e.g., `darwin25.3.0`)
-- It reflects the actual compiler configuration
-- It's the same format libclang expects for `-target`
-
-However, it reports the **compiler's** default target, not the Python process's
-target. A 64-bit compiler on a system running 32-bit Python will report
-`x86_64-pc-windows-msvc`, but the correct target for headerkit is
-`i686-pc-windows-msvc`.
-
-### LLVM's own distinction
-
-LLVM itself distinguishes between two functions
-([docs](https://llvmlite.readthedocs.io/en/latest/user-guide/binding/target-information.html)):
-
-- `get_default_triple()`: the triple LLVM was configured to target (host compiler)
-- `get_process_triple()`: the triple suitable for the current process
-
-headerkit needs the equivalent of `get_process_triple()`.
+Common approaches like `platform.machine()`, `cc -dumpmachine`, and
+`struct.calcsize("P")` each have limitations: they report the host machine,
+the compiler's default target, or the pointer width respectively -- none
+directly give the process's build target. headerkit sidesteps all of these
+by using `HOST_GNU_TYPE`, which is the actual triple from autoconf baked
+into the Python build at compile time.
 
 ## headerkit's detection algorithm
 
@@ -263,8 +217,6 @@ libclang as its parsing backend.
 - [Cross-compilation using Clang](https://clang.llvm.org/docs/CrossCompilation.html)
 - [What the Hell Is a Target Triple?](https://mcyoung.xyz/2025/04/14/target-triples/)
 - [What's an LLVM target triple?](https://www.flother.is/til/llvm-target-triple/)
-- [llvmlite target information](https://llvmlite.readthedocs.io/en/latest/user-guide/binding/target-information.html)
-- [PyO3 PR #830: struct.calcsize("P") for arch detection](https://github.com/PyO3/pyo3/pull/830)
 - [PEP 720: Cross-compiling Python packages](https://peps.python.org/pep-0720/)
 - [Rust target-lexicon crate](https://crates.io/crates/target-lexicon)
 - [LLVM Triple.cpp source](https://llvm.org/doxygen/Triple_8cpp_source.html)
