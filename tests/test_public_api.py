@@ -160,6 +160,61 @@ def test_generate_symbols_in_all():
     assert expected_symbols <= all_set, f"Missing from headerkit.__all__: {expected_symbols - all_set}"
 
 
+def test_batch_generate_exported():
+    """batch_generate function should be importable from headerkit and match _generate module."""
+    import headerkit
+    from headerkit._generate import batch_generate
+
+    assert headerkit.batch_generate is batch_generate
+
+
+def test_batch_result_exported():
+    """BatchResult class should be importable from headerkit and match _generate module."""
+    import headerkit
+    from headerkit._generate import BatchResult
+
+    assert headerkit.BatchResult is BatchResult
+
+
+def test_resolve_headers_exported():
+    """resolve_headers function should be importable from headerkit and match _resolve module."""
+    import headerkit
+    from headerkit._resolve import resolve_headers
+
+    assert headerkit.resolve_headers is resolve_headers
+
+
+def test_resolve_output_path_exported():
+    """resolve_output_path function should be importable from headerkit and match _resolve module."""
+    import headerkit
+    from headerkit._resolve import resolve_output_path
+
+    assert headerkit.resolve_output_path is resolve_output_path
+
+
+def test_check_output_collisions_exported():
+    """check_output_collisions function should be importable from headerkit and match _resolve module."""
+    import headerkit
+    from headerkit._resolve import check_output_collisions
+
+    assert headerkit.check_output_collisions is check_output_collisions
+
+
+def test_batch_and_resolve_symbols_in_all():
+    """Batch and resolve symbols should be listed in headerkit.__all__."""
+    import headerkit
+
+    expected_symbols = {
+        "batch_generate",
+        "BatchResult",
+        "resolve_headers",
+        "resolve_output_path",
+        "check_output_collisions",
+    }
+    all_set = set(headerkit.__all__)
+    assert expected_symbols <= all_set, f"Missing from headerkit.__all__: {expected_symbols - all_set}"
+
+
 def test_is_up_to_date_batch_not_in_all():
     """is_up_to_date_batch is intentionally NOT exported in __all__."""
     import headerkit
