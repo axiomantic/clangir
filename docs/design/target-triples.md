@@ -181,8 +181,9 @@ auto-detection works without special hooks or configuration.
 - Inserts `unknown` vendor for 3-component triples missing it:
   `x86_64-linux-gnu` -> `x86_64-unknown-linux-gnu`
 
-Architecture names are used as-is -- users must provide canonical names
-(e.g., `aarch64`, not `arm64`).
+Architecture names are used as-is. If you specify `--target arm64-apple-darwin`
+and auto-detect would produce `aarch64-apple-darwin`, those are different
+cache keys. This is intentional: `--target` means "use this exact triple."
 
 ### What flows where
 
