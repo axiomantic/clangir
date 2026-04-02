@@ -1,0 +1,2073 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="C/C++ header parsing toolkit with pluggable backends and writers for ctypes, Cython, CFFI, LuaJIT FFI, and more">
+      
+      
+      
+        <link rel="canonical" href="https://axiomantic.github.io/headerkit/0.14/design/target-triples/">
+      
+      
+        <link rel="prev" href="../../guides/architecture/">
+      
+      
+        <link rel="next" href="../../guides/cache/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Target Triples - headerkit</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#target-triples-in-headerkit" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="headerkit" class="md-header__button md-logo" aria-label="headerkit" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            headerkit
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Target Triples
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/axiomantic/headerkit" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    axiomantic/headerkit
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="headerkit" class="md-nav__button md-logo" aria-label="headerkit" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    headerkit
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/axiomantic/headerkit" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    axiomantic/headerkit
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/install-libclang/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installing libclang
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target Triples
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target Triples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-a-target-triple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is a target triple?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-headerkit-uses-target-triples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why headerkit uses target triples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why headerkit uses target triples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-cache-key-represents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the cache key represents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detecting-the-target-triple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detecting the target triple
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detecting the target triple">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-problem-with-host-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The problem with host detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headerkits-detection-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        headerkit's detection algorithm
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="headerkit&#39;s detection algorithm">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-host_gnu_type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why HOST_GNU_TYPE?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#musl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        musl libc detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cibuildwheel-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cibuildwheel integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normalization-user-input-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalization (user input only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-flows-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What flows where
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-compilation-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-compilation workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations-and-future-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations and future work
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Limitations and future work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-headers-in-cross-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System headers in cross-compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-cross-compilation-ecosystem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python cross-compilation ecosystem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-formal-triple-standard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No formal triple standard
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/build-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cffi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using CFFI Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/custom-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Custom Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/custom-writers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Custom Writers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/pxd-writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PXD Writer (Cython)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/ctypes-writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ctypes Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/json-export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/header-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    C Header Cleanup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IR Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/writers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cffi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CFFI Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/ctypes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ctypes Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cython/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cython Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/diff/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diff Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/lua/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lua Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/prompt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Writer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/generate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generate Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/install-libclang/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install Libclang CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-a-target-triple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is a target triple?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-headerkit-uses-target-triples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why headerkit uses target triples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why headerkit uses target triples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-cache-key-represents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the cache key represents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detecting-the-target-triple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detecting the target triple
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detecting the target triple">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-problem-with-host-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The problem with host detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headerkits-detection-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        headerkit's detection algorithm
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="headerkit&#39;s detection algorithm">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-host_gnu_type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why HOST_GNU_TYPE?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#musl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        musl libc detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cibuildwheel-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cibuildwheel integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normalization-user-input-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalization (user input only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-flows-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What flows where
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-compilation-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-compilation workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations-and-future-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations and future work
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Limitations and future work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-headers-in-cross-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System headers in cross-compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-cross-compilation-ecosystem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python cross-compilation ecosystem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-formal-triple-standard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No formal triple standard
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="target-triples-in-headerkit">Target Triples in headerkit<a class="headerlink" href="#target-triples-in-headerkit" title="Permanent link">&para;</a></h1>
+<h2 id="what-is-a-target-triple">What is a target triple?<a class="headerlink" href="#what-is-a-target-triple" title="Permanent link">&para;</a></h2>
+<p>A target triple is a string that identifies the compilation target: the combination
+of processor architecture, vendor, operating system, and optionally the runtime
+environment. The format is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&lt;arch&gt;-&lt;vendor&gt;-&lt;os&gt;[-&lt;env&gt;]
+</code></pre></div>
+<p>Examples:</p>
+<table>
+<thead>
+<tr>
+<th>Triple</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x86_64-pc-linux-gnu</code></td>
+<td>64-bit x86, PC vendor, Linux, GNU libc</td>
+</tr>
+<tr>
+<td><code>aarch64-apple-darwin25.3.0</code></td>
+<td>ARM64, Apple, macOS 25.3</td>
+</tr>
+<tr>
+<td><code>x86_64-pc-windows-msvc</code></td>
+<td>64-bit x86, PC, Windows, MSVC ABI</td>
+</tr>
+<tr>
+<td><code>i686-pc-windows-msvc</code></td>
+<td>32-bit x86, PC, Windows, MSVC ABI</td>
+</tr>
+<tr>
+<td><code>aarch64-unknown-linux-gnu</code></td>
+<td>ARM64, unknown vendor, Linux, GNU libc</td>
+</tr>
+<tr>
+<td><code>armv7-unknown-linux-gnueabihf</code></td>
+<td>ARMv7, Linux, GNU hard-float ABI</td>
+</tr>
+<tr>
+<td><code>x86_64-unknown-linux-musl</code></td>
+<td>64-bit x86, Linux, musl libc</td>
+</tr>
+</tbody>
+</table>
+<p>The name "triple" is historical - it originally had exactly three parts. Modern
+triples can have 3 to 5 components. There is no formal standard or standards
+body that assigns these names. LLVM is the de facto authority.</p>
+<h2 id="why-headerkit-uses-target-triples">Why headerkit uses target triples<a class="headerlink" href="#why-headerkit-uses-target-triples" title="Permanent link">&para;</a></h2>
+<p>headerkit parses C/C++ headers and generates Python bindings. The parsed IR
+(intermediate representation) is the result of C preprocessing, which is
+target-sensitive:</p>
+<ul>
+<li><code>#ifdef _WIN64</code> expands differently for 32-bit vs 64-bit Windows targets</li>
+<li><code>sizeof(void*)</code> is 4 on 32-bit, 8 on 64-bit</li>
+<li><code>sizeof(long)</code> is 4 on Windows, 8 on Linux 64-bit</li>
+<li>System headers differ between OS versions (new functions, changed structs)</li>
+<li>ABI matters: <code>gnu</code> vs <code>musl</code> can affect struct layouts</li>
+</ul>
+<p>The cache key for parsed IR must capture all of these distinctions. A target
+triple encodes exactly this information in a single canonical string.</p>
+<h3 id="what-the-cache-key-represents">What the cache key represents<a class="headerlink" href="#what-the-cache-key-represents" title="Permanent link">&para;</a></h3>
+<p>The cache key answers: "if I parse this header for this target, will I get the
+same IR?" Two cache entries should match if and only if their preprocessing
+output would be identical. The target triple is the right granularity for this
+because it's what the C preprocessor uses to make its decisions.</p>
+<h2 id="detecting-the-target-triple">Detecting the target triple<a class="headerlink" href="#detecting-the-target-triple" title="Permanent link">&para;</a></h2>
+<h3 id="the-problem-with-host-detection">The problem with host detection<a class="headerlink" href="#the-problem-with-host-detection" title="Permanent link">&para;</a></h3>
+<p>The naive approach is to ask the system what platform it is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span><span class="o">,</span><span class="w"> </span><span class="nn">platform</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">sys</span><span class="o">.</span><span class="n">platform</span>      <span class="c1"># &quot;darwin&quot;, &quot;linux&quot;, &quot;win32&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span>  <span class="c1"># &quot;x86_64&quot;, &quot;arm64&quot;, &quot;AMD64&quot;</span>
+</code></pre></div>
+<p>This gives the <strong>host</strong> platform, not the <strong>target</strong>. They differ when:</p>
+<ul>
+<li>32-bit Python runs on a 64-bit OS (common on Windows via cibuildwheel)</li>
+<li>Cross-compiling for a different architecture entirely</li>
+<li>Running in an emulated environment (QEMU, Rosetta 2)</li>
+</ul>
+<p>Common approaches like <code>platform.machine()</code>, <code>cc -dumpmachine</code>, and
+<code>struct.calcsize("P")</code> each have limitations: they report the host machine,
+the compiler's default target, or the pointer width respectively -- none
+directly give the process's build target. headerkit sidesteps all of these
+by using <code>HOST_GNU_TYPE</code>, which is the actual triple from autoconf baked
+into the Python build at compile time.</p>
+<h2 id="headerkits-detection-algorithm">headerkit's detection algorithm<a class="headerlink" href="#headerkits-detection-algorithm" title="Permanent link">&para;</a></h2>
+<p>headerkit resolves the target triple via config precedence:</p>
+<ol>
+<li><strong>Explicit <code>target</code> kwarg</strong> to <code>generate()</code> (highest priority)</li>
+<li><strong><code>HEADERKIT_TARGET</code> environment variable</strong></li>
+<li><strong><code>[tool.headerkit] target</code></strong> in pyproject.toml</li>
+<li><strong>Auto-detection</strong> via <code>detect_process_triple()</code></li>
+</ol>
+<p>The auto-detection uses one signal per platform:</p>
+<ul>
+<li><strong>POSIX</strong> (Linux, macOS, BSDs): <code>sysconfig.get_config_var('HOST_GNU_TYPE')</code>
+  -- the <code>--host</code> value from autoconf, baked into the Python build at compile
+  time. This is inherently process-aware: a 32-bit Python build has a 32-bit
+  <code>HOST_GNU_TYPE</code>, so no pointer-width correction is needed.</li>
+<li><strong>Windows</strong>: <code>sysconfig.get_platform()</code> -- returns <code>win-amd64</code>, <code>win32</code>, or
+  <code>win-arm64</code>. Mapped to LLVM-style triples (e.g., <code>x86_64-pc-windows-msvc</code>).</li>
+</ul>
+<p>For cross-compilation, set <code>--target</code>, <code>HEADERKIT_TARGET</code>, or
+<code>[tool.headerkit] target</code> explicitly rather than relying on auto-detection.</p>
+<h3 id="why-host_gnu_type">Why HOST_GNU_TYPE?<a class="headerlink" href="#why-host_gnu_type" title="Permanent link">&para;</a></h3>
+<p><code>HOST_GNU_TYPE</code> is the most direct signal for "what target was this Python
+built for." Unlike <code>sysconfig.get_platform()</code> (which returns a lossy platform
+tag like <code>linux-x86_64</code> with no libc flavor) or <code>cc -dumpmachine</code> (which
+reports the compiler's default target, not the process), <code>HOST_GNU_TYPE</code> is
+the actual triple from autoconf and includes vendor, OS, and libc flavor
+(e.g., <code>x86_64-pc-linux-gnu</code> vs <code>x86_64-pc-linux-musl</code> on Python 3.13+).</p>
+<h3 id="musl">musl libc detection<a class="headerlink" href="#musl" title="Permanent link">&para;</a></h3>
+<p>On Linux, the libc flavor (glibc vs musl) matters for C preprocessing:
+different system headers, potentially different struct layouts. <code>HOST_GNU_TYPE</code>
+correctly reports <code>linux-musl</code> on Python 3.13+ (fixed in CPython issue #95855).
+On pre-3.13 Python, <code>HOST_GNU_TYPE</code> may report <code>linux-gnu</code> even when the
+interpreter is linked against musl (CPython issue #87278).</p>
+<p>headerkit corrects this with a runtime libc sniff using
+<code>os.confstr('CS_GNU_LIBC_VERSION')</code>. On glibc, this returns a version string
+(e.g., <code>'glibc 2.35'</code>). On musl, it raises <code>ValueError</code> or <code>OSError</code>. This
+is process-aware: it checks what THIS interpreter links against, not what
+libraries are installed on the system.</p>
+<h3 id="cibuildwheel-integration">cibuildwheel integration<a class="headerlink" href="#cibuildwheel-integration" title="Permanent link">&para;</a></h3>
+<p><a href="https://cibuildwheel.readthedocs.io/">cibuildwheel</a> invokes PEP 517 build
+backends once per architecture per wheel. On Linux, it uses QEMU emulation,
+so the running Python IS the target architecture and <code>HOST_GNU_TYPE</code> is
+correct. On macOS, it downloads the matching Python for each arch. On
+Windows, it uses native builds per arch. In all cases, headerkit's
+auto-detection works without special hooks or configuration.</p>
+<h3 id="normalization-user-input-only">Normalization (user input only)<a class="headerlink" href="#normalization-user-input-only" title="Permanent link">&para;</a></h3>
+<p><code>normalize_triple()</code> canonicalizes user-provided triples (<code>--target</code>,
+<code>HEADERKIT_TARGET</code>, config file). Auto-detected triples from
+<code>detect_process_triple()</code> are already canonical and bypass normalization.</p>
+<ul>
+<li>Lowercases all components</li>
+<li>Inserts <code>unknown</code> vendor for 3-component triples missing it:
+  <code>x86_64-linux-gnu</code> -&gt; <code>x86_64-unknown-linux-gnu</code></li>
+</ul>
+<p>Architecture names are used as-is. If you specify <code>--target arm64-apple-darwin</code>
+and auto-detect would produce <code>aarch64-apple-darwin</code>, those are different
+cache keys. This is intentional: <code>--target</code> means "use this exact triple."</p>
+<h3 id="what-flows-where">What flows where<a class="headerlink" href="#what-flows-where" title="Permanent link">&para;</a></h3>
+<p>The resolved triple is used in two places:</p>
+<ul>
+<li><strong>Cache key</strong>: the full triple (including OS version) goes into the SHA-256
+  hash for the IR cache key. This ensures cache entries are correctly
+  invalidated when the target changes.</li>
+<li><strong><code>-target</code> flag</strong>: the full triple is passed to libclang via <code>-target</code> so
+  that preprocessing reflects the correct target platform.</li>
+</ul>
+<p>The <strong>slug</strong> (human-readable cache directory name) uses a shortened form
+(<code>arch-os</code> with version stripped) for readability:
+<code>x86_64-pc-linux-gnu</code> -&gt; <code>x86_64-linux</code> in the directory name.</p>
+<h2 id="cross-compilation-workflow">Cross-compilation workflow<a class="headerlink" href="#cross-compilation-workflow" title="Permanent link">&para;</a></h2>
+<p>With target triple support, cross-compilation is straightforward:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Generate bindings for ARM64 Linux while running on x86_64 macOS</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">headerkit</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">output</span> <span class="o">=</span> <span class="n">generate</span><span class="p">(</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="s2">&quot;mylib.h&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">target</span><span class="o">=</span><span class="s2">&quot;aarch64-unknown-linux-gnu&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">writer_name</span><span class="o">=</span><span class="s2">&quot;cffi&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</code></pre></div>
+<p>Or via CLI:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>headerkit<span class="w"> </span>mylib.h<span class="w"> </span>--target<span class="w"> </span>aarch64-unknown-linux-gnu<span class="w"> </span>-w<span class="w"> </span>cffi
+</code></pre></div>
+<p>Or via environment variable (useful in CI):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">HEADERKIT_TARGET</span><span class="o">=</span>aarch64-unknown-linux-gnu
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>headerkit<span class="w"> </span>mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi
+</code></pre></div>
+<p>The cache will store entries keyed by target triple, so the same machine can
+build for multiple targets and each gets its own cache entry.</p>
+<h2 id="limitations-and-future-work">Limitations and future work<a class="headerlink" href="#limitations-and-future-work" title="Permanent link">&para;</a></h2>
+<h3 id="system-headers-in-cross-compilation">System headers in cross-compilation<a class="headerlink" href="#system-headers-in-cross-compilation" title="Permanent link">&para;</a></h3>
+<p>When cross-compiling, libclang needs access to the target platform's system
+headers (sysroot). headerkit passes <code>-target</code> to libclang but does not
+automatically locate or configure a sysroot. Users must provide include paths
+via <code>-I</code> flags or <code>include_dirs</code> for target-specific headers.</p>
+<h3 id="python-cross-compilation-ecosystem">Python cross-compilation ecosystem<a class="headerlink" href="#python-cross-compilation-ecosystem" title="Permanent link">&para;</a></h3>
+<p><a href="https://peps.python.org/pep-0720/">PEP 720</a> documents the challenges of
+cross-compiling Python packages. The Python packaging ecosystem lacks
+standardized cross-compilation infrastructure. headerkit uses
+<code>HOST_GNU_TYPE</code> (which is already baked into every autoconf-built Python)
+for native detection and relies on explicit <code>--target</code> for
+cross-compilation. If a future PEP standardizes a cross-compilation
+signaling mechanism, headerkit can adopt it.</p>
+<h3 id="no-formal-triple-standard">No formal triple standard<a class="headerlink" href="#no-formal-triple-standard" title="Permanent link">&para;</a></h3>
+<p>As noted in <a href="https://mcyoung.xyz/2025/04/14/target-triples/">"What the Hell Is a Target Triple?"</a>,
+there is no formal standard for triple format. LLVM and GCC triples are
+similar but not identical. headerkit follows LLVM conventions since it uses
+libclang as its parsing backend.</p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://llvm.org/doxygen/classllvm_1_1Triple.html">LLVM Triple class reference</a></li>
+<li><a href="https://clang.llvm.org/docs/CrossCompilation.html">Cross-compilation using Clang</a></li>
+<li><a href="https://mcyoung.xyz/2025/04/14/target-triples/">What the Hell Is a Target Triple?</a></li>
+<li><a href="https://www.flother.is/til/llvm-target-triple/">What's an LLVM target triple?</a></li>
+<li><a href="https://peps.python.org/pep-0720/">PEP 720: Cross-compiling Python packages</a></li>
+<li><a href="https://crates.io/crates/target-lexicon">Rust target-lexicon crate</a></li>
+<li><a href="https://llvm.org/doxygen/Triple_8cpp_source.html">LLVM Triple.cpp source</a></li>
+<li><a href="https://cibuildwheel.readthedocs.io/">cibuildwheel documentation</a></li>
+<li><a href="https://github.com/benfogle/crossenv">crossenv: cross-compiling virtualenvs</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.code.annotate", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
