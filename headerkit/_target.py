@@ -117,6 +117,7 @@ def detect_process_triple() -> str:
     # This path should rarely execute -- it covers non-autoconf POSIX
     # builds and any unrecognized Windows platform tags.
     arch = platform_mod.machine().lower()
+    arch = _ARCH_ALIASES.get(arch, arch)
     return f"{arch}-unknown-{sys.platform}"
 
 

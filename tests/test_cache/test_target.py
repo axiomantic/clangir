@@ -104,7 +104,7 @@ class TestMuslDetection:
         """glibc responds to CS_GNU_LIBC_VERSION, so _is_musl_linux is False."""
         with (
             patch("headerkit._target.sys") as mock_sys,
-            patch("headerkit._target.os.confstr", return_value="glibc 2.35"),
+            patch("headerkit._target.os.confstr", create=True, return_value="glibc 2.35"),
         ):
             mock_sys.platform = "linux"
             assert _is_musl_linux() is False
@@ -113,7 +113,7 @@ class TestMuslDetection:
         """musl raises ValueError for CS_GNU_LIBC_VERSION."""
         with (
             patch("headerkit._target.sys") as mock_sys,
-            patch("headerkit._target.os.confstr", side_effect=ValueError),
+            patch("headerkit._target.os.confstr", create=True, side_effect=ValueError),
         ):
             mock_sys.platform = "linux"
             assert _is_musl_linux() is True
@@ -122,7 +122,7 @@ class TestMuslDetection:
         """Some musl builds raise OSError instead of ValueError."""
         with (
             patch("headerkit._target.sys") as mock_sys,
-            patch("headerkit._target.os.confstr", side_effect=OSError),
+            patch("headerkit._target.os.confstr", create=True, side_effect=OSError),
         ):
             mock_sys.platform = "linux"
             assert _is_musl_linux() is True
@@ -133,10 +133,10 @@ class TestMuslDetection:
             assert _is_musl_linux() is False
 
     def test_no_confstr_returns_false(self) -> None:
-        """If os.confstr is not available, assume not musl."""
+        """If os.confstr is not available (Windows), assume not musl."""
         with (
             patch("headerkit._target.sys") as mock_sys,
-            patch("headerkit._target.os.confstr", side_effect=AttributeError),
+            patch("headerkit._target.os.confstr", create=True, side_effect=AttributeError),
         ):
             mock_sys.platform = "linux"
             assert _is_musl_linux() is False
