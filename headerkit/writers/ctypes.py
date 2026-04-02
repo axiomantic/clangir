@@ -402,6 +402,8 @@ class CtypesWriter:
         source = writer.write(header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}_ctypes.py"
+
     def __init__(self, lib_name: str = "_lib") -> None:
         self._lib_name = lib_name
 

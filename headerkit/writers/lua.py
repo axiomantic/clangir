@@ -401,6 +401,8 @@ class LuaWriter:
         lua_source = writer.write(header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}_ffi.lua"
+
     def __init__(self) -> None:
         pass
 

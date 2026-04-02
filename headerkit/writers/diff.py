@@ -653,6 +653,7 @@ class DiffWriter:
         report = writer.write(new_header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}_diff.json"
     cache_output: bool = False
 
     def __init__(self, baseline: Header | None = None, format: str = "json") -> None:

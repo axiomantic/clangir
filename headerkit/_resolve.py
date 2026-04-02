@@ -60,9 +60,23 @@ def resolve_output_path(
     :param header_path: Absolute path to the header file.
     :param project_root: Project root directory.
     :returns: Resolved output path relative to project_root.
-    :raises NotImplementedError: Stub, not yet implemented.
+    :raises ValueError: If template contains unknown variables.
     """
-    raise NotImplementedError  # implemented in T-10
+    rel = header_path.absolute().relative_to(project_root.absolute())
+    stem = header_path.stem
+    name = header_path.name
+    dir_part = str(rel.parent)
+    if dir_part == ".":
+        dir_part = "."
+    # Use POSIX separators for cross-platform consistency
+    dir_part = dir_part.replace("\\", "/")
+
+    try:
+        result = template.format(stem=stem, name=name, dir=dir_part)
+    except KeyError as exc:
+        raise ValueError(f"Unknown template variable in {template!r}: {exc}") from exc
+
+    return Path(result)
 
 
 def check_output_collisions(
@@ -71,6 +85,14 @@ def check_output_collisions(
     """Check for output path collisions across all header/writer combinations.
 
     :param resolved_paths: Map of (header_path, writer_name) -> resolved output path.
-    :raises NotImplementedError: Stub, not yet implemented.
+    :raises ValueError: If two or more header/writer combos would write to the same file.
     """
-    raise NotImplementedError  # implemented in T-11
+    seen: dict[Path, tuple[Path, str]] = {}
+    for (header, writer), output in resolved_paths.items():
+        canonical = output.resolve()
+        if canonical in seen:
+            prev_header, prev_writer = seen[canonical]
+            raise ValueError(
+                f"Output collision: {header} ({writer}) and {prev_header} ({prev_writer}) both resolve to {output}"
+            )
+        seen[canonical] = (header, writer)

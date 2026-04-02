@@ -444,6 +444,7 @@ class PromptWriter:
         output = writer.write(header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}_prompt.txt"
     cache_output: bool = False
 
     def __init__(self, verbosity: str = "compact") -> None:

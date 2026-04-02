@@ -77,6 +77,7 @@ class PxdWriter:
     :param header: The parsed header to convert.
     """
 
+    default_output_pattern: str = "{dir}/{stem}.pxd"
     INDENT: str = "    "
 
     def __init__(self, header: Header, *, stub_cimport_prefix: str | None = None) -> None:
@@ -1171,6 +1172,8 @@ class CythonWriter:
         writer = get_writer("cython")
         pxd_string = writer.write(header)
     """
+
+    default_output_pattern: str = "{dir}/{stem}.pxd"
 
     def __init__(self, *, stub_cimport_prefix: str | None = None) -> None:
         self.stub_cimport_prefix: str | None = stub_cimport_prefix
