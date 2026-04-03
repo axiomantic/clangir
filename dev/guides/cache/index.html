@@ -930,6 +930,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../github-action/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitHub Action
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../cffi/" class="md-nav__link">
         
   
@@ -2039,13 +2067,13 @@ numeric suffix is appended (e.g., <code>libclang.mylib.x86_64-linux-2</code>).</
 </code></pre></div>
 <h3 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Generate with caching (default behavior)</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:bindings/mylib_cffi.py
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Second run uses cache automatically</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:bindings/mylib_cffi.py
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Multiple writers in one pass</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/cffi.py<span class="w"> </span>-w<span class="w"> </span>ctypes:bindings/ctypes.py
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:bindings/cffi.py<span class="w"> </span>-w<span class="w"> </span>ctypes<span class="w"> </span>-o<span class="w"> </span>ctypes:bindings/ctypes.py
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Custom store directory</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>--store-dir<span class="w"> </span>/tmp/headerkit-store
@@ -2175,7 +2203,7 @@ from committed <code>.headerkit/</code> work without libclang.</p>
 <h3 id="ci-validation">CI validation<a class="headerlink" href="#ci-validation" title="Permanent link">&para;</a></h3>
 <p>To verify the committed cache is up-to-date in CI:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Generate with current sources</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>headerkit<span class="w"> </span>generate<span class="w"> </span>mylib.h<span class="w"> </span>--writer<span class="w"> </span>cffi<span class="w"> </span>--output-path<span class="w"> </span>bindings.py
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>headerkit<span class="w"> </span>mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:bindings.py
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Check for uncommitted changes</span>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>.headerkit/<span class="w"> </span>bindings.py

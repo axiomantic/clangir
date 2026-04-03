@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://axiomantic.github.io/headerkit/dev/reference/prompt/">
+        <link rel="canonical" href="https://axiomantic.github.io/headerkit/dev/guides/github-action/">
       
       
-        <link rel="prev" href="../lua/">
+        <link rel="prev" href="../build-backend/">
       
       
-        <link rel="next" href="../generate/">
+        <link rel="next" href="../cffi/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Prompt Writer - headerkit</title>
+        <title>GitHub Action - headerkit</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#prompt-writer" class="md-skip">
+        <a href="#github-action" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Prompt Writer
+              GitHub Action
             
           </span>
         </div>
@@ -349,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/installation/" class="md-nav__link">
+      <a href="../installation/" class="md-nav__link">
         
   
   
@@ -377,7 +377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/install-libclang/" class="md-nav__link">
+      <a href="../install-libclang/" class="md-nav__link">
         
   
   
@@ -405,7 +405,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/quickstart/" class="md-nav__link">
+      <a href="../quickstart/" class="md-nav__link">
         
   
   
@@ -437,8 +437,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -449,13 +451,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -476,7 +476,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -494,7 +494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -550,7 +550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/cache/" class="md-nav__link">
+      <a href="../cache/" class="md-nav__link">
         
   
   
@@ -578,7 +578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/build-backend/" class="md-nav__link">
+      <a href="../build-backend/" class="md-nav__link">
         
   
   
@@ -603,10 +603,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../guides/github-action/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitHub Action
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -622,6 +649,125 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pin-a-headerkit-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pin a headerkit version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-with-cibuildwheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage with cibuildwheel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-with-multiple-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage with multiple platforms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggering-on-header-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering on header changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -634,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/cffi/" class="md-nav__link">
+      <a href="../cffi/" class="md-nav__link">
         
   
   
@@ -662,7 +808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/custom-backends/" class="md-nav__link">
+      <a href="../custom-backends/" class="md-nav__link">
         
   
   
@@ -690,7 +836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/custom-writers/" class="md-nav__link">
+      <a href="../custom-writers/" class="md-nav__link">
         
   
   
@@ -895,8 +1041,6 @@
       
   
   
-    
-  
   
   
     
@@ -909,11 +1053,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -934,7 +1080,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -952,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../reference/" class="md-nav__link">
         
   
   
@@ -980,7 +1126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ir/" class="md-nav__link">
+      <a href="../../reference/ir/" class="md-nav__link">
         
   
   
@@ -1008,7 +1154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backends/" class="md-nav__link">
+      <a href="../../reference/backends/" class="md-nav__link">
         
   
   
@@ -1036,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../writers/" class="md-nav__link">
+      <a href="../../reference/writers/" class="md-nav__link">
         
   
   
@@ -1064,7 +1210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cffi/" class="md-nav__link">
+      <a href="../../reference/cffi/" class="md-nav__link">
         
   
   
@@ -1092,7 +1238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ctypes/" class="md-nav__link">
+      <a href="../../reference/ctypes/" class="md-nav__link">
         
   
   
@@ -1120,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cython/" class="md-nav__link">
+      <a href="../../reference/cython/" class="md-nav__link">
         
   
   
@@ -1148,7 +1294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../diff/" class="md-nav__link">
+      <a href="../../reference/diff/" class="md-nav__link">
         
   
   
@@ -1176,7 +1322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../json/" class="md-nav__link">
+      <a href="../../reference/json/" class="md-nav__link">
         
   
   
@@ -1204,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../lua/" class="md-nav__link">
+      <a href="../../reference/lua/" class="md-nav__link">
         
   
   
@@ -1229,37 +1375,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Prompt Writer
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../reference/prompt/" class="md-nav__link">
         
   
   
@@ -1275,170 +1394,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#writer-class" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Writer Class
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;PromptWriter
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" PromptWriter">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter--options" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Options
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter--example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Example
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.name" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;name
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.format_description" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;format_description
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.write" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;write
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verbosity-tiers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verbosity Tiers
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Verbosity Tiers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#compact" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compact
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#standard" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Standard
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#verbose" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verbose
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Example
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1451,7 +1406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../generate/" class="md-nav__link">
+      <a href="../../reference/generate/" class="md-nav__link">
         
   
   
@@ -1479,7 +1434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../install-libclang/" class="md-nav__link">
+      <a href="../../reference/install-libclang/" class="md-nav__link">
         
   
   
@@ -1534,10 +1489,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#writer-class" class="md-nav__link">
+  <a href="#what-it-does" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writer Class
+        What it does
       
     </span>
   </a>
@@ -1545,132 +1500,87 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter" class="md-nav__link">
+  <a href="#inputs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;PromptWriter
+        Inputs
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label=" PromptWriter">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter--options" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Options
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter--example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Example
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.name" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;name
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.format_description" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;format_description
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#headerkit.writers.prompt.PromptWriter.write" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;write
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#verbosity-tiers" class="md-nav__link">
+  <a href="#basic-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verbosity Tiers
+        Basic usage
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Verbosity Tiers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#compact" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compact
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#standard" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Standard
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#verbose" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verbose
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#example" class="md-nav__link">
+  <a href="#pin-a-headerkit-version" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example
+        Pin a headerkit version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-with-cibuildwheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage with cibuildwheel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-with-multiple-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage with multiple platforms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggering-on-header-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering on header changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -1697,204 +1607,161 @@
   
 
 
-<h1 id="prompt-writer">Prompt Writer<a class="headerlink" href="#prompt-writer" title="Permanent link">&para;</a></h1>
-<p>The prompt writer converts headerkit IR into token-optimized text
-representations designed for embedding C/C++ API information into LLM
-prompts. Three verbosity tiers control the output density.</p>
-<h2 id="writer-class">Writer Class<a class="headerlink" href="#writer-class" title="Permanent link">&para;</a></h2>
-
-
-<div class="doc doc-object doc-class">
-
-
-
-<h2 id="headerkit.writers.prompt.PromptWriter" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">PromptWriter</span>
-
-
-<a href="#headerkit.writers.prompt.PromptWriter" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">PromptWriter</span><span class="p">(</span><span class="n">verbosity</span><span class="o">=</span><span class="s1">&#39;compact&#39;</span><span class="p">)</span>
-</code></pre></div>
-
-    <div class="doc doc-contents first">
-
-
-
-        <p>Writer that produces token-optimized output for LLM context.</p>
-<p>Three verbosity tiers control the output density:</p>
-<ul>
-<li><strong>compact</strong>: C-like one-liners, most token-efficient</li>
-<li><strong>standard</strong>: YAML-like structured text with type relationships</li>
-<li><strong>verbose</strong>: Full JSON with cross-reference metadata</li>
-</ul>
-<h4 id="headerkit.writers.prompt.PromptWriter--options">Options<a class="headerlink" href="#headerkit.writers.prompt.PromptWriter--options" title="Permanent link">&para;</a></h4>
-<p>verbosity : str
-    Output verbosity tier. One of "compact", "standard", or "verbose".
-    Defaults to "compact".</p>
-<h4 id="headerkit.writers.prompt.PromptWriter--example">Example<a class="headerlink" href="#headerkit.writers.prompt.PromptWriter--example" title="Permanent link">&para;</a></h4>
-<p>::</p>
-<div class="highlight"><pre><span></span><code>from headerkit.writers import get_writer
-
-writer = get_writer(&quot;prompt&quot;, verbosity=&quot;compact&quot;)
-output = writer.write(header)
-</code></pre></div>
-
-
-
-
-
-
-
-
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-<div class="doc doc-object doc-attribute">
-
-
-
-<h3 id="headerkit.writers.prompt.PromptWriter.name" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">name</span>
-
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-property"><code>property</code></small>
-  </span>
-
-<a href="#headerkit.writers.prompt.PromptWriter.name" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">name</span>
-</code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>Human-readable name of this writer.</p>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-attribute">
-
-
-
-<h3 id="headerkit.writers.prompt.PromptWriter.format_description" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">format_description</span>
-
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-property"><code>property</code></small>
-  </span>
-
-<a href="#headerkit.writers.prompt.PromptWriter.format_description" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">format_description</span>
-</code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>Short description of the output format.</p>
-
-    </div>
-
-</div>
-
-
-
-
-<div class="doc doc-object doc-function">
-
-
-<h3 id="headerkit.writers.prompt.PromptWriter.write" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">write</span>
-
-
-<a href="#headerkit.writers.prompt.PromptWriter.write" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">write</span><span class="p">(</span><span class="n">header</span><span class="p">)</span>
-</code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>Convert header IR to token-optimized string.</p>
-
-
-    </div>
-
-</div>
-
-
-
-  </div>
-
-    </div>
-
-</div><h2 id="verbosity-tiers">Verbosity Tiers<a class="headerlink" href="#verbosity-tiers" title="Permanent link">&para;</a></h2>
-<h3 id="compact">Compact<a class="headerlink" href="#compact" title="Permanent link">&para;</a></h3>
-<p>The most token-efficient format. One-liner C-like declarations prefixed with
-keywords (<code>FUNC</code>, <code>STRUCT</code>, <code>ENUM</code>, <code>TYPEDEF</code>, <code>CONST</code>, <code>VAR</code>, <code>CALLBACK</code>).
-Bitfields use the <code>name:type:Nb</code> notation.</p>
-<h3 id="standard">Standard<a class="headerlink" href="#standard" title="Permanent link">&para;</a></h3>
-<p>YAML-like structured text that groups declarations by category (constants,
-enums, structs, callbacks, functions, typedefs, variables). Includes struct
-field listings and bitfield annotations.</p>
-<h3 id="verbose">Verbose<a class="headerlink" href="#verbose" title="Permanent link">&para;</a></h3>
-<p>Full JSON output using the JSON writer with additional <code>used_in</code>
-cross-reference metadata showing which declarations reference each type.</p>
-<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.backends</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_backend</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.writers</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_writer</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">get_backend</span><span class="p">()</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">header</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s2">#define MAX_SIZE 256</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s2">typedef struct {</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="s2">    int x;</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="s2">    int y;</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s2">} Point;</span>
+<h1 id="github-action">GitHub Action<a class="headerlink" href="#github-action" title="Permanent link">&para;</a></h1>
+<p>headerkit ships a composite GitHub Action that populates the
+<code>.headerkit/</code> cache in CI. Use it to keep cache entries up to date
+whenever headers change, so downstream builds never need libclang.</p>
+<h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h2>
+<p>The action runs three steps:</p>
+<ol>
+<li>Sets up Python (via <code>actions/setup-python</code>).</li>
+<li>Installs headerkit from PyPI.</li>
+<li>Runs <code>headerkit cache populate</code> with the arguments you provide.</li>
+</ol>
+<p>Optionally, it commits the updated <code>.headerkit/</code> directory back to the
+branch.</p>
+<h2 id="inputs">Inputs<a class="headerlink" href="#inputs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Required</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>headerkit-version</code></td>
+<td>no</td>
+<td>latest</td>
+<td>Pin a specific headerkit version (e.g., <code>0.15.0</code>)</td>
+</tr>
+<tr>
+<td><code>python-version</code></td>
+<td>no</td>
+<td><code>3.12</code></td>
+<td>Python version for the runner</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>no</td>
+<td><code>""</code></td>
+<td>Arguments passed to <code>headerkit cache populate</code></td>
+</tr>
+<tr>
+<td><code>commit</code></td>
+<td>no</td>
+<td><code>false</code></td>
+<td>Commit populated cache files after generation</td>
+</tr>
+</tbody>
+</table>
+<h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Populate headerkit cache</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">on</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">push</span><span class="p">:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;include/**/*.h&quot;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">jobs</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">populate</span><span class="p">:</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s2">int distance(const Point* a, const Point* b);</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="s2">&quot;&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;geometry.h&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># Compact (most token-efficient)</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">writer</span> <span class="o">=</span> <span class="n">get_writer</span><span class="p">(</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span> <span class="n">verbosity</span><span class="o">=</span><span class="s2">&quot;compact&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="nb">print</span><span class="p">(</span><span class="n">writer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">header</span><span class="p">))</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># Standard (structured)</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">writer</span> <span class="o">=</span> <span class="n">get_writer</span><span class="p">(</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span> <span class="n">verbosity</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="nb">print</span><span class="p">(</span><span class="n">writer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">header</span><span class="p">))</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="c1"># Verbose (full JSON with cross-references)</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">writer</span> <span class="o">=</span> <span class="n">get_writer</span><span class="p">(</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span> <span class="n">verbosity</span><span class="o">=</span><span class="s2">&quot;verbose&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="nb">print</span><span class="p">(</span><span class="n">writer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">header</span><span class="p">))</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/amd64&quot;</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
 </code></pre></div>
-<p>Compact output:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>// geometry.h (headerkit compact)
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CONST MAX_SIZE=256
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>STRUCT Point {x:int, y:int}
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>FUNC distance(a:const Point*, b:const Point*) -&gt; int
+<p>This installs the latest headerkit, runs <code>cache populate</code> for the
+specified header and platform, and commits the result.</p>
+<h2 id="pin-a-headerkit-version">Pin a headerkit version<a class="headerlink" href="#pin-a-headerkit-version" title="Permanent link">&para;</a></h2>
+<p>Lock the version to avoid surprises from new releases:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">headerkit-version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.15.0&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--cibuildwheel&quot;</span>
 </code></pre></div>
-<p>Standard output:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># geometry.h (headerkit standard)</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">constants</span><span class="p">:</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">MAX_SIZE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">256</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="nt">structs</span><span class="p">:</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">Point</span><span class="p">:</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">fields</span><span class="p">:</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="nt">x</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">int</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">      </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">int</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="nt">functions</span><span class="p">:</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span><span class="nt">distance: (a</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">const Point*, b</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">const Point*) -&gt; int</span>
+<h2 id="usage-with-cibuildwheel">Usage with cibuildwheel<a class="headerlink" href="#usage-with-cibuildwheel" title="Permanent link">&para;</a></h2>
+<p>If your project uses cibuildwheel, pass <code>--cibuildwheel</code> to auto-detect
+target platforms and Python versions from <code>[tool.cibuildwheel]</code> in
+<code>pyproject.toml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;--cibuildwheel&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
 </code></pre></div>
+<p>This reads the <code>build</code> and <code>skip</code> selectors to determine which CPython
+versions and Linux platforms to target.</p>
+<h2 id="usage-with-multiple-platforms">Usage with multiple platforms<a class="headerlink" href="#usage-with-multiple-platforms" title="Permanent link">&para;</a></h2>
+<p>Generate cache entries for specific platforms using <code>--platform</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;-</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="no">include/mylib.h -w cffi</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="no">--platform linux/amd64</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="no">--platform linux/arm64</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p>For macOS and Windows targets, run the action on the matching runner
+OS instead of relying on Docker emulation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">jobs</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">populate-linux</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/amd64</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/arm64&quot;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="nt">populate-macos</span><span class="p">:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">macos-latest</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="nt">needs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">populate-linux</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi&quot;</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p>Note that when <code>commit: "true"</code> is used across multiple jobs, each job
+must pull the latest commit from the previous job to avoid conflicts.
+Use <code>needs:</code> to sequence them.</p>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p>The action is a <a href="https://docs.github.com/en/actions/sharing-automations/creating-actions/creating-a-composite-action">composite action</a>
+defined in <code>action.yml</code> at the repository root. It:</p>
+<ol>
+<li>Calls <code>actions/setup-python</code> with the requested Python version.</li>
+<li>Installs headerkit via pip. If <code>headerkit-version</code> is set, it pins
+   that exact version; otherwise it installs the latest release.</li>
+<li>Runs <code>headerkit cache populate</code> with your <code>args</code> value. The args
+   are passed through to the command as-is, so any flag that
+   <code>cache populate</code> accepts works here.</li>
+<li>If <code>commit</code> is <code>"true"</code>, it configures a bot git identity, stages
+   <code>.headerkit/</code>, and commits if there are changes. If the cache is
+   already up to date, the commit step is a no-op.</li>
+</ol>
+<p>All input values are passed via environment variables (not shell
+interpolation) to prevent injection attacks.</p>
+<h2 id="triggering-on-header-changes">Triggering on header changes<a class="headerlink" href="#triggering-on-header-changes" title="Permanent link">&para;</a></h2>
+<p>Use <code>paths</code> filters to run the action only when headers change:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">on</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">push</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;include/**/*.h&quot;</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;vendor/**/*.h&quot;</span>
+</code></pre></div>
+<p>This avoids unnecessary cache populate runs on unrelated commits.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../cache/">Cache Strategy Guide</a> for cache layout, bypass flags, and
+  multi-platform population details.</li>
+<li><a href="../build-backend/">Build Backend Guide</a> for using headerkit as a
+  PEP 517 build backend with committed cache.</li>
+</ul>
 
 
 
