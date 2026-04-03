@@ -837,6 +837,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#glob-based-header-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Glob-based header selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Glob-based header selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#output-path-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output path templates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration file
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writer-opt-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1827,6 +1866,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#glob-based-header-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Glob-based header selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Glob-based header selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#output-path-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output path templates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration file
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writer-opt-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1859,7 +1937,7 @@
 
 <h1 id="cache-strategy-guide">Cache Strategy Guide<a class="headerlink" href="#cache-strategy-guide" title="Permanent link">&para;</a></h1>
 <p>headerkit includes a two-layer cache that stores parsed IR and generated
-output in <code>.hkcache/</code>. This enables libclang-free builds by committing the
+output in <code>.headerkit/</code>. This enables libclang-free builds by committing the
 cache to your repository.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Parsing C/C++ headers with libclang is slow and requires libclang to be
@@ -1889,7 +1967,7 @@ work without libclang installed.</p>
 </li>
 </ol>
 <h2 id="directory-layout">Directory layout<a class="headerlink" href="#directory-layout" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>.hkcache/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>.headerkit/
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  ir/
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    index.json                          # slug -&gt; cache_key mapping
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    libclang.mylib.x86_64-linux/        # one dir per unique parse (includes target)
@@ -1969,8 +2047,8 @@ numeric suffix is appended (e.g., <code>libclang.mylib.x86_64-linux-2</code>).</
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Multiple writers in one pass</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/cffi.py<span class="w"> </span>-w<span class="w"> </span>ctypes:bindings/ctypes.py
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Custom cache directory</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>--cache-dir<span class="w"> </span>/tmp/hkcache
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Custom store directory</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>--store-dir<span class="w"> </span>/tmp/headerkit-store
 </code></pre></div>
 <h3 id="pep-517-build-backend">PEP 517 build backend<a class="headerlink" href="#pep-517-build-backend" title="Permanent link">&para;</a></h3>
 <p>Consumer projects can use headerkit as their build backend. When <code>pip install</code>
@@ -1989,7 +2067,7 @@ delegating to the inner backend (hatchling by default).</p>
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">defines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;VERSION=2&quot;</span><span class="p">]</span>
 <a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">include_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/usr/local/include&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>With a committed <code>.hkcache/</code>, the build works without libclang. The build
+<p>With a committed <code>.headerkit/</code>, the build works without libclang. The build
 backend reads from the cache and only falls back to libclang on cache miss.</p>
 <h2 id="cache-bypass">Cache bypass<a class="headerlink" href="#cache-bypass" title="Permanent link">&para;</a></h2>
 <p>Disable caching at three levels:</p>
@@ -2041,54 +2119,57 @@ backend reads from the cache and only falls back to libclang on cache miss.</p>
 <h2 id="cache-management">Cache management<a class="headerlink" href="#cache-management" title="Permanent link">&para;</a></h2>
 <p>headerkit provides subcommands for inspecting and managing the cache.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Show cache statistics</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>status<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>status<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Clear all cache entries</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Clear only IR entries (keeps output cache)</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache<span class="w"> </span>--ir
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit<span class="w"> </span>--ir
 <a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
 <a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="c1"># Clear only output entries (keeps IR cache)</span>
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache<span class="w"> </span>--output
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit<span class="w"> </span>--output
 <a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
 <a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="c1"># Rebuild index.json files from metadata</span>
-<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>rebuild-index<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>rebuild-index<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit
 </code></pre></div>
 <p><code>rebuild-index</code> is useful after manually editing or moving cache entries. It
 scans all <code>metadata.json</code> files and regenerates the <code>index.json</code> mappings.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>Cache settings live in the <code>[cache]</code> section of <code>.headerkit.toml</code> or
-<code>[tool.headerkit.cache]</code> in <code>pyproject.toml</code>.</p>
+<p>The store directory can be configured at the top level of <code>[tool.headerkit]</code>
+(or <code>.headerkit.toml</code>). Cache bypass settings live in the <code>[cache]</code> section.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># .headerkit.toml</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">[cache]</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">cache_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.hkcache&quot;</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">no_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">no_ir_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">no_output_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">store_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.headerkit&quot;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">[cache]</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">no_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">no_ir_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">no_output_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># pyproject.toml</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">[tool.headerkit.cache]</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">cache_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.hkcache&quot;</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">no_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">no_ir_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">no_output_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">[tool.headerkit]</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">store_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.headerkit&quot;</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">[tool.headerkit.cache]</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">no_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">no_ir_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">no_output_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 </code></pre></div>
 <h2 id="committing-the-cache">Committing the cache<a class="headerlink" href="#committing-the-cache" title="Permanent link">&para;</a></h2>
-<p>Commit <code>.hkcache/</code> to your repository so that downstream consumers and CI
+<p>Commit <code>.headerkit/</code> to your repository so that downstream consumers and CI
 can build without libclang:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>git<span class="w"> </span>add<span class="w"> </span>.hkcache/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>git<span class="w"> </span>add<span class="w"> </span>.headerkit/
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;cache: update headerkit cache&quot;</span>
 </code></pre></div>
 <p>When libclang is unavailable and the IR cache misses, <code>generate()</code> will check
 the output cache before raising an error. If a cached output exists for the
 requested writer and inputs, it is returned directly. This makes <code>pip install</code>
-from committed <code>.hkcache/</code> work without libclang.</p>
+from committed <code>.headerkit/</code> work without libclang.</p>
 <p>A typical workflow:</p>
 <ol>
 <li>Developer with libclang runs <code>headerkit</code> to generate bindings.</li>
-<li>Cache entries are written to <code>.hkcache/</code>.</li>
-<li>Developer commits <code>.hkcache/</code> alongside the generated output.</li>
+<li>Cache entries are written to <code>.headerkit/</code>.</li>
+<li>Developer commits <code>.headerkit/</code> alongside the generated output.</li>
 <li>CI and downstream <code>pip install</code> use the cache, no libclang required.</li>
 </ol>
 <h3 id="ci-validation">CI validation<a class="headerlink" href="#ci-validation" title="Permanent link">&para;</a></h3>
@@ -2097,7 +2178,7 @@ from committed <code>.hkcache/</code> work without libclang.</p>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>headerkit<span class="w"> </span>generate<span class="w"> </span>mylib.h<span class="w"> </span>--writer<span class="w"> </span>cffi<span class="w"> </span>--output-path<span class="w"> </span>bindings.py
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Check for uncommitted changes</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>.hkcache/<span class="w"> </span>bindings.py
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>.headerkit/<span class="w"> </span>bindings.py
 </code></pre></div>
 <p>If the diff is non-empty, the cache is stale and needs to be regenerated.</p>
 <h2 id="multi-platform-cache-population">Multi-platform cache population<a class="headerlink" href="#multi-platform-cache-population" title="Permanent link">&para;</a></h2>
@@ -2203,28 +2284,94 @@ per-platform via the config file.</p>
   <code>headerkit cache populate</code> natively on those platforms, or use CI jobs
   to generate platform-specific entries.</li>
 </ul>
+<h2 id="glob-based-header-selection">Glob-based header selection<a class="headerlink" href="#glob-based-header-selection" title="Permanent link">&para;</a></h2>
+<p>Instead of listing each header file explicitly, you can use glob patterns
+to select headers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Process all .h files under include/</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>headerkit<span class="w"> </span><span class="s1">&#39;include/**/*.h&#39;</span><span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:<span class="o">{</span>dir<span class="o">}</span>/<span class="o">{</span>stem<span class="o">}</span>_cffi.py
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># Exclude internal headers</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>headerkit<span class="w"> </span><span class="s1">&#39;include/**/*.h&#39;</span><span class="w"> </span>--exclude<span class="w"> </span><span class="s1">&#39;include/internal/**&#39;</span><span class="w"> </span>-w<span class="w"> </span>cffi
+</code></pre></div>
+<p>Quote glob patterns to prevent shell expansion. headerkit expands them
+relative to the project root.</p>
+<h3 id="output-path-templates">Output path templates<a class="headerlink" href="#output-path-templates" title="Permanent link">&para;</a></h3>
+<p>Use <code>-o WRITER:TEMPLATE</code> to control where generated files are written.
+Templates support these variables:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{stem}</code></td>
+<td>Filename without extension</td>
+<td><code>mylib</code></td>
+</tr>
+<tr>
+<td><code>{name}</code></td>
+<td>Filename with extension</td>
+<td><code>mylib.h</code></td>
+</tr>
+<tr>
+<td><code>{dir}</code></td>
+<td>Relative directory from project root</td>
+<td><code>include/net</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Each header gets its own output file</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>headerkit<span class="w"> </span><span class="s1">&#39;include/**/*.h&#39;</span><span class="w"> </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:<span class="o">{</span>dir<span class="o">}</span>/<span class="o">{</span>stem<span class="o">}</span>_cffi.py
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Multiple writers with different templates</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>headerkit<span class="w"> </span><span class="s1">&#39;include/**/*.h&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span>-w<span class="w"> </span>cffi<span class="w"> </span>-o<span class="w"> </span>cffi:<span class="o">{</span>dir<span class="o">}</span>/<span class="o">{</span>stem<span class="o">}</span>_cffi.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span>-w<span class="w"> </span>json<span class="w"> </span>-o<span class="w"> </span>json:<span class="o">{</span>dir<span class="o">}</span>/<span class="o">{</span>stem<span class="o">}</span>.json
+</code></pre></div>
+<h3 id="configuration-file_1">Configuration file<a class="headerlink" href="#configuration-file_1" title="Permanent link">&para;</a></h3>
+<p>Configure header selection and output templates in <code>pyproject.toml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">[tool.headerkit]</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">exclude</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;include/internal/**&quot;</span><span class="p">]</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="k">[[tool.headerkit.headers]]</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;include/**/*.h&quot;</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="k">[[tool.headerkit.headers]]</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;vendor/special.h&quot;</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">defines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;VENDOR_MODE&quot;</span><span class="p">]</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="k">[tool.headerkit.output]</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="n">cffi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{dir}/{stem}_cffi.py&quot;</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="n">json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{dir}/{stem}.json&quot;</span>
+</code></pre></div>
+<p>Per-pattern overrides (like <code>defines</code> above) apply only to headers
+matching that specific pattern.</p>
 <h2 id="writer-opt-out">Writer opt-out<a class="headerlink" href="#writer-opt-out" title="Permanent link">&para;</a></h2>
 <p>Writers can opt out of output caching by setting <code>cache_output = False</code> as
 a class attribute. The IR cache still runs, but the writer's output is
 regenerated on every call.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.writers</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_writer</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyWriter</span><span class="p">:</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">cache_output</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># always regenerate output</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="nd">@property</span>
-<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>        <span class="k">return</span> <span class="s2">&quot;mywriter&quot;</span>
-<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="nd">@property</span>
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">format_description</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>        <span class="k">return</span> <span class="s2">&quot;My custom output format&quot;</span>
-<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>
-<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">header</span><span class="p">):</span>
-<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="o">...</span>
-<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>
-<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="n">register_writer</span><span class="p">(</span><span class="s2">&quot;mywriter&quot;</span><span class="p">,</span> <span class="n">MyWriter</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.writers</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_writer</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyWriter</span><span class="p">:</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">cache_output</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># always regenerate output</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="nd">@property</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>        <span class="k">return</span> <span class="s2">&quot;mywriter&quot;</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="nd">@property</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">format_description</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>        <span class="k">return</span> <span class="s2">&quot;My custom output format&quot;</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">header</span><span class="p">):</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>        <span class="o">...</span>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="n">register_writer</span><span class="p">(</span><span class="s2">&quot;mywriter&quot;</span><span class="p">,</span> <span class="n">MyWriter</span><span class="p">)</span>
 </code></pre></div>
 <p>The built-in <code>diff</code> and <code>prompt</code> writers use this because their output
 depends on runtime context (baseline header, verbosity) that is not fully
@@ -2232,10 +2379,10 @@ captured by the cache key.</p>
 <p>Writers can also declare a <code>cache_version</code> attribute. Changing this value
 invalidates all cached output for that writer, which is useful when the
 output format changes between versions:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyWriter</span><span class="p">:</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">cache_version</span> <span class="o">=</span> <span class="s2">&quot;2&quot;</span>  <span class="c1"># bump to invalidate old cache entries</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="c1"># ... name, format_description, write() as above</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyWriter</span><span class="p">:</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>    <span class="n">cache_version</span> <span class="o">=</span> <span class="s2">&quot;2&quot;</span>  <span class="c1"># bump to invalidate old cache entries</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="c1"># ... name, format_description, write() as above</span>
 </code></pre></div>
 
 

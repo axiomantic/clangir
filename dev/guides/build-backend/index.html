@@ -2026,7 +2026,7 @@
 <h1 id="build-backend-guide">Build Backend Guide<a class="headerlink" href="#build-backend-guide" title="Permanent link">&para;</a></h1>
 <p>headerkit ships a PEP 517 build backend that generates bindings
 automatically during <code>pip install</code> or <code>python -m build</code>. When the
-<code>.hkcache/</code> directory is committed to version control, the build
+<code>.headerkit/</code> directory is committed to version control, the build
 works without libclang installed on the target machine.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>The build backend wraps an inner backend (hatchling by default). Before
@@ -2058,15 +2058,15 @@ or sdist as usual.</p>
 <p>Run headerkit locally on a machine with libclang installed:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
 </code></pre></div>
-<p>This writes cache entries to <code>.hkcache/</code>.</p>
+<p>This writes cache entries to <code>.headerkit/</code>.</p>
 <h3 id="4-commit-the-cache">4. Commit the cache<a class="headerlink" href="#4-commit-the-cache" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>add<span class="w"> </span>.hkcache/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>add<span class="w"> </span>.headerkit/
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;cache: add headerkit cache&quot;</span>
 </code></pre></div>
 <h3 id="5-consumers-install-without-libclang">5. Consumers install without libclang<a class="headerlink" href="#5-consumers-install-without-libclang" title="Permanent link">&para;</a></h3>
 <p>Anyone who clones your repo (or installs from PyPI) gets bindings
 generated from cache:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">          </span><span class="c1"># reads from .hkcache/, no libclang needed</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">          </span><span class="c1"># reads from .headerkit/, no libclang needed</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>python<span class="w"> </span>-m<span class="w"> </span>build<span class="w">        </span><span class="c1"># same for sdist/wheel builds</span>
 </code></pre></div>
 <h2 id="full-consumer-pyprojecttoml-example">Full consumer pyproject.toml example<a class="headerlink" href="#full-consumer-pyprojecttoml-example" title="Permanent link">&para;</a></h2>
@@ -2090,8 +2090,8 @@ generated from cache:</p>
 <a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="k">[tool.headerkit.headers.</span><span class="s2">&quot;include/mylib_utils.h&quot;</span><span class="k">]</span>
 <a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="n">defines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;VERSION=2&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;UTILS_ONLY&quot;</span><span class="p">]</span>
 <a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>
-<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="k">[tool.headerkit.cache]</span>
-<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="n">cache_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.hkcache&quot;</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="k">[tool.headerkit]</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="n">store_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.headerkit&quot;</span>
 </code></pre></div>
 <h3 id="cross-compilation-example">Cross-compilation example<a class="headerlink" href="#cross-compilation-example" title="Permanent link">&para;</a></h3>
 <p>To target a specific architecture explicitly:</p>
@@ -2120,7 +2120,7 @@ generated from cache:</p>
 <li><code>_run_generation()</code> reads <code>[tool.headerkit]</code> from <code>pyproject.toml</code>.</li>
 <li>For each entry in <code>[tool.headerkit.headers]</code>, it calls <code>generate_all()</code>
    with the configured backend, writers, defines, and include dirs.</li>
-<li><code>generate_all()</code> checks <code>.hkcache/</code> first. On a cache hit, it
+<li><code>generate_all()</code> checks <code>.headerkit/</code> first. On a cache hit, it
    deserializes the stored IR and output without libclang. On a cache
    miss, it falls back to parsing with libclang.</li>
 <li>After generation completes, the inner backend (hatchling by default)
@@ -2205,6 +2205,12 @@ so <code>HOST_GNU_TYPE</code> already reflects the correct target.</p>
 <td>auto-detect</td>
 <td>LLVM target triple for cross-compilation (e.g., <code>aarch64-unknown-linux-gnu</code>)</td>
 </tr>
+<tr>
+<td><code>store_dir</code></td>
+<td>string</td>
+<td><code>".headerkit"</code></td>
+<td>Directory for cache storage</td>
+</tr>
 </tbody>
 </table>
 <h3 id="toolheaderkitheaderspathtoheaderh-keys"><code>[tool.headerkit.headers."path/to/header.h"]</code> keys<a class="headerlink" href="#toolheaderkitheaderspathtoheaderh-keys" title="Permanent link">&para;</a></h3>
@@ -2243,12 +2249,6 @@ so <code>HOST_GNU_TYPE</code> already reflects the correct target.</p>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td><code>cache_dir</code></td>
-<td>string</td>
-<td><code>".hkcache"</code></td>
-<td>Directory for cache storage</td>
-</tr>
 <tr>
 <td><code>no_cache</code></td>
 <td>bool</td>
@@ -2324,7 +2324,7 @@ inner backend:</p>
 <ul>
 <li><strong>Wheel builds</strong> (<code>build_wheel</code>, <code>build_editable</code>): the build fails
   with a <a class="autorefs autorefs-internal" title="            LibclangUnavailableError" href="../../reference/backends/#headerkit.backends.LibclangUnavailableError"><code>LibclangUnavailableError</code></a>. Install libclang and
-  re-run <code>headerkit</code> to populate the cache, then commit <code>.hkcache/</code>.</li>
+  re-run <code>headerkit</code> to populate the cache, then commit <code>.headerkit/</code>.</li>
 <li><strong>Sdist builds</strong> (<code>build_sdist</code>): generation failures are logged as
   warnings and the build continues. This allows sdist creation on
   machines without libclang, as long as the sdist consumer has libclang
@@ -2338,7 +2338,7 @@ inner backend:</p>
 <a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
 <a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
 <a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># Commit updated cache</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>git<span class="w"> </span>add<span class="w"> </span>.hkcache/
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>git<span class="w"> </span>add<span class="w"> </span>.headerkit/
 <a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;cache: update headerkit cache&quot;</span>
 </code></pre></div>
 <h2 id="multiple-headers">Multiple headers<a class="headerlink" href="#multiple-headers" title="Permanent link">&para;</a></h2>
@@ -2379,7 +2379,7 @@ using Docker:</p>
 <ol>
 <li>Run <code>headerkit cache populate --cibuildwheel</code> on a machine with Docker.</li>
 <li>Docker generates cache entries for all target Linux platforms.</li>
-<li>Commit <code>.hkcache/</code> to version control.</li>
+<li>Commit <code>.headerkit/</code> to version control.</li>
 <li>CI builds use the cache; no libclang needed on any platform.</li>
 </ol>
 <p>For macOS and Windows targets, run <code>headerkit cache populate</code> natively on
@@ -2391,9 +2391,9 @@ for Docker setup, configuration, and limitations.</p>
 <h3 id="stale-cache">Stale cache<a class="headerlink" href="#stale-cache" title="Permanent link">&para;</a></h3>
 <p>If bindings are outdated after modifying a header:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Clear the cache and regenerate</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--cache-dir<span class="w"> </span>.hkcache
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>headerkit<span class="w"> </span>cache<span class="w"> </span>clear<span class="w"> </span>--store-dir<span class="w"> </span>.headerkit
 <a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>git<span class="w"> </span>add<span class="w"> </span>.hkcache/
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>git<span class="w"> </span>add<span class="w"> </span>.headerkit/
 <a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;cache: regenerate after header changes&quot;</span>
 </code></pre></div>
 <p>The cache key includes header content, defines, and include dirs. If any
@@ -2413,16 +2413,16 @@ Old entries remain until explicitly cleared.</p>
 </code></pre></div>
 <h3 id="build-fails-but-cache-exists">Build fails but cache exists<a class="headerlink" href="#build-fails-but-cache-exists" title="Permanent link">&para;</a></h3>
 <p>Verify the cache is committed and present in the build environment:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>ls<span class="w"> </span>.hkcache/ir/
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>ls<span class="w"> </span>.hkcache/output/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>ls<span class="w"> </span>.headerkit/ir/
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>ls<span class="w"> </span>.headerkit/output/
 </code></pre></div>
-<p>If files are missing, the <code>.hkcache/</code> directory may not be included in
+<p>If files are missing, the <code>.headerkit/</code> directory may not be included in
 the sdist. Check your inner backend's include/exclude configuration to
-ensure <code>.hkcache/</code> is packaged.</p>
+ensure <code>.headerkit/</code> is packaged.</p>
 <h3 id="ci-validation">CI validation<a class="headerlink" href="#ci-validation" title="Permanent link">&para;</a></h3>
 <p>Verify the committed cache matches current sources:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>headerkit<span class="w"> </span>include/mylib.h<span class="w"> </span>-w<span class="w"> </span>cffi:bindings/mylib_cffi.py
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>.hkcache/<span class="w"> </span>bindings/
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>.headerkit/<span class="w"> </span>bindings/
 </code></pre></div>
 <p>A non-empty diff means the cache is stale and must be regenerated.</p>
 
