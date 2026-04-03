@@ -499,7 +499,7 @@ class TestDockerHelpers:
             headerkit_source=Path("/home/user/headerkit"),
             header_paths=["/home/user/project/include/mylib.h"],
             writers=["cffi"],
-            cache_dir=Path("/home/user/project/.hkcache"),
+            cache_dir=Path("/home/user/project/.headerkit"),
         )
         # Verify command list structure
         assert cmd[:3] == ["docker", "run", "--rm"]
@@ -540,7 +540,7 @@ class TestDockerHelpers:
             project_root=Path("/home/user/project"),
             header_paths=["/home/user/project/include/mylib.h"],
             writers=["cffi"],
-            cache_dir=Path("/home/user/project/.hkcache"),
+            cache_dir=Path("/home/user/project/.headerkit"),
             headerkit_version="0.10.1",
         )
         # Should NOT have headerkit source mount
@@ -570,7 +570,7 @@ class TestDockerHelpers:
             headerkit_source=Path("/home/user/headerkit"),
             header_paths=["/home/user/project/include/mylib.h"],
             writers=["cffi"],
-            cache_dir=Path("/home/user/project/.hkcache"),
+            cache_dir=Path("/home/user/project/.headerkit"),
             include_dirs=["/usr/local/include/libfoo"],
         )
         # Verify volume mount as list item
@@ -604,7 +604,7 @@ class TestDockerHelpers:
             headerkit_source=Path("/home/user/headerkit"),
             header_paths=[malicious_path],
             writers=["cffi"],
-            cache_dir=Path("/home/user/project/.hkcache"),
+            cache_dir=Path("/home/user/project/.headerkit"),
             defines=['FOO=bar"; echo pwned'],
             backend_args=['--arg="; whoami'],
             writer_options={"cffi": {"key": 'val"; cat /etc/passwd'}},
@@ -623,7 +623,7 @@ class TestDockerHelpers:
         assert shlex.quote('cffi:key=val"; cat /etc/passwd') in script
         # Cache dir should be quoted
         # Bash script paths are always POSIX (runs inside Linux container)
-        assert shlex.quote("/home/user/project/.hkcache") in script
+        assert shlex.quote("/home/user/project/.headerkit") in script
 
     def test_build_docker_command_list_writer_options(self) -> None:
         """build_docker_command emits separate --writer-opt flags for list values."""
@@ -642,7 +642,7 @@ class TestDockerHelpers:
             headerkit_source=Path("/home/user/headerkit"),
             header_paths=["/home/user/project/include/mylib.h"],
             writers=["cffi"],
-            cache_dir=Path("/home/user/project/.hkcache"),
+            cache_dir=Path("/home/user/project/.headerkit"),
             writer_options={"cffi": {"exclude": ["^_", "^test_"]}},
         )
         bash_idx = cmd.index("bash")
@@ -670,7 +670,7 @@ class TestPopulateFunction:
             writers=["cffi"],
             platforms=["linux/amd64", "linux/arm64"],
             python_versions=["3.12", "3.13"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         assert len(result.planned) == 4
@@ -684,12 +684,12 @@ class TestPopulateFunction:
         assert len(result.entries) == 0
 
     def test_dry_run_does_not_create_cache_dir(self, tmp_path: Path) -> None:
-        """dry_run=True does not create .hkcache/."""
+        """dry_run=True does not create .headerkit/."""
         from headerkit._populate import populate
 
         header = tmp_path / "test.h"
         header.write_text("int foo(void);\n", encoding="utf-8")
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
 
         populate(
             header_paths=header,
@@ -712,7 +712,7 @@ class TestPopulateFunction:
             populate(
                 header_paths=header,
                 writers=["cffi"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
             )
 
     def test_header_not_found_raises(self, tmp_path: Path) -> None:
@@ -724,7 +724,7 @@ class TestPopulateFunction:
                 header_paths=tmp_path / "nonexistent.h",
                 writers=["cffi"],
                 platforms=["linux/amd64"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
                 dry_run=True,
             )
 
@@ -737,7 +737,7 @@ class TestPopulateFunction:
                 header_paths="-",
                 writers=["cffi"],
                 platforms=["linux/amd64"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
                 dry_run=True,
             )
 
@@ -753,7 +753,7 @@ class TestPopulateFunction:
             writers=["cffi"],
             platforms=["linux/amd64"],
             python_versions=["3.12"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         assert len(result.planned) == 1
@@ -772,7 +772,7 @@ class TestPopulateFunction:
             writers=["cffi"],
             platforms=["linux/amd64"],
             python_versions=["3.12"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         assert len(result.planned) == 1
@@ -798,7 +798,7 @@ class TestPopulateFunction:
                 writers=["cffi"],
                 platforms=["linux/amd64"],
                 python_versions=["3.12"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
                 timeout=60,
             )
         # One target = one subprocess call
@@ -837,7 +837,7 @@ class TestPopulateFunction:
                 writers=["cffi"],
                 platforms=["linux/amd64"],
                 python_versions=["3.12"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
             )
         assert result.total == 1
         assert result.failed == 1
@@ -867,7 +867,7 @@ class TestPopulateFunction:
                 writers=["cffi"],
                 platforms=["linux/amd64"],
                 python_versions=["3.12"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
                 timeout=60,
             )
         assert result.total == 1
@@ -891,7 +891,7 @@ class TestPopulateFunction:
             header_paths=header,
             writers=["cffi"],
             from_cibuildwheel=True,
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         # Should find linux/amd64 and linux/arm64 from cibuildwheel defaults
@@ -915,7 +915,7 @@ class TestPopulateFunction:
         result = populate(
             header_paths=header,
             writers=["json"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         assert len(result.planned) == 1
@@ -939,7 +939,7 @@ class TestPopulateFunction:
             header_paths=header,
             writers=["json"],
             platforms=["linux/amd64"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         assert len(result.planned) == 1
@@ -972,7 +972,7 @@ class TestPopulateFunction:
                 writers=["json"],
                 platforms=["linux/amd64"],
                 python_versions=["3.12"],
-                cache_dir=tmp_path / ".hkcache",
+                cache_dir=tmp_path / ".headerkit",
             )
             # Verify the timeout passed to subprocess.run is 600 (from config)
             call_kwargs = mock_run.call_args[1]
@@ -996,7 +996,7 @@ class TestPopulateFunction:
             writers=["json"],
             platforms=["linux/amd64"],
             python_versions=["3.12"],
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
             timeout=120,
         )
@@ -1025,7 +1025,7 @@ class TestPopulateFunction:
             header_paths=header,
             writers=["json"],
             from_cibuildwheel=True,
-            cache_dir=tmp_path / ".hkcache",
+            cache_dir=tmp_path / ".headerkit",
             dry_run=True,
         )
         docker_platforms = [t.docker_platform for t in result.planned]
@@ -1174,8 +1174,8 @@ class TestCachePopulateCli:
                 "linux/amd64",
                 "--python",
                 "3.12",
-                "--cache-dir",
-                str(tmp_path / ".hkcache"),
+                "--store-dir",
+                str(tmp_path / ".headerkit"),
                 "--dry-run",
             ]
         )
@@ -1201,8 +1201,8 @@ class TestCachePopulateCli:
                 str(header),
                 "-w",
                 "cffi",
-                "--cache-dir",
-                str(tmp_path / ".hkcache"),
+                "--store-dir",
+                str(tmp_path / ".headerkit"),
             ]
         )
         assert exit_code == 1
@@ -1224,8 +1224,8 @@ class TestCachePopulateCli:
                 "cffi",
                 "--platform",
                 "linux/amd64",
-                "--cache-dir",
-                str(tmp_path / ".hkcache"),
+                "--store-dir",
+                str(tmp_path / ".headerkit"),
                 "--dry-run",
             ]
         )
@@ -1262,8 +1262,8 @@ class TestCachePopulateCli:
                     "linux/amd64",
                     "--python",
                     "3.12",
-                    "--cache-dir",
-                    str(tmp_path / ".hkcache"),
+                    "--store-dir",
+                    str(tmp_path / ".headerkit"),
                     "--writer-opt",
                     "cffi:exclude=^_",
                     "--writer-opt",

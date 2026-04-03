@@ -75,6 +75,6 @@ assert output == (
 
 This applies anywhere a multi-line string literal appears: assertions, expected-value variables, template strings, error messages.
 
-## Zero runtime dependencies
+## Runtime dependencies
 
-The project has no runtime dependencies (`dependencies = []` in pyproject.toml). Keep it that way. If a feature needs an external package, make it an optional dependency with graceful degradation when absent.
+The project has one conditional runtime dependency: `tomli` for Python 3.10 (before `tomllib` was added to stdlib). All other functionality is zero-dependency. If a feature needs an external package, make it an optional dependency with graceful degradation when absent.

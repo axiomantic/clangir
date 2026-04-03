@@ -19,29 +19,59 @@ from headerkit.ir import CType, Function, Header, Parameter
 class TestFindCacheDir:
     """Tests for cache directory resolution."""
 
-    def test_creates_hkcache_at_git_root(self, tmp_path: Path) -> None:
+    def test_creates_headerkit_at_git_root(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
         result = find_cache_dir(tmp_path)
-        assert result == tmp_path / ".hkcache"
-
-    def test_finds_existing_hkcache(self, tmp_path: Path) -> None:
-        (tmp_path / ".hkcache").mkdir()
-        result = find_cache_dir(tmp_path)
-        assert result == tmp_path / ".hkcache"
+        assert result == tmp_path / ".headerkit"
 
     def test_walks_upward(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
         subdir = tmp_path / "src" / "lib"
         subdir.mkdir(parents=True)
         result = find_cache_dir(subdir)
-        assert result == tmp_path / ".hkcache"
+        assert result == tmp_path / ".headerkit"
+
+    def test_find_cache_dir_creates_headerkit_at_git_root(self, tmp_path: Path) -> None:
+        """Verify .headerkit/ is created at the .git root, not at intermediate directories."""
+        (tmp_path / ".git").mkdir()
+        subdir = tmp_path / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        result = find_cache_dir(subdir)
+        assert result == tmp_path / ".headerkit"
+        assert (tmp_path / ".headerkit").is_dir()
+        # Should NOT create .headerkit/ at intermediate directories
+        assert not (subdir / ".headerkit").exists()
+        assert not (tmp_path / "src" / ".headerkit").exists()
+
+    def test_find_cache_dir_no_project_root_returns_none(self, tmp_path: Path) -> None:
+        """Verify returns None when no .git found."""
+        # No .git directory anywhere in the hierarchy
+        subdir = tmp_path / "isolated" / "deep"
+        subdir.mkdir(parents=True)
+        result = find_cache_dir(subdir)
+        assert result is None
+
+    def test_find_cache_dir_no_walkup_for_existing(self, tmp_path: Path) -> None:
+        """Verify that an existing .headerkit/ at an intermediate directory is NOT found."""
+        # Create .git at top level
+        (tmp_path / ".git").mkdir()
+        # Create .headerkit/ at an intermediate directory (not at git root)
+        intermediate = tmp_path / "sub"
+        intermediate.mkdir()
+        (intermediate / ".headerkit").mkdir()
+        # Start from a deeper directory
+        deep = intermediate / "deep"
+        deep.mkdir()
+        result = find_cache_dir(deep)
+        # Should find .headerkit at git root, not at intermediate
+        assert result == tmp_path / ".headerkit"
 
 
 class TestWriteReadIrEntry:
     """Tests for IR cache entry write/read."""
 
     def test_round_trip(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         cache_dir.mkdir()
         (cache_dir / "ir").mkdir()
 
@@ -68,7 +98,7 @@ class TestWriteReadIrEntry:
         assert result == header
 
     def test_missing_entry_returns_none(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         cache_dir.mkdir()
         (cache_dir / "ir").mkdir()
 
@@ -76,7 +106,7 @@ class TestWriteReadIrEntry:
         assert result is None
 
     def test_writes_metadata(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         cache_dir.mkdir()
         (cache_dir / "ir").mkdir()
 
@@ -106,7 +136,7 @@ class TestWriteReadIrEntry:
         assert isinstance(meta["created"], str)
 
     def test_corrupt_ir_returns_none(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         (cache_dir / "ir" / "libclang.bad").mkdir(parents=True)
         (cache_dir / "ir" / "libclang.bad" / "ir.json").write_text("not json")
         (cache_dir / "ir" / "libclang.bad" / "metadata.json").write_text(
@@ -121,7 +151,7 @@ class TestWriteReadOutputEntry:
     """Tests for output cache entry write/read."""
 
     def test_round_trip(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         cache_dir.mkdir()
         (cache_dir / "output").mkdir()
 
@@ -148,7 +178,7 @@ class TestWriteReadOutputEntry:
         assert result == output_text
 
     def test_missing_entry_returns_none(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         cache_dir.mkdir()
         (cache_dir / "output").mkdir()
 

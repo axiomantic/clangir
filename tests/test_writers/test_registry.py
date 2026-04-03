@@ -265,6 +265,17 @@ class TestWriterRegistryIntegration:
 
         assert output == "int test_func(void);"
 
+    def test_default_output_pattern_accessible(self) -> None:
+        """Each built-in writer class has a default_output_pattern attribute."""
+        for name in list_writers():
+            writer = get_writer(name)
+            pattern = getattr(writer, "default_output_pattern", None)
+            assert pattern is not None, f"Writer {name!r} missing default_output_pattern attribute"
+            assert isinstance(pattern, str)
+            assert "{stem}" in pattern or "{dir}" in pattern, (
+                f"Writer {name!r} default_output_pattern={pattern!r} should contain template variables"
+            )
+
     def test_roundtrip_json(self) -> None:
         """Parse a simple header, write with json writer, verify JSON is valid."""
         header = Header(

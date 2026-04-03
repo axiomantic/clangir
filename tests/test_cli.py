@@ -16,6 +16,7 @@ from headerkit._cli import (
     _build_umbrella,
     _env_bool,
     _parse_defines,
+    _parse_output_specs,
     _parse_writer_specs,
     main,
 )
@@ -100,16 +101,33 @@ def reset_registries() -> Generator[None, None, None]:
 
 @pytest.fixture()
 def setup_mocks(reset_registries: None) -> Generator[tuple[MagicMock, MagicMock], None, None]:  # noqa: ARG001
-    """Patch generate() in _cli module, suppress plugin loading.
+    """Patch generate() and batch_generate() in _cli module, suppress plugin loading.
 
     Yields (mock_generate, mock_generate) for backwards compatibility with tests
     that destructure into (mock_get_backend, mock_get_writer).  Both elements
     are the same mock so assert_called_once() works on either.
     """
+    from headerkit._generate import BatchResult, GenerateResult
+
     mock_generate = MagicMock(return_value="mock-output")
+    mock_batch_generate = MagicMock(
+        return_value=BatchResult(
+            results=[
+                GenerateResult(
+                    writer_name="mock",
+                    output="mock-output",
+                    output_path=None,
+                    from_cache=False,
+                )
+            ],
+            headers_processed=1,
+            headers_skipped=0,
+        )
+    )
 
     with (
         patch("headerkit._cli.generate", mock_generate),
+        patch("headerkit._cli.batch_generate", mock_batch_generate),
         patch("headerkit._cli._load_backend_plugins"),
         patch("headerkit._cli._load_writer_plugins"),
     ):
@@ -123,29 +141,29 @@ def setup_mocks(reset_registries: None) -> Generator[tuple[MagicMock, MagicMock]
 
 class TestParseWriterSpecs:
     def test_parse_single_writer_stdout(self) -> None:
-        """'-w cffi' produces WriterSpec with output_path=None."""
+        """'-w cffi' produces WriterSpec with output_template=None."""
         specs = _parse_writer_specs(["cffi"], [])
         assert len(specs) == 1
         assert specs[0].name == "cffi"
-        assert specs[0].output_path is None
+        assert specs[0].output_template is None
         assert specs[0].options == {}
 
-    def test_parse_single_writer_file(self) -> None:
-        """'-w cffi:out.h' produces WriterSpec with output_path='out.h'."""
-        specs = _parse_writer_specs(["cffi:out.h"], [])
+    def test_parse_single_writer_no_output(self) -> None:
+        """'-w cffi' produces WriterSpec with output_template=None (output set via -o)."""
+        specs = _parse_writer_specs(["cffi"], [])
         assert len(specs) == 1
         assert specs[0].name == "cffi"
-        assert specs[0].output_path == "out.h"
+        assert specs[0].output_template is None
         assert specs[0].options == {}
 
     def test_parse_multiple_writers(self) -> None:
-        """'-w cffi:a.h -w json:b.json' produces two specs."""
-        specs = _parse_writer_specs(["cffi:a.h", "json:b.json"], [])
+        """'-w cffi -w json' produces two specs with output_template=None."""
+        specs = _parse_writer_specs(["cffi", "json"], [])
         assert len(specs) == 2
         assert specs[0].name == "cffi"
-        assert specs[0].output_path == "a.h"
+        assert specs[0].output_template is None
         assert specs[1].name == "json"
-        assert specs[1].output_path == "b.json"
+        assert specs[1].output_template is None
 
     def test_parse_writer_opt_scoped(self) -> None:
         """'--writer-opt cffi:exclude_patterns=^__' accumulates correctly."""
@@ -268,13 +286,14 @@ class TestMain:
         )
 
     def test_main_no_input_exits(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """No input files produces nonzero exit (argparse error)."""
+        """No input files produces nonzero exit code with error on stderr."""
         monkeypatch.setattr(sys, "argv", ["headerkit", "--no-config"])
-        with pytest.raises(SystemExit) as exc_info:
-            from headerkit._cli import main
+        from headerkit._cli import main
 
-            main()
-        assert exc_info.value.code != 0
+        result = main()
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "no input files" in captured.err
 
     def test_main_single_writer_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -294,23 +313,37 @@ class TestMain:
         assert call_kwargs.kwargs["writer_name"] == "mock"
 
     def test_main_single_writer_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Single writer with output path writes to file."""
+        """Single writer with -o output template routes to batch_generate."""
         header_file = tmp_path / "test.h"
         header_file.write_text("// test\n")
         output_file = tmp_path / "out.h"
         monkeypatch.setattr(
             sys,
             "argv",
-            ["headerkit", "--no-config", "-w", f"mock:{output_file}", str(header_file)],
+            ["headerkit", "--no-config", "-w", "mock", "-o", f"mock:{output_file}", str(header_file)],
         )
         from headerkit._cli import main
 
-        result = main()
+        with patch("headerkit._cli.batch_generate") as mock_batch:
+            from headerkit._generate import BatchResult, GenerateResult
+
+            mock_batch.return_value = BatchResult(
+                results=[
+                    GenerateResult(
+                        writer_name="mock",
+                        output="mock-output",
+                        output_path=output_file,
+                        from_cache=False,
+                    )
+                ],
+                headers_processed=1,
+                headers_skipped=0,
+            )
+            result = main()
         assert result == 0
-        assert output_file.read_text(encoding="utf-8") == "mock-output"
-        self.mock_generate.assert_called_once()
-        call_kwargs = self.mock_generate.call_args
-        assert call_kwargs.kwargs["writer_name"] == "mock"
+        mock_batch.assert_called_once()
+        call_kwargs = mock_batch.call_args
+        assert call_kwargs.kwargs["output_templates"] == {"mock": str(output_file)}
 
     def test_main_multiple_stdout_exits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -473,7 +506,7 @@ class TestMain:
 
 
 class TestCacheFlags:
-    """Tests for --no-cache, --no-ir-cache, --no-output-cache, --cache-dir flags."""
+    """Tests for --no-cache, --no-ir-cache, --no-output-cache, --store-dir flags."""
 
     def test_no_cache_flag_parsed(self) -> None:
         """--no-cache sets args.no_cache to True."""
@@ -493,11 +526,11 @@ class TestCacheFlags:
         args = parser.parse_args(["test.h", "--no-output-cache"])
         assert args.no_output_cache is True
 
-    def test_cache_dir_flag_parsed(self) -> None:
-        """--cache-dir stores the provided path."""
+    def test_store_dir_flag_parsed(self) -> None:
+        """--store-dir stores the provided path."""
         parser = _build_parser()
-        args = parser.parse_args(["test.h", "--cache-dir", "/tmp/cache"])
-        assert args.cache_dir == "/tmp/cache"
+        args = parser.parse_args(["test.h", "--store-dir", "/tmp/store"])
+        assert args.store_dir == "/tmp/store"
 
     def test_defaults(self) -> None:
         """All cache flags default to False/None when not specified."""
@@ -506,7 +539,7 @@ class TestCacheFlags:
         assert args.no_cache is False
         assert args.no_ir_cache is False
         assert args.no_output_cache is False
-        assert args.cache_dir is None
+        assert args.store_dir is None
 
 
 # =============================================================================
@@ -538,3 +571,75 @@ class TestEnvBool:
         """Custom default is returned when var is unset."""
         monkeypatch.delenv("TEST_VAR", raising=False)
         assert _env_bool("TEST_VAR", default=True) is True
+
+
+# =============================================================================
+# TestBatchCLIIntegration
+# =============================================================================
+
+
+class TestBatchCLIIntegration:
+    """Tests for CLI batch generation integration."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, reset_registries: None) -> None:  # noqa: ARG002
+        pass
+
+    def test_cli_glob_patterns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Verify CLI accepts glob patterns as positional args."""
+        parser = _build_parser()
+        args = parser.parse_args(["*.h", "--no-config"])
+        assert args.input_files == ["*.h"]
+
+    def test_cli_exclude_flag(self) -> None:
+        """Verify --exclude is parsed."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--exclude", "internal/**"])
+        assert args.exclude_patterns == ["internal/**"]
+
+    def test_cli_exclude_flag_multiple(self) -> None:
+        """Multiple --exclude flags accumulate."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "--exclude", "a/**", "--exclude", "b/**"])
+        assert args.exclude_patterns == ["a/**", "b/**"]
+
+    def test_cli_output_flag(self) -> None:
+        """Verify -o cffi:{stem}_cffi.py is parsed correctly."""
+        result = _parse_output_specs(["cffi:{stem}_cffi.py"])
+        assert result == {"cffi": "{stem}_cffi.py"}
+
+    def test_cli_writer_bare_name(self) -> None:
+        """Verify -w cffi works with bare name (no :path)."""
+        specs = _parse_writer_specs(["cffi"], [])
+        assert len(specs) == 1
+        assert specs[0].name == "cffi"
+        assert specs[0].output_template is None
+
+    def test_cli_no_headers_error(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """Verify error message when no headers provided and no config."""
+        monkeypatch.setattr(sys, "argv", ["headerkit", "--no-config"])
+        mock_generate = MagicMock(return_value="mock-output")
+        with (
+            patch("headerkit._cli.generate", mock_generate),
+            patch("headerkit._cli.batch_generate", MagicMock()),
+            patch("headerkit._cli._load_backend_plugins"),
+            patch("headerkit._cli._load_writer_plugins"),
+        ):
+            result = main()
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "no input files" in captured.err
+
+    def test_cli_nargs_star_allows_empty(self) -> None:
+        """nargs='*' allows zero positional args (no argparse error)."""
+        parser = _build_parser()
+        args = parser.parse_args(["--no-config"])
+        assert args.input_files == []
+
+    def test_cli_output_flag_parser(self) -> None:
+        """Verify -o is parsed by argparse into output_specs."""
+        parser = _build_parser()
+        args = parser.parse_args(["test.h", "-o", "cffi:{stem}_cffi.py"])
+        assert args.output_specs == ["cffi:{stem}_cffi.py"]

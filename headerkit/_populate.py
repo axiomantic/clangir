@@ -577,7 +577,7 @@ def populate(
     :param backend_args: Extra backend arguments.
     :param backend_name: Backend name (default: "libclang").
     :param writer_options: Per-writer options.
-    :param cache_dir: Cache directory (default: auto-detected .hkcache/).
+    :param cache_dir: Cache directory (default: auto-detected .headerkit/).
     :param dry_run: Plan without executing.
     :param timeout: Per-container timeout in seconds.
     :returns: PopulateResult with per-entry results.
@@ -612,7 +612,7 @@ def populate(
     if cache_dir is not None:
         resolved_cache_dir = Path(cache_dir).resolve()
     else:
-        resolved_cache_dir = project_root / ".hkcache"
+        resolved_cache_dir = project_root / ".headerkit"
 
     # Load populate config from pyproject.toml for defaults
     config_images: dict[str, str] | None = None

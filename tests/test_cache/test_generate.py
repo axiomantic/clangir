@@ -16,7 +16,7 @@ from headerkit.ir import CType, Function, Header, Parameter
 
 @pytest.fixture()
 def project_dir(tmp_path: Path) -> Path:
-    """Set up a project directory with .git and .hkcache."""
+    """Set up a project directory with .git and .headerkit."""
     (tmp_path / ".git").mkdir()
     return tmp_path
 
@@ -48,7 +48,7 @@ class TestGenerateIRCacheMiss:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
         )
 
         # Verify JSON output contains expected function declaration
@@ -62,7 +62,7 @@ class TestGenerateIRCacheMiss:
         assert decl["parameters"][1]["name"] == "b"
 
         # IR cache should now exist
-        ir_dir = project_dir / ".hkcache" / "ir"
+        ir_dir = project_dir / ".headerkit" / "ir"
         assert ir_dir.exists()
         entries = [d for d in ir_dir.iterdir() if d.is_dir()]
         assert len(entries) == 1
@@ -87,7 +87,7 @@ class TestGenerateIRCacheHit:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
         )
 
         # Reset mock to track second call
@@ -98,7 +98,7 @@ class TestGenerateIRCacheHit:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
         )
 
         # Verify cached result matches expected output
@@ -124,12 +124,12 @@ class TestGenerateNoCache:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
             no_cache=True,
         )
 
         # Cache dir should not have any IR entries
-        ir_dir = project_dir / ".hkcache" / "ir"
+        ir_dir = project_dir / ".headerkit" / "ir"
         assert not ir_dir.exists() or not any(d.is_dir() for d in ir_dir.iterdir())
 
 
@@ -148,7 +148,7 @@ class TestGenerateAll:
             header_path=header_file,
             writers=["json"],
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
         )
 
         assert len(results) == 1
@@ -169,7 +169,7 @@ class TestGenerateAll:
             header_path=header_file,
             writers=["json"],
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
         )
 
         assert mock_backend.parse.call_count == 1
@@ -193,7 +193,7 @@ class TestGenerateOutputPath:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
             output_path=out_file,
         )
 
@@ -230,18 +230,18 @@ class TestGenerateOutputCacheFallback:
         monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
         monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
 
-        cache_path = project_dir / ".hkcache"
+        cache_path = project_dir / ".headerkit"
 
         # First call: populate cache (both IR and output)
         output1 = generate(
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=cache_path,
+            store_dir=cache_path,
         )
 
         # Delete IR cache but keep output cache -- simulates a committed
-        # .hkcache/ that only ships output entries (no IR).
+        # .headerkit/ that only ships output entries (no IR).
         ir_dir = cache_path / "ir"
         assert ir_dir.exists()
         shutil.rmtree(ir_dir)
@@ -258,7 +258,7 @@ class TestGenerateOutputCacheFallback:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=cache_path,
+            store_dir=cache_path,
         )
 
         assert output1 == output2
@@ -274,7 +274,7 @@ class TestGenerateOutputCacheFallback:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
             )
 
     def test_raises_when_cache_disabled_and_no_backend(
@@ -288,7 +288,7 @@ class TestGenerateOutputCacheFallback:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
                 no_cache=True,
             )
 
@@ -301,13 +301,13 @@ class TestGenerateFileNotFound:
             generate(
                 header_path=project_dir / "nonexistent.h",
                 writer_name="json",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
             )
 
 
 def _invalidate_all_caches(project_dir: Path) -> None:
     """Ensure both IR and output caches are empty."""
-    cache_path = project_dir / ".hkcache"
+    cache_path = project_dir / ".headerkit"
     if cache_path.exists():
         shutil.rmtree(cache_path)
     cache_path.mkdir(parents=True, exist_ok=True)
@@ -356,12 +356,12 @@ class TestGenerateAutoInstall:
         _invalidate_all_caches(project_dir)
         mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
 
-        cache_path = project_dir / ".hkcache"
+        cache_path = project_dir / ".headerkit"
         result = generate(
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=cache_path,
+            store_dir=cache_path,
             auto_install_libclang=True,
         )
 
@@ -381,12 +381,12 @@ class TestGenerateAutoInstall:
         monkeypatch.setenv("HEADERKIT_AUTO_INSTALL_LIBCLANG", "1")
         mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
 
-        cache_path = project_dir / ".hkcache"
+        cache_path = project_dir / ".headerkit"
         result = generate(
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=cache_path,
+            store_dir=cache_path,
         )
 
         mock_auto_install.assert_called_once_with()
@@ -408,12 +408,12 @@ class TestGenerateAutoInstall:
         )
         mock_auto_install = self._make_backend_unavailable_then_available(header_file, monkeypatch)
 
-        cache_path = project_dir / ".hkcache"
+        cache_path = project_dir / ".headerkit"
         result = generate(
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=cache_path,
+            store_dir=cache_path,
         )
 
         mock_auto_install.assert_called_once_with()
@@ -438,7 +438,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
             )
 
         mock_auto_install.assert_not_called()
@@ -461,7 +461,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
                 auto_install_libclang=False,
             )
 
@@ -490,7 +490,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
             )
 
         mock_auto_install.assert_not_called()
@@ -512,7 +512,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
                 auto_install_libclang=True,
             )
 
@@ -543,7 +543,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="custom_backend",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
                 auto_install_libclang=True,
             )
 
@@ -573,7 +573,7 @@ class TestGenerateAutoInstall:
                 header_path=header_file,
                 writer_name="json",
                 backend_name="libclang",
-                cache_dir=project_dir / ".hkcache",
+                store_dir=project_dir / ".headerkit",
             )
 
         mock_auto_install.assert_not_called()
@@ -601,7 +601,7 @@ class TestGenerateAutoInstall:
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            cache_dir=project_dir / ".hkcache",
+            store_dir=project_dir / ".headerkit",
             auto_install_libclang=True,
         )
 

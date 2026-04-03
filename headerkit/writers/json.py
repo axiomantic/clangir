@@ -230,6 +230,8 @@ class JsonWriter:
         json_string = writer.write(header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}.json"
+
     def __init__(self, indent: int | None = 2) -> None:
         self._indent = indent
 

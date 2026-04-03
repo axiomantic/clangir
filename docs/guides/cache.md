@@ -1,7 +1,7 @@
 # Cache Strategy Guide
 
 headerkit includes a two-layer cache that stores parsed IR and generated
-output in `.hkcache/`. This enables libclang-free builds by committing the
+output in `.headerkit/`. This enables libclang-free builds by committing the
 cache to your repository.
 
 ## Overview
@@ -34,7 +34,7 @@ The cache uses content-addressed storage with human-readable directory names.
 ## Directory layout
 
 ```
-.hkcache/
+.headerkit/
   ir/
     index.json                          # slug -> cache_key mapping
     libclang.mylib.x86_64-linux/        # one dir per unique parse (includes target)
@@ -122,8 +122,8 @@ headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
 # Multiple writers in one pass
 headerkit include/mylib.h -w cffi:bindings/cffi.py -w ctypes:bindings/ctypes.py
 
-# Custom cache directory
-headerkit include/mylib.h -w cffi --cache-dir /tmp/hkcache
+# Custom store directory
+headerkit include/mylib.h -w cffi --store-dir /tmp/headerkit-store
 ```
 
 ### PEP 517 build backend
@@ -147,7 +147,7 @@ defines = ["VERSION=2"]
 include_dirs = ["/usr/local/include"]
 ```
 
-With a committed `.hkcache/`, the build works without libclang. The build
+With a committed `.headerkit/`, the build works without libclang. The build
 backend reads from the cache and only falls back to libclang on cache miss.
 
 ## Cache bypass
@@ -187,19 +187,19 @@ headerkit provides subcommands for inspecting and managing the cache.
 
 ```bash
 # Show cache statistics
-headerkit cache status --cache-dir .hkcache
+headerkit cache status --store-dir .headerkit
 
 # Clear all cache entries
-headerkit cache clear --cache-dir .hkcache
+headerkit cache clear --store-dir .headerkit
 
 # Clear only IR entries (keeps output cache)
-headerkit cache clear --cache-dir .hkcache --ir
+headerkit cache clear --store-dir .headerkit --ir
 
 # Clear only output entries (keeps IR cache)
-headerkit cache clear --cache-dir .hkcache --output
+headerkit cache clear --store-dir .headerkit --output
 
 # Rebuild index.json files from metadata
-headerkit cache rebuild-index --cache-dir .hkcache
+headerkit cache rebuild-index --store-dir .headerkit
 ```
 
 `rebuild-index` is useful after manually editing or moving cache entries. It
@@ -207,13 +207,14 @@ scans all `metadata.json` files and regenerates the `index.json` mappings.
 
 ## Configuration
 
-Cache settings live in the `[cache]` section of `.headerkit.toml` or
-`[tool.headerkit.cache]` in `pyproject.toml`.
+The store directory can be configured at the top level of `[tool.headerkit]`
+(or `.headerkit.toml`). Cache bypass settings live in the `[cache]` section.
 
 ```toml
 # .headerkit.toml
+store_dir = ".headerkit"
+
 [cache]
-cache_dir = ".hkcache"
 no_cache = false
 no_ir_cache = false
 no_output_cache = false
@@ -221,8 +222,10 @@ no_output_cache = false
 
 ```toml
 # pyproject.toml
+[tool.headerkit]
+store_dir = ".headerkit"
+
 [tool.headerkit.cache]
-cache_dir = ".hkcache"
 no_cache = false
 no_ir_cache = false
 no_output_cache = false
@@ -230,24 +233,24 @@ no_output_cache = false
 
 ## Committing the cache
 
-Commit `.hkcache/` to your repository so that downstream consumers and CI
+Commit `.headerkit/` to your repository so that downstream consumers and CI
 can build without libclang:
 
 ```bash
-git add .hkcache/
+git add .headerkit/
 git commit -m "cache: update headerkit cache"
 ```
 
 When libclang is unavailable and the IR cache misses, `generate()` will check
 the output cache before raising an error. If a cached output exists for the
 requested writer and inputs, it is returned directly. This makes `pip install`
-from committed `.hkcache/` work without libclang.
+from committed `.headerkit/` work without libclang.
 
 A typical workflow:
 
 1. Developer with libclang runs `headerkit` to generate bindings.
-2. Cache entries are written to `.hkcache/`.
-3. Developer commits `.hkcache/` alongside the generated output.
+2. Cache entries are written to `.headerkit/`.
+3. Developer commits `.headerkit/` alongside the generated output.
 4. CI and downstream `pip install` use the cache, no libclang required.
 
 ### CI validation
@@ -259,7 +262,7 @@ To verify the committed cache is up-to-date in CI:
 headerkit generate mylib.h --writer cffi --output-path bindings.py
 
 # Check for uncommitted changes
-git diff --exit-code .hkcache/ bindings.py
+git diff --exit-code .headerkit/ bindings.py
 ```
 
 If the diff is non-empty, the cache is stale and needs to be regenerated.
@@ -374,6 +377,66 @@ per-platform via the config file.
 - **macOS and Windows**: Cannot be emulated via Docker. Run
   `headerkit cache populate` natively on those platforms, or use CI jobs
   to generate platform-specific entries.
+
+## Glob-based header selection
+
+Instead of listing each header file explicitly, you can use glob patterns
+to select headers:
+
+```bash
+# Process all .h files under include/
+headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}_cffi.py
+
+# Exclude internal headers
+headerkit 'include/**/*.h' --exclude 'include/internal/**' -w cffi
+```
+
+Quote glob patterns to prevent shell expansion. headerkit expands them
+relative to the project root.
+
+### Output path templates
+
+Use `-o WRITER:TEMPLATE` to control where generated files are written.
+Templates support these variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{stem}` | Filename without extension | `mylib` |
+| `{name}` | Filename with extension | `mylib.h` |
+| `{dir}` | Relative directory from project root | `include/net` |
+
+```bash
+# Each header gets its own output file
+headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}_cffi.py
+
+# Multiple writers with different templates
+headerkit 'include/**/*.h' \
+    -w cffi -o cffi:{dir}/{stem}_cffi.py \
+    -w json -o json:{dir}/{stem}.json
+```
+
+### Configuration file
+
+Configure header selection and output templates in `pyproject.toml`:
+
+```toml
+[tool.headerkit]
+exclude = ["include/internal/**"]
+
+[[tool.headerkit.headers]]
+pattern = "include/**/*.h"
+
+[[tool.headerkit.headers]]
+pattern = "vendor/special.h"
+defines = ["VENDOR_MODE"]
+
+[tool.headerkit.output]
+cffi = "{dir}/{stem}_cffi.py"
+json = "{dir}/{stem}.json"
+```
+
+Per-pattern overrides (like `defines` above) apply only to headers
+matching that specific pattern.
 
 ## Writer opt-out
 

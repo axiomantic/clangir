@@ -77,4 +77,4 @@ site/
 
 # Claude Code local workspace (worktrees, settings, etc.)
 .claude/
-.hkcache/
+.headerkit/

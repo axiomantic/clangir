@@ -1,8 +1,9 @@
 """headerkit - C/C++ header parsing toolkit."""
 
-from headerkit._generate import GenerateResult, generate, generate_all
+from headerkit._generate import BatchResult, GenerateResult, batch_generate, generate, generate_all
 from headerkit._ir_json import json_to_header
 from headerkit._populate import PopulateResult, PopulateTarget, populate
+from headerkit._resolve import check_output_collisions, resolve_headers, resolve_output_path
 from headerkit._target import detect_process_triple, resolve_target
 from headerkit.backends import (
     LibclangUnavailableError,
@@ -86,6 +87,13 @@ __all__ = [
     "generate",
     "generate_all",
     "GenerateResult",
+    # Batch API
+    "batch_generate",
+    "BatchResult",
+    # Resolve API
+    "resolve_headers",
+    "resolve_output_path",
+    "check_output_collisions",
     # IR JSON API
     "json_to_header",
     # Populate API

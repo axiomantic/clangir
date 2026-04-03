@@ -84,13 +84,16 @@ class TestCliSmokeTests:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """json writer creates output file with valid JSON."""
+        # Create .git marker so tmp_path is recognized as a project root
+        (tmp_path / ".git").mkdir()
+        monkeypatch.chdir(tmp_path)
         header = tmp_path / "test.h"
         header.write_text(_SIMPLE_HEADER)
         output = tmp_path / "out.json"
         monkeypatch.setattr(
             sys,
             "argv",
-            ["headerkit", "--no-config", "-w", f"json:{output}", str(header)],
+            ["headerkit", "--no-config", "-w", "json", "-o", f"json:{output}", str(header)],
         )
 
         result = main()
@@ -348,6 +351,8 @@ class TestCliMultipleWriters:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Two writers routing to files each produce a file with correct content."""
+        (tmp_path / ".git").mkdir()
+        monkeypatch.chdir(tmp_path)
         header = tmp_path / "test.h"
         header.write_text(_FUNCTION_ONLY)
         json_out = tmp_path / "out.json"
@@ -359,8 +364,12 @@ class TestCliMultipleWriters:
                 "headerkit",
                 "--no-config",
                 "-w",
-                f"json:{json_out}",
+                "json",
                 "-w",
+                "cffi",
+                "-o",
+                f"json:{json_out}",
+                "-o",
                 f"cffi:{cffi_out}",
                 str(header),
             ],
@@ -375,13 +384,14 @@ class TestCliMultipleWriters:
         assert "declarations" in data
         assert "multiply" in cffi_out.read_text(encoding="utf-8")
 
-    def test_one_writer_to_file_one_to_stdout(
+    def test_one_writer_explicit_one_writer_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """One writer routes to file; the other writes to stdout."""
+        """One writer with explicit -o path; the other uses its default output pattern."""
+        (tmp_path / ".git").mkdir()
+        monkeypatch.chdir(tmp_path)
         header = tmp_path / "test.h"
         header.write_text(_FUNCTION_ONLY)
         json_out = tmp_path / "out.json"
@@ -392,9 +402,11 @@ class TestCliMultipleWriters:
                 "headerkit",
                 "--no-config",
                 "-w",
-                f"json:{json_out}",
+                "json",
                 "-w",
                 "cffi",
+                "-o",
+                f"json:{json_out}",
                 str(header),
             ],
         )
@@ -403,7 +415,10 @@ class TestCliMultipleWriters:
 
         assert result == 0
         assert json_out.exists()
-        assert "multiply" in capsys.readouterr().out
+        # cffi writer uses default pattern {dir}/{stem}_cffi.py
+        cffi_default = tmp_path / "test_cffi.py"
+        assert cffi_default.exists()
+        assert "multiply" in cffi_default.read_text(encoding="utf-8")
 
 
 # ===========================================================================
@@ -418,9 +433,10 @@ class TestCliMultipleInputFiles:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Declarations from both input files appear in the merged output."""
+        """Declarations from both input files appear in the output files."""
+        (tmp_path / ".git").mkdir()
+        monkeypatch.chdir(tmp_path)
         header_a = tmp_path / "a.h"
         header_b = tmp_path / "b.h"
         header_a.write_text("int func_a(void);\n")
@@ -441,17 +457,22 @@ class TestCliMultipleInputFiles:
         result = main()
 
         assert result == 0
-        out = capsys.readouterr().out
-        assert "func_a" in out
-        assert "func_b" in out
+        # Batch mode writes to default output pattern {dir}/{stem}_cffi.py
+        cffi_a = tmp_path / "a_cffi.py"
+        cffi_b = tmp_path / "b_cffi.py"
+        assert cffi_a.exists()
+        assert cffi_b.exists()
+        assert "func_a" in cffi_a.read_text(encoding="utf-8")
+        assert "func_b" in cffi_b.read_text(encoding="utf-8")
 
     def test_two_files_json_declaration_count(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """JSON output declaration count reflects all merged input files."""
+        (tmp_path / ".git").mkdir()
+        monkeypatch.chdir(tmp_path)
         header_a = tmp_path / "a.h"
         header_b = tmp_path / "b.h"
         header_a.write_text("int alpha(void);\n")
@@ -472,10 +493,17 @@ class TestCliMultipleInputFiles:
         result = main()
 
         assert result == 0
-        data = json.loads(capsys.readouterr().out)
-        names = {d["name"] for d in data["declarations"]}
-        assert "alpha" in names
-        assert "beta" in names
+        # Batch mode writes each header to default pattern {dir}/{stem}.json
+        json_a = tmp_path / "a.json"
+        json_b = tmp_path / "b.json"
+        assert json_a.exists()
+        assert json_b.exists()
+        data_a = json.loads(json_a.read_text(encoding="utf-8"))
+        data_b = json.loads(json_b.read_text(encoding="utf-8"))
+        names_a = {d["name"] for d in data_a["declarations"]}
+        names_b = {d["name"] for d in data_b["declarations"]}
+        assert "alpha" in names_a
+        assert "beta" in names_b
 
 
 # ===========================================================================

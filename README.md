@@ -274,7 +274,7 @@ plugins = ["mypkg.headerkit_plugin"]
 
 ## Cache and build backend
 
-headerkit includes a two-layer cache that stores parsed IR and generated output in `.hkcache/`. Commit the cache to version control and downstream consumers can build without libclang installed.
+headerkit includes a two-layer cache that stores parsed IR and generated output in `.headerkit/`. Commit the cache to version control and downstream consumers can build without libclang installed.
 
 ```python
 from headerkit import generate
@@ -288,7 +288,7 @@ output = generate("mylib.h", "cffi")
 
 ```bash
 # CLI: generate with caching (on by default)
-headerkit mylib.h -w cffi:bindings.py --cache-dir .hkcache
+headerkit mylib.h -w cffi:bindings.py --store-dir .headerkit
 ```
 
 headerkit also ships a PEP 517 build backend. Consumer projects declare it in `pyproject.toml` and get bindings generated automatically during `pip install` or `python -m build`, with no libclang required when the cache is committed:
@@ -312,11 +312,11 @@ headerkit cache populate mylib.h -w cffi \
 headerkit cache populate mylib.h -w cffi --cibuildwheel
 
 # Commit the populated cache
-git add .hkcache/
+git add .headerkit/
 git commit -m "cache: populate for linux amd64 + arm64"
 ```
 
-When `.hkcache/` contains entries for all target platforms, downstream
+When `.headerkit/` contains entries for all target platforms, downstream
 builds never need libclang installed.
 
 See the [Cache Strategy Guide](https://axiomantic.github.io/headerkit/guides/cache/) for cache layout, bypass flags, and CI integration, and the [Build Backend Guide](https://axiomantic.github.io/headerkit/guides/build-backend/) for full setup instructions.

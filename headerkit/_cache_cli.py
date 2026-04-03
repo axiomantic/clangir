@@ -34,25 +34,25 @@ def cache_status_main(argv: list[str]) -> int:
         description="Show cache statistics.",
     )
     parser.add_argument(
-        "--cache-dir",
-        dest="cache_dir",
-        required=True,
+        "--store-dir",
+        dest="store_dir",
+        default=None,
         metavar="DIR",
-        help="Cache directory path",
+        help="Cache directory path (default: .headerkit/)",
     )
     args = parser.parse_args(argv)
-    cache_dir = Path(args.cache_dir)
+    store_dir = Path(args.store_dir) if args.store_dir is not None else Path(".headerkit")
 
-    if not cache_dir.is_dir():
+    if not store_dir.is_dir():
         print(
-            f"headerkit cache status: cache directory not found: {cache_dir}",
+            f"headerkit cache status: cache directory not found: {store_dir}",
             file=sys.stderr,
         )
         return 1
 
-    ir_count = _count_entry_dirs(cache_dir / "ir")
+    ir_count = _count_entry_dirs(store_dir / "ir")
 
-    output_dir = cache_dir / "output"
+    output_dir = store_dir / "output"
     writer_counts: dict[str, int] = {}
     total_output = 0
     if output_dir.is_dir():
@@ -63,7 +63,7 @@ def cache_status_main(argv: list[str]) -> int:
                     writer_counts[writer_dir.name] = count
                     total_output += count
 
-    print(f"Cache directory: {cache_dir}")
+    print(f"Cache directory: {store_dir}")
     print(f"IR entries: {ir_count}")
     print(f"Output entries: {total_output}")
     for writer_name, count in sorted(writer_counts.items()):
@@ -79,11 +79,11 @@ def cache_clear_main(argv: list[str]) -> int:
         description="Clear cache entries.",
     )
     parser.add_argument(
-        "--cache-dir",
-        dest="cache_dir",
-        required=True,
+        "--store-dir",
+        dest="store_dir",
+        default=None,
         metavar="DIR",
-        help="Cache directory path",
+        help="Cache directory path (default: .headerkit/)",
     )
     parser.add_argument(
         "--ir",
@@ -100,11 +100,11 @@ def cache_clear_main(argv: list[str]) -> int:
         help="Clear only output cache entries",
     )
     args = parser.parse_args(argv)
-    cache_dir = Path(args.cache_dir)
+    store_dir = Path(args.store_dir) if args.store_dir is not None else Path(".headerkit")
 
-    if not cache_dir.is_dir():
+    if not store_dir.is_dir():
         print(
-            f"headerkit cache clear: cache directory not found: {cache_dir}",
+            f"headerkit cache clear: cache directory not found: {store_dir}",
             file=sys.stderr,
         )
         return 1
@@ -113,13 +113,13 @@ def cache_clear_main(argv: list[str]) -> int:
     clear_output = not args.ir_only  # Clear output unless --ir only
 
     if clear_ir:
-        ir_dir = cache_dir / "ir"
+        ir_dir = store_dir / "ir"
         if ir_dir.is_dir():
             shutil.rmtree(ir_dir)
             ir_dir.mkdir()
 
     if clear_output:
-        output_dir = cache_dir / "output"
+        output_dir = store_dir / "output"
         if output_dir.is_dir():
             shutil.rmtree(output_dir)
             output_dir.mkdir()
@@ -141,24 +141,24 @@ def cache_rebuild_index_main(argv: list[str]) -> int:
         description="Rebuild index.json files from metadata.",
     )
     parser.add_argument(
-        "--cache-dir",
-        dest="cache_dir",
-        required=True,
+        "--store-dir",
+        dest="store_dir",
+        default=None,
         metavar="DIR",
-        help="Cache directory path",
+        help="Cache directory path (default: .headerkit/)",
     )
     args = parser.parse_args(argv)
-    cache_dir = Path(args.cache_dir)
+    store_dir = Path(args.store_dir) if args.store_dir is not None else Path(".headerkit")
 
-    if not cache_dir.is_dir():
+    if not store_dir.is_dir():
         print(
-            f"headerkit cache rebuild-index: cache directory not found: {cache_dir}",
+            f"headerkit cache rebuild-index: cache directory not found: {store_dir}",
             file=sys.stderr,
         )
         return 1
 
     # Rebuild IR index
-    ir_dir = cache_dir / "ir"
+    ir_dir = store_dir / "ir"
     if ir_dir.is_dir():
         index = rebuild_index(ir_dir)
         index_path = ir_dir / "index.json"
@@ -166,7 +166,7 @@ def cache_rebuild_index_main(argv: list[str]) -> int:
         print(f"Rebuilt index: {index_path} ({len(index['entries'])} entries)")
 
     # Rebuild output writer indexes
-    output_dir = cache_dir / "output"
+    output_dir = store_dir / "output"
     if output_dir.is_dir():
         for writer_dir in sorted(output_dir.iterdir()):
             if writer_dir.is_dir():
@@ -237,11 +237,11 @@ def cache_populate_main(argv: list[str]) -> int:
         help=("Install this headerkit version in container instead of mounting source"),
     )
     parser.add_argument(
-        "--cache-dir",
-        dest="cache_dir",
+        "--store-dir",
+        dest="store_dir",
         default=None,
         metavar="DIR",
-        help="Cache directory path (default: .hkcache/)",
+        help="Cache directory path (default: .headerkit/)",
     )
     parser.add_argument(
         "--dry-run",
@@ -350,7 +350,7 @@ def cache_populate_main(argv: list[str]) -> int:
             backend_args=args.backend_args or None,
             backend_name=args.backend,
             writer_options=writer_options,
-            cache_dir=args.cache_dir,
+            cache_dir=args.store_dir,
             dry_run=args.dry_run,
             timeout=cli_timeout,
         )

@@ -11,19 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `detect_process_triple()` replaces `detect_host_triple()` with
-  process-aware detection using `HOST_GNU_TYPE` (POSIX) or
-  `sysconfig.get_platform()` (Windows)
-- musl libc detection: correctly produces `linux-musl` triples on
-  Alpine and other musl-based systems (via `os.confstr` sniff for
-  pre-3.13 Python where `HOST_GNU_TYPE` may report `gnu` on musl)
+- Glob-based header selection: CLI positional args accept quoted glob patterns (e.g., `headerkit 'include/**/*.h'`)
+- `[[tool.headerkit.headers]]` array-of-tables config for header selection with per-pattern overrides
+- `--exclude` CLI flag for glob-based header exclusion
+- `[tool.headerkit.output]` config section for per-writer output path templates
+- Output path template variables: `{stem}`, `{name}`, `{dir}`
+- `-o WRITER:TEMPLATE` CLI flag for per-writer output path templates
+- `batch_generate()` public API for multi-header generation with fail-fast semantics
+- `BatchResult` dataclass for batch generation results
+- `resolve_headers()`, `resolve_output_path()`, `check_output_collisions()` public API functions
+- `default_output_pattern` class attribute on all built-in writers
+- GitHub Action (`action.yml`) for CI cache population
+- `detect_process_triple()` replaces `detect_host_triple()` with process-aware detection
 
 ### Changed
 
+- **Breaking:** Store directory renamed from `.hkcache/` to `.headerkit/`
+- **Breaking:** IR schema version bumped from "2" to "3" (all existing cache entries invalidated)
+- **Breaking:** `cache_dir` parameter renamed to `store_dir` in `generate()`, `generate_all()`, and `HeaderkitConfig`
+- **Breaking:** `--cache-dir` CLI flag renamed to `--store-dir`
+- **Breaking:** Config key `[tool.headerkit.cache].cache_dir` moved to `[tool.headerkit].store_dir`
+- **Breaking:** `-w WRITER[:PATH]` syntax removed; use `-w WRITER` and `-o WRITER:TEMPLATE`
+- **Breaking:** CLI positional args accept globs; quote patterns to prevent shell expansion
+- **Breaking:** `WriterSpec.output_path` renamed to `WriterSpec.output_template`
 - **Breaking:** `detect_host_triple()` removed; use `detect_process_triple()`
-- Simplified target detection: one signal per platform instead of
-  5-step fallback chain. `HOST_GNU_TYPE` on POSIX, `get_platform()`
-  on Windows. For cross-compilation, set `--target` explicitly.
+- `find_cache_dir()` simplified to single-pass project-root-only lookup (no walk-up for existing directory)
 
 ## [0.13.0] - 2026-04-01
 
@@ -456,7 +468,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.12.4...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/axiomantic/headerkit/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/axiomantic/headerkit/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/axiomantic/headerkit/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/axiomantic/headerkit/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/axiomantic/headerkit/compare/v0.12.1...v0.12.2

@@ -2,7 +2,7 @@
 
 headerkit ships a PEP 517 build backend that generates bindings
 automatically during `pip install` or `python -m build`. When the
-`.hkcache/` directory is committed to version control, the build
+`.headerkit/` directory is committed to version control, the build
 works without libclang installed on the target machine.
 
 ## Overview
@@ -51,12 +51,12 @@ Run headerkit locally on a machine with libclang installed:
 headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
 ```
 
-This writes cache entries to `.hkcache/`.
+This writes cache entries to `.headerkit/`.
 
 ### 4. Commit the cache
 
 ```bash
-git add .hkcache/
+git add .headerkit/
 git commit -m "cache: add headerkit cache"
 ```
 
@@ -66,7 +66,7 @@ Anyone who clones your repo (or installs from PyPI) gets bindings
 generated from cache:
 
 ```bash
-pip install .          # reads from .hkcache/, no libclang needed
+pip install .          # reads from .headerkit/, no libclang needed
 python -m build        # same for sdist/wheel builds
 ```
 
@@ -93,8 +93,8 @@ include_dirs = ["/usr/local/include"]
 [tool.headerkit.headers."include/mylib_utils.h"]
 defines = ["VERSION=2", "UTILS_ONLY"]
 
-[tool.headerkit.cache]
-cache_dir = ".hkcache"
+[tool.headerkit]
+store_dir = ".headerkit"
 ```
 
 ### Cross-compilation example
@@ -129,7 +129,7 @@ When pip or build invokes `build_wheel()` or `build_sdist()`:
 2. `_run_generation()` reads `[tool.headerkit]` from `pyproject.toml`.
 3. For each entry in `[tool.headerkit.headers]`, it calls `generate_all()`
    with the configured backend, writers, defines, and include dirs.
-4. `generate_all()` checks `.hkcache/` first. On a cache hit, it
+4. `generate_all()` checks `.headerkit/` first. On a cache hit, it
    deserializes the stored IR and output without libclang. On a cache
    miss, it falls back to parsing with libclang.
 5. After generation completes, the inner backend (hatchling by default)
@@ -180,6 +180,7 @@ so `HOST_GNU_TYPE` already reflects the correct target.
 | `include_dirs` | list of strings | `[]` | Global include directories applied to all headers |
 | `defines` | list of strings | `[]` | Global preprocessor defines applied to all headers |
 | `target` | string | auto-detect | LLVM target triple for cross-compilation (e.g., `aarch64-unknown-linux-gnu`) |
+| `store_dir` | string | `".headerkit"` | Directory for cache storage |
 
 ### `[tool.headerkit.headers."path/to/header.h"]` keys
 
@@ -192,7 +193,6 @@ so `HOST_GNU_TYPE` already reflects the correct target.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `cache_dir` | string | `".hkcache"` | Directory for cache storage |
 | `no_cache` | bool | `false` | Disable all caching |
 | `no_ir_cache` | bool | `false` | Disable IR cache only |
 | `no_output_cache` | bool | `false` | Disable output cache only |
@@ -242,7 +242,7 @@ When a header's cache entry is missing and libclang is not installed:
 
 - **Wheel builds** (`build_wheel`, `build_editable`): the build fails
   with a [`LibclangUnavailableError`][headerkit.backends.LibclangUnavailableError]. Install libclang and
-  re-run `headerkit` to populate the cache, then commit `.hkcache/`.
+  re-run `headerkit` to populate the cache, then commit `.headerkit/`.
 - **Sdist builds** (`build_sdist`): generation failures are logged as
   warnings and the build continues. This allows sdist creation on
   machines without libclang, as long as the sdist consumer has libclang
@@ -258,7 +258,7 @@ headerkit install-libclang
 headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
 
 # Commit updated cache
-git add .hkcache/
+git add .headerkit/
 git commit -m "cache: update headerkit cache"
 ```
 
@@ -309,7 +309,7 @@ The recommended workflow:
 
 1. Run `headerkit cache populate --cibuildwheel` on a machine with Docker.
 2. Docker generates cache entries for all target Linux platforms.
-3. Commit `.hkcache/` to version control.
+3. Commit `.headerkit/` to version control.
 4. CI builds use the cache; no libclang needed on any platform.
 
 For macOS and Windows targets, run `headerkit cache populate` natively on
@@ -327,9 +327,9 @@ If bindings are outdated after modifying a header:
 
 ```bash
 # Clear the cache and regenerate
-headerkit cache clear --cache-dir .hkcache
+headerkit cache clear --store-dir .headerkit
 headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
-git add .hkcache/
+git add .headerkit/
 git commit -m "cache: regenerate after header changes"
 ```
 
@@ -364,13 +364,13 @@ requires = ["headerkit", "hatchling"]
 Verify the cache is committed and present in the build environment:
 
 ```bash
-ls .hkcache/ir/
-ls .hkcache/output/
+ls .headerkit/ir/
+ls .headerkit/output/
 ```
 
-If files are missing, the `.hkcache/` directory may not be included in
+If files are missing, the `.headerkit/` directory may not be included in
 the sdist. Check your inner backend's include/exclude configuration to
-ensure `.hkcache/` is packaged.
+ensure `.headerkit/` is packaged.
 
 ### CI validation
 
@@ -378,7 +378,7 @@ Verify the committed cache matches current sources:
 
 ```bash
 headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
-git diff --exit-code .hkcache/ bindings/
+git diff --exit-code .headerkit/ bindings/
 ```
 
 A non-empty diff means the cache is stale and must be regenerated.

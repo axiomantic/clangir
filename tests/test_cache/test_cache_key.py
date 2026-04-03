@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 
 from headerkit._cache_key import (
+    _IR_SCHEMA_VERSION,
     ParsedArgs,
     _relative_header_path,
     compute_ir_cache_key,
     compute_output_cache_key,
     parse_extra_args,
 )
+from headerkit._cache_store import read_ir_entry, write_ir_entry
+from headerkit.ir import CType, Function, Header, Parameter
 
 
 class TestParseExtraArgs:
@@ -231,3 +236,44 @@ class TestComputeOutputCacheKey:
             writer_name="cffi",
         )
         assert k1 == k2
+
+
+class TestIrSchemaVersion:
+    """Tests for IR schema version changes."""
+
+    def test_ir_schema_version_is_3(self) -> None:
+        """IR schema version should be '3' after the v0.14.0 bump."""
+        assert _IR_SCHEMA_VERSION == "3"
+
+    def test_old_schema_version_2_cache_miss(self, tmp_path: Path, caplog: logging.LogCaptureFixture) -> None:
+        """A metadata.json with ir_schema_version '2' results in a cache miss and warning."""
+        cache_dir = tmp_path / ".headerkit"
+        entry_dir = cache_dir / "ir" / "libclang.old_entry"
+        entry_dir.mkdir(parents=True)
+
+        # Write a valid header IR file
+        header = Header("test.h", [Function("foo", CType("void"), [Parameter("x", CType("int"))])])
+        write_ir_entry(
+            cache_dir=cache_dir,
+            slug="libclang.old_entry",
+            cache_key="abc123",
+            header=header,
+            backend_name="libclang",
+            header_path="/path/to/test.h",
+            target="x86_64-pc-linux-gnu",
+            defines=[],
+            includes=[],
+            other_args=[],
+        )
+
+        # Overwrite metadata with old schema version
+        meta_path = entry_dir / "metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["ir_schema_version"] = "2"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING):
+            result = read_ir_entry(cache_dir=cache_dir, slug="libclang.old_entry")
+
+        assert result is None
+        assert any("schema version mismatch" in record.message for record in caplog.records)

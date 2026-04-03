@@ -518,6 +518,8 @@ class CffiWriter:
         cdef_string = writer.write(header)
     """
 
+    default_output_pattern: str = "{dir}/{stem}_cffi.py"
+
     def __init__(self, exclude_patterns: list[str] | None = None) -> None:
         self._exclude_patterns = exclude_patterns
 

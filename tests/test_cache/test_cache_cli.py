@@ -19,12 +19,12 @@ class TestCliDispatch:
             with patch.object(
                 sys,
                 "argv",
-                ["headerkit", "cache", "status", "--cache-dir", "/tmp/cache"],
+                ["headerkit", "cache", "status", "--store-dir", "/tmp/cache"],
             ):
                 from headerkit._cli import main
 
                 main()
-            mock_status.assert_called_once_with(["--cache-dir", "/tmp/cache"])
+            mock_status.assert_called_once_with(["--store-dir", "/tmp/cache"])
 
     def test_cache_clear_dispatches(self) -> None:
         """'headerkit cache clear' dispatches to cache_clear_main."""
@@ -32,12 +32,12 @@ class TestCliDispatch:
             with patch.object(
                 sys,
                 "argv",
-                ["headerkit", "cache", "clear", "--cache-dir", "/tmp/cache"],
+                ["headerkit", "cache", "clear", "--store-dir", "/tmp/cache"],
             ):
                 from headerkit._cli import main
 
                 main()
-            mock_clear.assert_called_once_with(["--cache-dir", "/tmp/cache"])
+            mock_clear.assert_called_once_with(["--store-dir", "/tmp/cache"])
 
     def test_cache_rebuild_index_dispatches(self) -> None:
         """'headerkit cache rebuild-index' dispatches to cache_rebuild_index_main."""
@@ -45,12 +45,12 @@ class TestCliDispatch:
             with patch.object(
                 sys,
                 "argv",
-                ["headerkit", "cache", "rebuild-index", "--cache-dir", "/tmp/cache"],
+                ["headerkit", "cache", "rebuild-index", "--store-dir", "/tmp/cache"],
             ):
                 from headerkit._cli import main
 
                 main()
-            mock_rebuild.assert_called_once_with(["--cache-dir", "/tmp/cache"])
+            mock_rebuild.assert_called_once_with(["--store-dir", "/tmp/cache"])
 
 
 class TestCacheStatusSubcommand:
@@ -60,10 +60,10 @@ class TestCacheStatusSubcommand:
         """Empty cache directory shows zero counts."""
         from headerkit._cache_cli import cache_status_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         (cache_dir / "ir").mkdir(parents=True)
         (cache_dir / "output").mkdir(parents=True)
-        exit_code = cache_status_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_status_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == textwrap.dedent(f"""\
@@ -78,7 +78,7 @@ class TestCacheStatusSubcommand:
 
         from headerkit._cache_cli import cache_status_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         ir_dir = cache_dir / "ir"
         for name in ["libclang.test_a", "libclang.test_b"]:
             entry = ir_dir / name
@@ -88,7 +88,7 @@ class TestCacheStatusSubcommand:
                 encoding="utf-8",
             )
         (cache_dir / "output").mkdir(parents=True)
-        exit_code = cache_status_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_status_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == textwrap.dedent(f"""\
@@ -103,7 +103,7 @@ class TestCacheStatusSubcommand:
 
         from headerkit._cache_cli import cache_status_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         (cache_dir / "ir").mkdir(parents=True)
 
         # Create cffi writer entries
@@ -123,7 +123,7 @@ class TestCacheStatusSubcommand:
             encoding="utf-8",
         )
 
-        exit_code = cache_status_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_status_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == textwrap.dedent(f"""\
@@ -139,7 +139,7 @@ class TestCacheStatusSubcommand:
         from headerkit._cache_cli import cache_status_main
 
         cache_dir = tmp_path / "nonexistent"
-        exit_code = cache_status_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_status_main(["--store-dir", str(cache_dir)])
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.err == f"headerkit cache status: cache directory not found: {cache_dir}\n"
@@ -154,7 +154,7 @@ class TestCacheClearSubcommand:
 
         from headerkit._cache_cli import cache_clear_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
 
         # Create IR entry
         ir_entry = cache_dir / "ir" / "libclang.test"
@@ -184,7 +184,7 @@ class TestCacheClearSubcommand:
             encoding="utf-8",
         )
 
-        exit_code = cache_clear_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_clear_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == "Cleared all cache entries.\n"
@@ -200,7 +200,7 @@ class TestCacheClearSubcommand:
 
         from headerkit._cache_cli import cache_clear_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
 
         # Create IR entry
         ir_entry = cache_dir / "ir" / "libclang.test"
@@ -218,7 +218,7 @@ class TestCacheClearSubcommand:
             encoding="utf-8",
         )
 
-        exit_code = cache_clear_main(["--ir", "--cache-dir", str(cache_dir)])
+        exit_code = cache_clear_main(["--ir", "--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == "Cleared IR cache entries.\n"
@@ -234,7 +234,7 @@ class TestCacheClearSubcommand:
 
         from headerkit._cache_cli import cache_clear_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
 
         # Create IR entry
         ir_entry = cache_dir / "ir" / "libclang.test"
@@ -252,7 +252,7 @@ class TestCacheClearSubcommand:
             encoding="utf-8",
         )
 
-        exit_code = cache_clear_main(["--output", "--cache-dir", str(cache_dir)])
+        exit_code = cache_clear_main(["--output", "--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == "Cleared output cache entries.\n"
@@ -267,7 +267,7 @@ class TestCacheClearSubcommand:
         from headerkit._cache_cli import cache_clear_main
 
         cache_dir = tmp_path / "nonexistent"
-        exit_code = cache_clear_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_clear_main(["--store-dir", str(cache_dir)])
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.err == f"headerkit cache clear: cache directory not found: {cache_dir}\n"
@@ -282,7 +282,7 @@ class TestCacheRebuildIndexSubcommand:
 
         from headerkit._cache_cli import cache_rebuild_index_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         ir_dir = cache_dir / "ir"
         entry = ir_dir / "libclang.test"
         entry.mkdir(parents=True)
@@ -290,7 +290,7 @@ class TestCacheRebuildIndexSubcommand:
             json.dumps({"cache_key": "abc123", "created": "2026-01-01T00:00:00Z"}),
             encoding="utf-8",
         )
-        exit_code = cache_rebuild_index_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_rebuild_index_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out == textwrap.dedent(f"""\
@@ -314,7 +314,7 @@ class TestCacheRebuildIndexSubcommand:
 
         from headerkit._cache_cli import cache_rebuild_index_main
 
-        cache_dir = tmp_path / ".hkcache"
+        cache_dir = tmp_path / ".headerkit"
         (cache_dir / "ir").mkdir(parents=True)
         writer_dir = cache_dir / "output" / "cffi"
         entry = writer_dir / "entry1"
@@ -323,7 +323,7 @@ class TestCacheRebuildIndexSubcommand:
             json.dumps({"cache_key": "def456", "created": "2026-01-01T00:00:00Z"}),
             encoding="utf-8",
         )
-        exit_code = cache_rebuild_index_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_rebuild_index_main(["--store-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         # IR index should also be rebuilt (0 entries), then output index
@@ -348,7 +348,7 @@ class TestCacheRebuildIndexSubcommand:
         from headerkit._cache_cli import cache_rebuild_index_main
 
         cache_dir = tmp_path / "nonexistent"
-        exit_code = cache_rebuild_index_main(["--cache-dir", str(cache_dir)])
+        exit_code = cache_rebuild_index_main(["--store-dir", str(cache_dir)])
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.err == f"headerkit cache rebuild-index: cache directory not found: {cache_dir}\n"

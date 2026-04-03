@@ -16,7 +16,7 @@ from headerkit._config import (
     load_config,
     merge_config,
 )
-from headerkit._generate import generate
+from headerkit._generate import batch_generate, generate
 from headerkit.backends import _load_backend_plugins
 from headerkit.writers import _load_writer_plugins
 
@@ -77,9 +77,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "input_files",
-        nargs="+",
-        metavar="FILE",
-        help="C header file paths",
+        nargs="*",
+        metavar="HEADER_OR_GLOB",
+        help="Header file paths or glob patterns (e.g., 'include/**/*.h')",
     )
     parser.add_argument(
         "--backend",
@@ -115,8 +115,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--writer",
         dest="writers",
         action="append",
-        metavar="WRITER[:PATH]",
-        help="Writer spec",
+        metavar="WRITER",
+        help="Writer to use (repeatable)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_specs",
+        action="append",
+        metavar="WRITER:TEMPLATE",
+        help="Output path template for a writer (e.g., cffi:{dir}/{stem}_cffi.py)",
+    )
+    parser.add_argument(
+        "--exclude",
+        dest="exclude_patterns",
+        action="append",
+        metavar="PATTERN",
+        help="Exclude headers matching glob pattern (repeatable)",
     )
     parser.add_argument(
         "--writer-opt",
@@ -161,11 +176,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable output cache only",
     )
     parser.add_argument(
-        "--cache-dir",
-        dest="cache_dir",
+        "--store-dir",
+        dest="store_dir",
         metavar="DIR",
         default=None,
-        help="Cache directory (default: .hkcache/ in project root)",
+        help="Store directory (default: .headerkit/ in project root)",
     )
     parser.add_argument(
         "--target",
@@ -201,7 +216,7 @@ class WriterSpec:
     """Parsed writer specification from -w and --writer-opt flags."""
 
     name: str
-    output_path: str | None  # None means stdout
+    output_template: str | None  # None means use config/default
     options: dict[str, list[str]] = field(default_factory=dict)
 
 
@@ -219,14 +234,9 @@ def _parse_writer_specs(
     spec_by_name: dict[str, WriterSpec] = {}
 
     for item in raw_writers:
-        name, sep, output_path_str = item.partition(":")
-        if not sep:
-            output_path = None
-        else:
-            output_path = output_path_str
-        spec = WriterSpec(name=name, output_path=output_path)
+        spec = WriterSpec(name=item, output_template=None)
         specs.append(spec)
-        spec_by_name[name] = spec
+        spec_by_name[item] = spec
 
     for item in raw_opts:
         writer_name, sep, rest = item.partition(":")
@@ -244,6 +254,17 @@ def _parse_writer_specs(
         spec_by_name[writer_name].options.setdefault(key, []).append(value)
 
     return specs
+
+
+def _parse_output_specs(raw_specs: list[str]) -> dict[str, str]:
+    """Parse -o WRITER:TEMPLATE arguments into a writer->template dict."""
+    result: dict[str, str] = {}
+    for item in raw_specs:
+        writer_name, sep, template = item.partition(":")
+        if not sep or not template:
+            raise ValueError(f"headerkit: malformed --output: {item!r}; use WRITER:TEMPLATE format")
+        result[writer_name] = template
+    return result
 
 
 def _parse_defines(defines: list[str]) -> list[str]:
@@ -286,11 +307,13 @@ def _build_umbrella(input_files: list[str]) -> tuple[str, str, tuple[str, ...]]:
 
 
 def _write_output(spec: WriterSpec, content: str) -> None:
-    """Write output to stdout or file per spec.output_path."""
-    if spec.output_path is None:
+    """Write output to stdout or file per spec.output_template."""
+    if spec.output_template is None:
         print(content, end="")
     else:
-        Path(spec.output_path).write_text(content, encoding="utf-8")
+        p = Path(spec.output_template)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
 
 
 def _load_explicit_plugins(plugins: list[str]) -> None:
@@ -411,15 +434,15 @@ def main() -> int:
     resolved_no_cache: bool = args.no_cache or _env_bool("HEADERKIT_NO_CACHE")
     resolved_no_ir_cache: bool = args.no_ir_cache or _env_bool("HEADERKIT_NO_IR_CACHE")
     resolved_no_output_cache: bool = args.no_output_cache or _env_bool("HEADERKIT_NO_OUTPUT_CACHE")
-    resolved_cache_dir: str | None = args.cache_dir
+    resolved_store_dir: str | None = args.store_dir
     if not resolved_no_cache and config is not None:
         resolved_no_cache = config.no_cache
         if not resolved_no_ir_cache:
             resolved_no_ir_cache = config.no_ir_cache
         if not resolved_no_output_cache:
             resolved_no_output_cache = config.no_output_cache
-        if resolved_cache_dir is None:
-            resolved_cache_dir = config.cache_dir
+        if resolved_store_dir is None:
+            resolved_store_dir = config.store_dir
 
     # Load plugins (F3/F7: no --plugins flag; config.plugins loaded here)
     _load_backend_plugins()
@@ -434,10 +457,21 @@ def main() -> int:
         print(f"headerkit: {exc}", file=sys.stderr)
         return 1
     if not specs:
-        specs = [WriterSpec(name="default", output_path=None, options={})]
+        specs = [WriterSpec(name="default", output_template=None, options={})]
+
+    # Parse --output specs and apply to writer specs
+    output_specs_raw: list[str] = getattr(args, "output_specs", None) or []
+    try:
+        output_templates = _parse_output_specs(output_specs_raw)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    for spec in specs:
+        if spec.name in output_templates:
+            spec.output_template = output_templates[spec.name]
 
     # Validate at most one writer sends to stdout
-    stdout_count = sum(1 for s in specs if s.output_path is None)
+    stdout_count = sum(1 for s in specs if s.output_template is None)
     if stdout_count > 1:
         print(
             "Error: at most one writer may omit an output path (send to stdout)",
@@ -448,7 +482,93 @@ def main() -> int:
     # Merge config writer options into specs
     specs = _merge_config_writer_opts(config, specs)
 
-    # Validate input files exist
+    # Resolve input files: CLI positional args win, else fall back to config
+    use_config_headers = False
+    if not input_files:
+        if config is not None and config.headers:
+            input_files = list(config.headers)
+            use_config_headers = True
+        else:
+            print(
+                "headerkit: no input files provided (pass header paths or configure "
+                "[[tool.headerkit.headers]] in pyproject.toml)",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Build merged output_templates: config output < CLI -o specs
+    merged_output_templates: dict[str, str] = {}
+    if config is not None:
+        merged_output_templates.update(config.output)
+    merged_output_templates.update(output_templates)
+
+    # Determine whether to use batch_generate() or direct generate()
+    # Use direct generate() only for: single explicit file, single writer, no output template
+    writer_names = [s.name for s in specs]
+    has_any_output_template = bool(merged_output_templates) or any(s.output_template is not None for s in specs)
+    has_globs = any(any(ch in f for ch in ("*", "?", "[")) for f in input_files)
+    has_header_overrides = config is not None and bool(config.header_overrides)
+    use_batch = (
+        len(input_files) > 1 or has_globs or use_config_headers or has_any_output_template or has_header_overrides
+    )
+
+    if use_batch:
+        # Batch generation path
+        extra_args_list = _parse_defines(defines) + backend_args
+
+        # Build writer_options dict from specs
+        batch_writer_options: dict[str, dict[str, object]] = {}
+        for spec in specs:
+            if spec.options:
+                wopts: dict[str, object] = {}
+                for key, values in spec.options.items():
+                    wopts[key] = values[0] if len(values) == 1 else values
+                batch_writer_options[spec.name] = wopts
+
+        # Build header_overrides from config
+        batch_header_overrides: dict[str, dict[str, object]] | None = None
+        if config is not None and config.header_overrides:
+            batch_header_overrides = config.header_overrides
+
+        exclude_pats: list[str] = list(getattr(args, "exclude_patterns", None) or [])
+
+        try:
+            batch_result = batch_generate(
+                patterns=input_files,
+                exclude_patterns=exclude_pats or None,
+                writers=writer_names,
+                backend_name=backend_name,
+                include_dirs=include_dirs or None,
+                defines=defines or None,
+                extra_args=extra_args_list or None,
+                writer_options=batch_writer_options or None,
+                output_templates=merged_output_templates or None,
+                store_dir=resolved_store_dir,
+                no_cache=resolved_no_cache,
+                no_ir_cache=resolved_no_ir_cache,
+                no_output_cache=resolved_no_output_cache,
+                auto_install_libclang=None,
+                target=args.target,
+                header_overrides=batch_header_overrides,
+            )
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+        # Print summary to stderr
+        print(
+            f"headerkit: processed {batch_result.headers_processed} headers, {len(batch_result.results)} outputs",
+            file=sys.stderr,
+        )
+        for r in batch_result.results:
+            if r.output_path is not None:
+                cached_tag = " (cached)" if r.from_cache else ""
+                print(f"  {r.writer_name}: {r.output_path}{cached_tag}", file=sys.stderr)
+
+        return 0
+
+    # Single-file direct generation path (preserves stdout behavior)
+    # Validate input file exists
     for f in input_files:
         if not Path(f).exists():
             print(f"Error: input file not found: {f}", file=sys.stderr)
@@ -480,14 +600,14 @@ def main() -> int:
                 include_dirs=include_dirs or None,
                 extra_args=extra_args or None,
                 writer_options=writer_kwargs or None,
-                cache_dir=resolved_cache_dir,
+                store_dir=resolved_store_dir,
                 no_cache=resolved_no_cache,
                 no_ir_cache=resolved_no_ir_cache,
                 no_output_cache=resolved_no_output_cache,
                 project_prefixes=project_prefixes or None,
                 target=args.target,
             )
-        except (ValueError, TypeError, RuntimeError, FileNotFoundError) as exc:
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
         _write_output(spec, content)

@@ -1,7 +1,7 @@
 """Slug construction for cache directory names.
 
 Human-readable directory names encoding cache key components so
-developers can browse .hkcache/ and understand what each entry is.
+developers can browse .headerkit/ and understand what each entry is.
 """
 
 from __future__ import annotations
@@ -253,7 +253,7 @@ def register_slug(
 def rebuild_index(layer_dir: Path) -> CacheIndex:
     """Rebuild index.json from on-disk metadata.json files.
 
-    :param layer_dir: e.g., .hkcache/ir/ or .hkcache/output/cffi/
+    :param layer_dir: e.g., .headerkit/ir/ or .headerkit/output/cffi/
     :returns: Rebuilt CacheIndex.
     """
     index: CacheIndex = {"version": 1, "entries": {}}

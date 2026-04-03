@@ -39,6 +39,7 @@ from headerkit._cache_store import (
     write_output_entry,
 )
 from headerkit._config import _TOML_DECODE_ERROR, _find_project_root, _parse_toml
+from headerkit._resolve import check_output_collisions, resolve_headers, resolve_output_path
 from headerkit._slug import build_slug, load_index, lookup_slug
 from headerkit._target import resolve_target
 from headerkit.backends import LibclangUnavailableError, get_backend, is_backend_available
@@ -140,6 +141,15 @@ class GenerateResult:
     from_cache: bool
 
 
+@dataclass
+class BatchResult:
+    """Result from batch_generate()."""
+
+    results: list[GenerateResult]
+    headers_processed: int
+    headers_skipped: int
+
+
 def _should_cache_output(writer: Any) -> bool:
     """Check if writer opts in to output caching (default: True)."""
     return bool(getattr(writer, "cache_output", True))
@@ -160,6 +170,16 @@ def _writer_output_ext(writer: Any, writer_name: str) -> str:
     if ext is not None:
         return ext
     return _WRITER_EXTENSIONS.get(writer_name, ".txt")
+
+
+def _writer_default_output_pattern(writer: Any, writer_name: str) -> str:
+    """Get the default output path template for a writer."""
+    pattern: str | None = getattr(writer, "default_output_pattern", None)
+    if pattern is not None:
+        return pattern
+    # Fallback for plugin writers that don't declare the attribute
+    ext = _WRITER_EXTENSIONS.get(writer_name, ".txt")
+    return "{dir}/{stem}" + ext
 
 
 def _get_ir(
@@ -419,7 +439,7 @@ def generate(
     extra_args: list[str] | None = None,
     writer_options: dict[str, object] | None = None,
     output_path: str | Path | None = None,
-    cache_dir: str | Path | None = None,
+    store_dir: str | Path | None = None,
     no_cache: bool = False,
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
@@ -444,7 +464,7 @@ def generate(
     :param extra_args: Additional backend args.
     :param writer_options: Writer constructor kwargs.
     :param output_path: If provided, write output to this file.
-    :param cache_dir: Cache directory (default: .hkcache/ in project root).
+    :param store_dir: Store directory (default: .headerkit/ in project root).
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
@@ -469,8 +489,8 @@ def generate(
 
     resolved_cache_dir: Path | None = None
     if not no_cache:
-        if cache_dir is not None:
-            resolved_cache_dir = Path(cache_dir)
+        if store_dir is not None:
+            resolved_cache_dir = Path(store_dir)
             resolved_cache_dir.mkdir(parents=True, exist_ok=True)
         else:
             resolved_cache_dir = find_cache_dir(header_path.parent)
@@ -568,7 +588,7 @@ def generate_all(
     writer_options: dict[str, dict[str, object]] | None = None,
     output_dir: str | Path | None = None,
     output_paths: dict[str, str | Path] | None = None,
-    cache_dir: str | Path | None = None,
+    store_dir: str | Path | None = None,
     no_cache: bool = False,
     no_ir_cache: bool = False,
     no_output_cache: bool = False,
@@ -589,7 +609,7 @@ def generate_all(
     :param writer_options: Per-writer kwargs, keyed by writer name.
     :param output_dir: Base directory for output files (auto-named).
     :param output_paths: Explicit output paths per writer name.
-    :param cache_dir: Cache directory (default: .hkcache/ in project root).
+    :param store_dir: Store directory (default: .headerkit/ in project root).
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
@@ -623,7 +643,7 @@ def generate_all(
             extra_args=extra_args,
             writer_options=wopts,
             output_path=opath,
-            cache_dir=cache_dir,
+            store_dir=store_dir,
             no_cache=no_cache,
             no_ir_cache=no_ir_cache,
             no_output_cache=no_output_cache,
@@ -642,3 +662,241 @@ def generate_all(
         )
 
     return results
+
+
+@dataclass
+class _MergedOverrides:
+    """Per-header overrides merged from all matching patterns."""
+
+    defines: list[str] | None
+    include_dirs: list[str] | None
+    backend: str | None
+    target: str | None
+    extra_args: list[str] | None
+    writer_options: dict[str, dict[str, object]]
+    output_templates: dict[str, str]
+
+
+def _merge_pattern_overrides(
+    header_path: Path,
+    pattern_mapping: dict[Path, list[str]],
+    header_overrides: dict[str, dict[str, object]],
+    *,
+    defaults_defines: list[str] | None,
+    defaults_include_dirs: list[str] | None,
+    defaults_backend: str | None,
+    defaults_target: str | None,
+    defaults_extra_args: list[str] | None,
+) -> _MergedOverrides:
+    """Merge per-pattern overrides for a single header path.
+
+    Combines overrides from all patterns that matched *header_path*,
+    applying them on top of the provided defaults.
+    """
+    merged: dict[str, object] = {}
+    matching_patterns = pattern_mapping.get(header_path, [])
+    for pat in matching_patterns:
+        if pat in header_overrides:
+            merged.update(header_overrides[pat])
+
+    # Extract override fields
+    override_defines = merged.get("defines")
+    effective_defines = list(override_defines) if isinstance(override_defines, list) else defaults_defines
+    override_include_dirs = merged.get("include_dirs")
+    effective_include_dirs = (
+        list(override_include_dirs) if isinstance(override_include_dirs, list) else defaults_include_dirs
+    )
+    override_backend = merged.get("backend")
+    effective_backend = str(override_backend) if isinstance(override_backend, str) else defaults_backend
+    override_target = merged.get("target")
+    effective_target = str(override_target) if isinstance(override_target, str) else defaults_target
+    override_extra_args = merged.get("extra_args")
+    effective_extra_args = list(override_extra_args) if isinstance(override_extra_args, list) else defaults_extra_args
+
+    # Extract per-pattern writer_options overrides
+    override_writer_options: dict[str, dict[str, object]] = {}
+    raw_wo = merged.get("writer_options")
+    if isinstance(raw_wo, dict):
+        for wname, wopts in raw_wo.items():
+            if isinstance(wopts, dict):
+                override_writer_options[str(wname)] = dict(wopts)
+
+    # Extract per-pattern output overrides
+    pattern_output_templates: dict[str, str] = {}
+    raw_output = merged.get("output")
+    if isinstance(raw_output, dict):
+        for wname, tmpl in raw_output.items():
+            if isinstance(tmpl, str):
+                pattern_output_templates[str(wname)] = tmpl
+
+    return _MergedOverrides(
+        defines=effective_defines,
+        include_dirs=effective_include_dirs,
+        backend=effective_backend,
+        target=effective_target,
+        extra_args=effective_extra_args,
+        writer_options=override_writer_options,
+        output_templates=pattern_output_templates,
+    )
+
+
+def batch_generate(
+    *,
+    patterns: list[str],
+    exclude_patterns: list[str] | None = None,
+    writers: list[str] | None = None,
+    backend_name: str | None = None,
+    include_dirs: list[str] | None = None,
+    defines: list[str] | None = None,
+    extra_args: list[str] | None = None,
+    writer_options: dict[str, dict[str, object]] | None = None,
+    output_templates: dict[str, str] | None = None,
+    store_dir: str | Path | None = None,
+    no_cache: bool = False,
+    no_ir_cache: bool = False,
+    no_output_cache: bool = False,
+    auto_install_libclang: bool | None = None,
+    target: str | None = None,
+    project_root: Path | None = None,
+    header_overrides: dict[str, dict[str, object]] | None = None,
+) -> BatchResult:
+    """Generate output for multiple headers resolved from glob patterns.
+
+    Resolves header paths from patterns, applies per-pattern overrides,
+    checks for output collisions, then generates output for each
+    header/writer combination.
+
+    :param patterns: Glob patterns or literal paths for header selection.
+    :param exclude_patterns: Glob patterns for paths to exclude.
+    :param writers: List of writer names. Default: ["json"].
+    :param backend_name: Backend to use (default: "libclang").
+    :param include_dirs: Include directories for parsing.
+    :param defines: Preprocessor defines (without -D prefix).
+    :param extra_args: Additional backend args.
+    :param writer_options: Per-writer kwargs, keyed by writer name.
+    :param output_templates: Per-writer output path templates (highest priority).
+    :param store_dir: Store directory (default: .headerkit/ in project root).
+    :param no_cache: Disable all caching.
+    :param no_ir_cache: Disable IR cache only.
+    :param no_output_cache: Disable output cache only.
+    :param auto_install_libclang: Explicitly enable or disable auto-install.
+    :param target: Target triple for cross-compilation.
+    :param project_root: Project root directory. Auto-detected if not provided.
+    :param header_overrides: Per-pattern override dicts (pattern -> config dict).
+    :returns: BatchResult with results for each header/writer combo.
+    :raises ValueError: If no headers match, output paths collide, or no
+        output template is resolvable for a header/writer combo.
+    """
+    writers = writers or ["json"]
+    writer_options = writer_options or {}
+    output_templates = output_templates or {}
+    header_overrides = header_overrides or {}
+    exclude_patterns = exclude_patterns or []
+
+    if project_root is None:
+        project_root = _find_project_root(Path.cwd())
+
+    # Resolve header paths from patterns
+    sorted_paths, pattern_mapping = resolve_headers(
+        patterns=patterns,
+        exclude_patterns=exclude_patterns,
+        project_root=project_root,
+    )
+
+    # Fetch writer instances and their default output patterns once (constant per writer)
+    writer_default_patterns: dict[str, str] = {}
+    for wn in writers:
+        if wn not in output_templates:
+            wi = get_writer(wn)
+            writer_default_patterns[wn] = _writer_default_output_pattern(wi, wn)
+
+    # Compute per-header overrides once (reused for collision check and generation)
+    header_overrides_cache: dict[Path, _MergedOverrides] = {}
+    for header_path in sorted_paths:
+        header_overrides_cache[header_path] = _merge_pattern_overrides(
+            header_path,
+            pattern_mapping,
+            header_overrides,
+            defaults_defines=defines,
+            defaults_include_dirs=include_dirs,
+            defaults_backend=backend_name,
+            defaults_target=target,
+            defaults_extra_args=extra_args,
+        )
+
+    # Pre-resolve all output paths to check for collisions
+    all_resolved_outputs: dict[tuple[Path, str], Path] = {}
+
+    for header_path in sorted_paths:
+        overrides = header_overrides_cache[header_path]
+
+        for writer_name in writers:
+            # Output template precedence:
+            # 1. output_templates arg (CLI -o)
+            # 2. per-pattern override "output"
+            # 3. writer default via _writer_default_output_pattern()
+            template: str | None = output_templates.get(writer_name)
+            if template is None:
+                template = overrides.output_templates.get(writer_name)
+            if template is None:
+                template = writer_default_patterns[writer_name]
+
+            resolved = resolve_output_path(template, header_path, project_root)
+            all_resolved_outputs[(header_path, writer_name)] = project_root / resolved
+
+    # Check for collisions before any generation
+    check_output_collisions(all_resolved_outputs)
+
+    # Generate outputs
+    results: list[GenerateResult] = []
+    headers_processed = 0
+
+    for header_path in sorted_paths:
+        overrides = header_overrides_cache[header_path]
+
+        for writer_name in writers:
+            # Merge writer options: global < per-pattern override
+            effective_wopts: dict[str, object] = dict(writer_options.get(writer_name, {}))
+            if writer_name in overrides.writer_options:
+                effective_wopts.update(overrides.writer_options[writer_name])
+
+            # Resolve output path (same precedence as collision check)
+            output_path = all_resolved_outputs[(header_path, writer_name)]
+
+            meta: dict[str, object] = {}
+            output = generate(
+                header_path=header_path,
+                writer_name=writer_name,
+                code=None,
+                backend_name=overrides.backend,
+                include_dirs=([str(d) for d in overrides.include_dirs] if overrides.include_dirs is not None else None),
+                defines=([str(d) for d in overrides.defines] if overrides.defines is not None else None),
+                extra_args=([str(a) for a in overrides.extra_args] if overrides.extra_args is not None else None),
+                writer_options=effective_wopts or None,
+                output_path=output_path,
+                store_dir=store_dir,
+                no_cache=no_cache,
+                no_ir_cache=no_ir_cache,
+                no_output_cache=no_output_cache,
+                project_prefixes=(str(header_path.parent),),
+                auto_install_libclang=auto_install_libclang,
+                target=overrides.target,
+                _result_meta=meta,
+            )
+
+            results.append(
+                GenerateResult(
+                    writer_name=writer_name,
+                    output=output,
+                    output_path=output_path,
+                    from_cache=bool(meta.get("from_cache", False)),
+                )
+            )
+
+        headers_processed += 1
+
+    return BatchResult(
+        results=results,
+        headers_processed=headers_processed,
+        headers_skipped=len(sorted_paths) - headers_processed,
+    )

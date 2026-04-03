@@ -1,4 +1,4 @@
-"""Cache store for .hkcache/ directory management.
+"""Cache store for .headerkit/ directory management.
 
 Manages the two-layer cache directory layout: finding/creating the
 cache dir, writing and reading IR entries, writing and reading output
@@ -26,34 +26,21 @@ logger = logging.getLogger("headerkit.cache")
 
 
 def find_cache_dir(start_path: Path) -> Path | None:
-    """Find or create .hkcache/ directory.
+    """Find or create .headerkit/ directory at the project root.
 
-    Walks from start_path upward looking for an existing .hkcache/
-    directory. If not found, looks for a .git directory and creates
-    .hkcache/ at that level. Returns None if neither is found
-    (no .hkcache/ and no .git root).
+    Walks from start_path upward looking for a .git directory. If found,
+    creates .headerkit/ at that level. Returns None if no .git root is
+    found before reaching the filesystem root or home directory.
 
     :param start_path: Directory to start searching from.
-    :returns: Absolute path to .hkcache/ directory, or None.
+    :returns: Absolute path to .headerkit/ directory, or None.
     """
-    current = start_path.resolve()
-    home = Path.home().resolve()
+    current = start_path.absolute()
+    home = Path.home().absolute()
 
-    while True:
-        candidate = current / ".hkcache"
-        if candidate.is_dir():
-            return candidate
-
-        # Stop conditions: hit root, home, or filesystem boundary
-        if current == current.parent or current == home:
-            break
-        current = current.parent
-
-    # No existing .hkcache/ found; walk again looking for .git root
-    current = start_path.resolve()
     while True:
         if (current / ".git").exists():
-            cache_dir = current / ".hkcache"
+            cache_dir = current / ".headerkit"
             cache_dir.mkdir(exist_ok=True)
             return cache_dir
 
@@ -83,7 +70,7 @@ def write_ir_entry(
     Updates cache_dir/ir/index.json with the slug registration.
     Uses atomic writes for metadata (write to .tmp, os.replace).
 
-    :param cache_dir: Path to .hkcache/ directory.
+    :param cache_dir: Path to .headerkit/ directory.
     :param slug: Human-readable slug for the entry directory.
     :param cache_key: SHA-256 hex digest cache key.
     :param header: Parsed Header IR to cache.
@@ -142,7 +129,7 @@ def read_ir_entry(*, cache_dir: Path, slug: str) -> Header | None:
     Returns None on any error (missing files, corrupt JSON, schema
     version mismatch).
 
-    :param cache_dir: Path to .hkcache/ directory.
+    :param cache_dir: Path to .headerkit/ directory.
     :param slug: Slug identifying the entry directory.
     :returns: Deserialized Header, or None on any error.
     """
@@ -195,7 +182,7 @@ def write_output_entry(
     cache_dir/output/writer_name/slug/. Updates the writer's
     index.json with the slug registration.
 
-    :param cache_dir: Path to .hkcache/ directory.
+    :param cache_dir: Path to .headerkit/ directory.
     :param writer_name: Name of the writer.
     :param slug: Human-readable slug for the entry directory.
     :param cache_key: SHA-256 hex digest output cache key.
@@ -254,7 +241,7 @@ def read_output_entry(
     Reads the output file from cache_dir/output/writer_name/slug/.
     Returns None on any error (missing file, read error).
 
-    :param cache_dir: Path to .hkcache/ directory.
+    :param cache_dir: Path to .headerkit/ directory.
     :param writer_name: Name of the writer.
     :param slug: Slug identifying the entry directory.
     :param output_extension: File extension for output (e.g., ".py").

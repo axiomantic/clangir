@@ -308,46 +308,46 @@ class TestCacheConfig:
     def test_cache_config_defaults(self) -> None:
         """HeaderkitConfig cache fields default to False/None."""
         cfg = HeaderkitConfig()
-        assert cfg.cache_dir is None
+        assert cfg.store_dir is None
         assert cfg.no_cache is False
         assert cfg.no_ir_cache is False
         assert cfg.no_output_cache is False
 
     def test_load_cache_section_from_headerkit_toml(self, tmp_path: Path) -> None:
-        """Parses [cache] section from .headerkit.toml."""
+        """Parses [cache] section and top-level store_dir from .headerkit.toml."""
         config_file = tmp_path / ".headerkit.toml"
         config_file.write_text(
             'backend = "libclang"\n'
+            'store_dir = "/tmp/headerkit"\n'
             "\n"
             "[cache]\n"
-            'cache_dir = "/tmp/hkcache"\n'
             "no_cache = true\n"
             "no_ir_cache = true\n"
             "no_output_cache = true\n"
         )
         cfg = load_config(config_file)
         assert cfg.backend == "libclang"
-        assert cfg.cache_dir == "/tmp/hkcache"
+        assert cfg.store_dir == "/tmp/headerkit"
         assert cfg.no_cache is True
         assert cfg.no_ir_cache is True
         assert cfg.no_output_cache is True
 
     def test_load_cache_section_from_pyproject(self, tmp_path: Path) -> None:
-        """Parses [tool.headerkit.cache] section from pyproject.toml."""
+        """Parses [tool.headerkit.cache] section and top-level store_dir from pyproject.toml."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             "[tool.headerkit]\n"
             'backend = "libclang"\n'
+            'store_dir = "/custom/store"\n'
             "\n"
             "[tool.headerkit.cache]\n"
-            'cache_dir = "/custom/cache"\n'
             "no_cache = false\n"
             "no_ir_cache = true\n"
             "no_output_cache = false\n"
         )
         cfg = load_config(pyproject)
         assert cfg.backend == "libclang"
-        assert cfg.cache_dir == "/custom/cache"
+        assert cfg.store_dir == "/custom/store"
         assert cfg.no_cache is False
         assert cfg.no_ir_cache is True
         assert cfg.no_output_cache is False
@@ -360,11 +360,152 @@ class TestCacheConfig:
         assert cfg.no_cache is True
         assert cfg.no_ir_cache is False
         assert cfg.no_output_cache is False
-        assert cfg.cache_dir is None
+        assert cfg.store_dir is None
 
-    def test_load_cache_section_wrong_type(self, tmp_path: Path) -> None:
-        """Raises ValueError when cache_dir is not a string."""
+    def test_load_store_dir_wrong_type(self, tmp_path: Path) -> None:
+        """Raises ValueError when store_dir is not a string."""
         config_file = tmp_path / ".headerkit.toml"
-        config_file.write_text("[cache]\ncache_dir = 42\n")
-        with pytest.raises(ValueError, match="cache.cache_dir must be str"):
+        config_file.write_text("store_dir = 42\n")
+        with pytest.raises(ValueError, match="store_dir must be str"):
             load_config(config_file)
+
+
+# =============================================================================
+# TestHeadersConfig
+# =============================================================================
+
+
+class TestHeadersConfig:
+    """Tests for headers, exclude, output, and store_dir config fields."""
+
+    def test_headers_array_of_tables_parsing(self, tmp_path: Path) -> None:
+        """Parse [[tool.headerkit.headers]] entries into config.headers and header_overrides."""
+        import textwrap
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [tool.headerkit]
+            backend = "libclang"
+
+            [[tool.headerkit.headers]]
+            pattern = "include/*.h"
+
+            [[tool.headerkit.headers]]
+            pattern = "src/**/*.h"
+            defines = ["INTERNAL=1"]
+        """)
+        )
+        cfg = load_config(pyproject)
+        assert cfg.headers == ["include/*.h", "src/**/*.h"]
+        assert "include/*.h" not in cfg.header_overrides
+        assert cfg.header_overrides["src/**/*.h"] == {"defines": ["INTERNAL=1"]}
+
+    def test_headers_missing_pattern_raises(self, tmp_path: Path) -> None:
+        """A headers entry without 'pattern' key raises ValueError."""
+        import textwrap
+
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [[headers]]
+            defines = ["FOO"]
+        """)
+        )
+        with pytest.raises(ValueError, match="must have a 'pattern' key"):
+            load_config(config_file)
+
+    def test_headers_with_overrides(self, tmp_path: Path) -> None:
+        """Entry with pattern + defines + target stores override dict."""
+        import textwrap
+
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [[headers]]
+            pattern = "vendor/*.h"
+            defines = ["VENDOR=1"]
+            target = "aarch64-linux-gnu"
+        """)
+        )
+        cfg = load_config(config_file)
+        assert cfg.headers == ["vendor/*.h"]
+        overrides = cfg.header_overrides["vendor/*.h"]
+        assert overrides["defines"] == ["VENDOR=1"]
+        assert overrides["target"] == "aarch64-linux-gnu"
+
+    def test_headers_with_nested_overrides(self, tmp_path: Path) -> None:
+        """Entry with output sub-table and writer_options sub-table stores nested dicts."""
+        import textwrap
+
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [[headers]]
+            pattern = "special/*.h"
+
+            [headers.output]
+            cffi = "gen/{stem}_cffi.py"
+
+            [headers.writer_options.cffi]
+            exclude_patterns = ["^_internal"]
+        """)
+        )
+        cfg = load_config(config_file)
+        assert cfg.headers == ["special/*.h"]
+        overrides = cfg.header_overrides["special/*.h"]
+        assert overrides["output"] == {"cffi": "gen/{stem}_cffi.py"}
+        assert overrides["writer_options"] == {"cffi": {"exclude_patterns": ["^_internal"]}}
+
+    def test_exclude_parsing(self, tmp_path: Path) -> None:
+        """Verify exclude list extracted correctly."""
+        import textwrap
+
+        config_file = tmp_path / ".headerkit.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            exclude = ["internal/**", "test_*.h"]
+        """)
+        )
+        cfg = load_config(config_file)
+        assert cfg.exclude == ["internal/**", "test_*.h"]
+
+    def test_output_table_parsing(self, tmp_path: Path) -> None:
+        """Verify [tool.headerkit.output] parsed into config.output dict."""
+        import textwrap
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [tool.headerkit]
+            backend = "libclang"
+
+            [tool.headerkit.output]
+            cffi = "{dir}/{stem}_cffi.py"
+            json = "{dir}/{stem}.json"
+        """)
+        )
+        cfg = load_config(pyproject)
+        assert cfg.output == {
+            "cffi": "{dir}/{stem}_cffi.py",
+            "json": "{dir}/{stem}.json",
+        }
+
+    def test_store_dir_top_level(self, tmp_path: Path) -> None:
+        """Verify store_dir extracted from top-level [tool.headerkit], not [cache]."""
+        import textwrap
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [tool.headerkit]
+            backend = "libclang"
+            store_dir = "/custom/store"
+
+            [tool.headerkit.cache]
+            no_cache = true
+        """)
+        )
+        cfg = load_config(pyproject)
+        assert cfg.store_dir == "/custom/store"
+        assert cfg.no_cache is True

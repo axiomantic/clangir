@@ -78,13 +78,20 @@ class HeaderkitConfig:
     backend_args: list[str] = field(default_factory=list)
     plugins: list[str] = field(default_factory=list)
     writer_options: dict[str, WriterConfig] = field(default_factory=dict)
-    # Cache settings from [cache] / [tool.headerkit.cache] section
-    cache_dir: str | None = None
+    # Store directory for cache data
+    store_dir: str | None = None
     no_cache: bool = False
     no_ir_cache: bool = False
     no_output_cache: bool = False
     # Target triple for cross-compilation
     target: str | None = None
+    # Header selection
+    headers: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=list)
+    # Output templates (writer_name -> template)
+    output: dict[str, str] = field(default_factory=dict)
+    # Per-pattern overrides (pattern string -> override config dict)
+    header_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
     # Resolved source path for error reporting
     source_path: Path | None = None
 
@@ -187,6 +194,47 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
             raise ValueError(f"headerkit: config error in {source}: target must be str, got {type(val).__name__}")
         config.target = val
 
+    # store_dir: optional string (top-level, not inside [cache])
+    if "store_dir" in data:
+        val = data["store_dir"]
+        if not isinstance(val, str):
+            raise ValueError(f"headerkit: config error in {source}: store_dir must be str, got {type(val).__name__}")
+        config.store_dir = val
+
+    # exclude: optional list of strings
+    if "exclude" in data:
+        config.exclude = _require_str_list(data["exclude"], "exclude", source)
+
+    # headers: array of tables with "pattern" key and optional overrides
+    if "headers" in data:
+        headers_val = data["headers"]
+        if not isinstance(headers_val, list):
+            raise ValueError(f"headerkit: config error in {source}: headers must be an array of tables")
+        for entry in headers_val:
+            if not isinstance(entry, dict):
+                raise ValueError(f"headerkit: config error in {source}: each headers entry must be a table")
+            entry_dict = cast(dict[str, object], entry)
+            if "pattern" not in entry_dict:
+                raise ValueError(f"headerkit: config error in {source}: each headers entry must have a 'pattern' key")
+            pattern = entry_dict["pattern"]
+            if not isinstance(pattern, str):
+                raise ValueError(f"headerkit: config error in {source}: headers pattern must be str")
+            config.headers.append(pattern)
+            # Collect overrides (everything except "pattern")
+            overrides = {k: v for k, v in entry_dict.items() if k != "pattern"}
+            if overrides:
+                config.header_overrides[pattern] = overrides
+
+    # output: table of writer_name -> template string
+    if "output" in data:
+        output_val = data["output"]
+        if not isinstance(output_val, dict):
+            raise ValueError(f"headerkit: config error in {source}: output must be a table")
+        for writer_name, template in cast(dict[str, object], output_val).items():
+            if not isinstance(template, str):
+                raise ValueError(f"headerkit: config error in {source}: output.{writer_name} must be str")
+            config.output[writer_name] = template
+
     # cache settings: [cache] section
     if "cache" in data:
         cache_val = data["cache"]
@@ -195,13 +243,6 @@ def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
                 f"headerkit: config error in {source}: cache must be a table, got {type(cache_val).__name__}"
             )
         cache_table: dict[str, object] = cast(dict[str, object], cache_val)
-        if "cache_dir" in cache_table:
-            cd = cache_table["cache_dir"]
-            if not isinstance(cd, str):
-                raise ValueError(
-                    f"headerkit: config error in {source}: cache.cache_dir must be str, got {type(cd).__name__}"
-                )
-            config.cache_dir = cd
         if "no_cache" in cache_table:
             val = cache_table["no_cache"]
             if not isinstance(val, bool):
@@ -322,6 +363,10 @@ def merge_config(config: HeaderkitConfig | None, args: argparse.Namespace) -> ar
         if plugin not in combined:
             combined.append(plugin)
     args.plugins = combined
+
+    # exclude: prepend config excludes (CLI --exclude appends)
+    cli_excludes: list[str] = list(getattr(args, "exclude_patterns", None) or [])
+    args.exclude_patterns = config.exclude + cli_excludes
 
     # writer_opts: merge config writer options (CLI values win per-key)
     # NOTE (F1): Populated for test assertions only. Not consumed by main().

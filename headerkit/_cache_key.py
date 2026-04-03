@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Bump when IR dataclass structure changes in a way that invalidates
 # cached JSON. This is NOT the headerkit version.
-_IR_SCHEMA_VERSION = "2"
+_IR_SCHEMA_VERSION = "3"
 
 
 @dataclass
@@ -83,7 +83,7 @@ def _relative_header_path(header_path: Path, project_root: Path) -> str:
     """Return header path relative to the project root for cache key hashing.
 
     :param header_path: Absolute or relative path to the header file.
-    :param project_root: Project root directory (contains .hkcache/ or is git root).
+    :param project_root: Project root directory (contains .headerkit/ or is git root).
     :returns: POSIX-style relative path string.
     :raises ValueError: If header_path is not under project_root.
     """
@@ -105,7 +105,7 @@ def compute_ir_cache_key(
     :param backend_name: Parser backend name.
     :param target: Normalized LLVM target triple.
     :param header_path: Path to the C/C++ header file.
-    :param project_root: Project root directory (contains .hkcache/ or is git root).
+    :param project_root: Project root directory (contains .headerkit/ or is git root).
     :param parsed_args: Structured representation of extra_args.
     :param code: Raw code string. If provided, used instead of reading header_path.
     :returns: Hex digest string.

@@ -1,0 +1,57 @@
+name: "headerkit cache populate"
+description: "Populate headerkit cache for cross-platform builds"
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  headerkit-version:
+    description: "headerkit version to install (default: latest)"
+    required: false
+    default: ""
+  python-version:
+    description: "Python version to use"
+    required: false
+    default: "3.12"
+  args:
+    description: "Additional arguments passed to 'headerkit cache populate'"
+    required: false
+    default: ""
+  commit:
+    description: "Commit populated cache files (default: false)"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install headerkit
+      shell: bash
+      env:
+        HEADERKIT_VERSION: ${{ inputs.headerkit-version }}
+      run: |
+        if [ -n "$HEADERKIT_VERSION" ]; then
+          pip install "headerkit==$HEADERKIT_VERSION"
+        else
+          pip install headerkit
+        fi
+
+    - name: Populate cache
+      shell: bash
+      env:
+        HEADERKIT_ARGS: ${{ inputs.args }}
+      run: headerkit cache populate $HEADERKIT_ARGS
+
+    - name: Commit cache
+      if: inputs.commit == 'true'
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add .headerkit/
+        git diff --cached --quiet || git commit -m "chore: populate headerkit cache"
