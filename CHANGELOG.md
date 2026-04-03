@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-04-02
+## [0.15.0] - 2026-04-03
 
 ### Added
 
@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resolve_headers()`, `resolve_output_path()`, `check_output_collisions()` public API functions
 - `default_output_pattern` class attribute on all built-in writers
 - GitHub Action (`action.yml`) for CI cache population
-- `detect_process_triple()` replaces `detect_host_triple()` with process-aware detection
 
 ### Changed
 
@@ -34,8 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `-w WRITER[:PATH]` syntax removed; use `-w WRITER` and `-o WRITER:TEMPLATE`
 - **Breaking:** CLI positional args accept globs; quote patterns to prevent shell expansion
 - **Breaking:** `WriterSpec.output_path` renamed to `WriterSpec.output_template`
-- **Breaking:** `detect_host_triple()` removed; use `detect_process_triple()`
 - `find_cache_dir()` simplified to single-pass project-root-only lookup (no walk-up for existing directory)
+
+## [0.14.0] - 2026-04-02
+
+### Added
+
+- `detect_process_triple()` replaces `detect_host_triple()` with process-aware detection using `HOST_GNU_TYPE` (POSIX) or `sysconfig.get_platform()` (Windows)
+- musl libc detection: correctly produces `linux-musl` triples on Alpine and other musl-based systems (via `os.confstr` sniff for pre-3.13 Python where `HOST_GNU_TYPE` may report `gnu` on musl)
+
+### Changed
+
+- **Breaking:** `detect_host_triple()` removed; use `detect_process_triple()`
+- Simplified target detection: one signal per platform instead of 5-step fallback chain. `HOST_GNU_TYPE` on POSIX, `get_platform()` on Windows. For cross-compilation, set `--target` explicitly.
 
 ## [0.13.0] - 2026-04-01
 
@@ -468,7 +478,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/axiomantic/headerkit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/axiomantic/headerkit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/axiomantic/headerkit/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/axiomantic/headerkit/compare/v0.12.3...v0.12.4
