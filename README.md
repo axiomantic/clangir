@@ -29,7 +29,7 @@ int distance(const Point *a, const Point *b);
 
 **ctypes -- drop-in Python module, no build step:**
 ```bash
-headerkit mylib.h -w ctypes:bindings.py
+headerkit mylib.h -w ctypes -o ctypes:bindings.py
 ```
 ```python
 # generated bindings.py
@@ -45,7 +45,7 @@ _lib.distance.restype = ctypes.c_int
 
 **CFFI -- declarations for `ffibuilder.cdef()`:**
 ```bash
-headerkit mylib.h -w cffi:_defs.py
+headerkit mylib.h -w cffi -o cffi:_defs.py
 ```
 ```c
 /* generated  _defs.py */
@@ -58,7 +58,7 @@ int distance(const Point *a, const Point *b);
 
 **Cython -- `.pxd` for compiled C/C++ interop:**
 ```bash
-headerkit mylib.h -w cython:mylib.pxd
+headerkit mylib.h -w cython -o cython:mylib.pxd
 ```
 ```cython
 # generated mylib.pxd
@@ -73,7 +73,7 @@ cdef extern from "mylib.h":
 
 **LuaJIT FFI -- `ffi.cdef` bindings for LuaJIT:**
 ```bash
-headerkit mylib.h -w lua:mylib_ffi.lua
+headerkit mylib.h -w lua -o lua:mylib_ffi.lua
 ```
 ```lua
 /* generated mylib_ffi.lua */
@@ -95,7 +95,7 @@ int distance(const Point *a, const Point *b);
 
 **JSON -- full IR for custom tooling:**
 ```bash
-headerkit mylib.h -w json:mylib.json
+headerkit mylib.h -w json -o json:mylib.json
 ```
 ```json
 {
@@ -161,7 +161,7 @@ graph LR
 
 ## Features
 
-- **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes:lib.py -w cython:lib.pxd`
+- **One parse, many outputs**: generate multiple bindings in a single pass with `-w ctypes -w cython -o ctypes:lib.py -o cython:lib.pxd`
 - **Config file support**: `.headerkit.toml` or `[tool.headerkit]` in `pyproject.toml`
 - **Multi-header merging**: pass multiple `.h` files and they are merged into a single umbrella header
 
@@ -204,13 +204,17 @@ headerkit [options] FILE [FILE ...]
 | `-I DIR` | Add include directory (repeatable) |
 | `-D MACRO[=VALUE]` | Define preprocessor macro (repeatable) |
 | `--backend-arg ARG` | Pass extra argument to the backend (repeatable) |
-| `-w WRITER[:FILE]` | Write output to a file, or omit `:FILE` for stdout (repeatable) |
+| `-w WRITER` | Writer to use (repeatable) |
+| `-o WRITER:TEMPLATE` | Output path template for a writer (repeatable) |
+| `--exclude PATTERN` | Exclude headers matching glob pattern (repeatable) |
+| `--store-dir DIR` | Store directory (default: `.headerkit/`) |
 | `--writer-opt WRITER:KEY=VALUE` | Pass an option to a writer (repeatable) |
 | `--config PATH` | Load config from `PATH` instead of searching |
 | `--no-config` | Skip all config file loading |
 | `--version` | Print version and exit |
 
-At most one `-w` flag may omit the output path. Multiple writers sending to stdout is an error.
+When no `-o` flag is given for a writer, output goes to stdout. At most
+one writer may write to stdout.
 
 ### Writers
 
@@ -228,7 +232,7 @@ Pass writer options with `--writer-opt`:
 
 ```bash
 headerkit mylib.h -w cffi --writer-opt cffi:exclude_patterns=^__
-headerkit mylib.h -w ctypes:mylib.py --writer-opt ctypes:lib_name=mylib
+headerkit mylib.h -w ctypes -o ctypes:mylib.py --writer-opt ctypes:lib_name=mylib
 ```
 
 ### Config file
@@ -288,7 +292,7 @@ output = generate("mylib.h", "cffi")
 
 ```bash
 # CLI: generate with caching (on by default)
-headerkit mylib.h -w cffi:bindings.py --store-dir .headerkit
+headerkit mylib.h -w cffi -o cffi:bindings.py --store-dir .headerkit
 ```
 
 headerkit also ships a PEP 517 build backend. Consumer projects declare it in `pyproject.toml` and get bindings generated automatically during `pip install` or `python -m build`, with no libclang required when the cache is committed:
@@ -335,6 +339,23 @@ print(writer.write(header))
 ```
 
 Full documentation, guides, and API reference: [axiomantic.github.io/headerkit](https://axiomantic.github.io/headerkit/)
+
+## GitHub Action
+
+headerkit includes a GitHub Action for populating the cache in CI.
+Add it to a workflow that triggers on header changes:
+
+```yaml
+- uses: axiomantic/headerkit@v0
+  with:
+    args: "include/mylib.h -w cffi --platform linux/amd64 --platform linux/arm64"
+    commit: "true"
+```
+
+This installs headerkit, runs `cache populate` with the specified
+arguments, and optionally commits the updated `.headerkit/` directory.
+
+See the [GitHub Action Guide](https://axiomantic.github.io/headerkit/guides/github-action/) for full usage, cibuildwheel integration, and multi-platform examples.
 
 ## Development
 

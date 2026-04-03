@@ -114,13 +114,13 @@ output = generate(
 
 ```bash
 # Generate with caching (default behavior)
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 
 # Second run uses cache automatically
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 
 # Multiple writers in one pass
-headerkit include/mylib.h -w cffi:bindings/cffi.py -w ctypes:bindings/ctypes.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/cffi.py -w ctypes -o ctypes:bindings/ctypes.py
 
 # Custom store directory
 headerkit include/mylib.h -w cffi --store-dir /tmp/headerkit-store
@@ -259,7 +259,7 @@ To verify the committed cache is up-to-date in CI:
 
 ```bash
 # Generate with current sources
-headerkit generate mylib.h --writer cffi --output-path bindings.py
+headerkit mylib.h -w cffi -o cffi:bindings.py
 
 # Check for uncommitted changes
 git diff --exit-code .headerkit/ bindings.py

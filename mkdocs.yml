@@ -79,6 +79,7 @@ nav:
     - Target Triples: design/target-triples.md
     - Cache System: guides/cache.md
     - Build Backend: guides/build-backend.md
+    - GitHub Action: guides/github-action.md
     - Using CFFI Writer: guides/cffi.md
     - Writing Custom Backends: guides/custom-backends.md
     - Writing Custom Writers: guides/custom-writers.md

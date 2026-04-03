@@ -48,7 +48,7 @@ include_dirs = ["/usr/local/include"]
 Run headerkit locally on a machine with libclang installed:
 
 ```bash
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 ```
 
 This writes cache entries to `.headerkit/`.
@@ -255,7 +255,7 @@ To fix a cache miss:
 headerkit install-libclang
 
 # Re-generate and populate cache
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 
 # Commit updated cache
 git add .headerkit/
@@ -328,7 +328,7 @@ If bindings are outdated after modifying a header:
 ```bash
 # Clear the cache and regenerate
 headerkit cache clear --store-dir .headerkit
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 git add .headerkit/
 git commit -m "cache: regenerate after header changes"
 ```
@@ -377,7 +377,7 @@ ensure `.headerkit/` is packaged.
 Verify the committed cache matches current sources:
 
 ```bash
-headerkit include/mylib.h -w cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
 git diff --exit-code .headerkit/ bindings/
 ```
 
