@@ -4,6 +4,7 @@ from headerkit._generate import BatchResult, GenerateResult, batch_generate, gen
 from headerkit._ir_json import json_to_header
 from headerkit._populate import PopulateResult, PopulateTarget, populate
 from headerkit._resolve import check_output_collisions, resolve_headers, resolve_output_path
+from headerkit._store_merge import MergeResult, store_merge
 from headerkit._target import detect_process_triple, resolve_target
 from headerkit.backends import (
     LibclangUnavailableError,
@@ -102,6 +103,9 @@ __all__ = [
     "PopulateTarget",
     # Install API
     "auto_install",
+    # Store merge API
+    "store_merge",
+    "MergeResult",
     # Target detection API
     "detect_process_triple",
     "resolve_target",

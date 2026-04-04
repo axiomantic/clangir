@@ -73,7 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="headerkit",
         description="Parse C/C++ header files and emit output via configurable writers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache                Cache management (status, clear, rebuild-index, populate)",
+        epilog="Subcommands:\n  install-libclang    Install libclang for the current platform (run with --help for options)\n  cache                Cache management (status, clear, rebuild-index, populate)\n  store                Store operations (merge)",
     )
     parser.add_argument(
         "input_files",
@@ -379,6 +379,18 @@ def main() -> int:
             return cache_populate_main(sub_argv[1:])
         print(
             "headerkit cache: unknown subcommand. Available: status, clear, rebuild-index, populate",
+            file=sys.stderr,
+        )
+        return 1
+
+    if len(sys.argv) > 1 and sys.argv[1] == "store":
+        from headerkit._cache_cli import store_merge_main
+
+        sub_argv = sys.argv[2:]
+        if sub_argv and sub_argv[0] == "merge":
+            return store_merge_main(sub_argv[1:])
+        print(
+            "headerkit store: unknown subcommand. Available: merge",
             file=sys.stderr,
         )
         return 1

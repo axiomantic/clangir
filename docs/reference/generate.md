@@ -67,6 +67,35 @@ for r in results:
     options:
       show_source: false
 
+## Store Merge
+
+### `store_merge()`
+
+Merge multiple headerkit store directories into a single target directory.
+Useful for combining platform-specific cache entries collected from CI.
+
+::: headerkit._store_merge.store_merge
+    options:
+      show_source: false
+
+**Example:**
+
+```python
+from headerkit import store_merge
+
+result = store_merge(
+    sources=["store-linux/", "store-macos/"],
+    target=".headerkit/",
+)
+print(f"New: {result.new_entries}, Skipped: {result.skipped_entries}")
+```
+
+### `MergeResult`
+
+::: headerkit._store_merge.MergeResult
+    options:
+      show_source: false
+
 ## JSON Deserialization
 
 ### `json_to_header()`

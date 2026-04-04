@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-04
+
+### Added
+
+- `headerkit store merge` CLI subcommand for combining platform-specific store directories into a single `.headerkit/` directory
+- `store_merge()` Python API with `MergeResult` dataclass for programmatic store merging
+- Merge logic handles IR entries (`ir/`), output entries (`output/<writer>/`), and `index.json` files
+- Duplicate detection: entries with the same slug and cache_key are skipped; entries with the same slug but different cache_key are overwritten (later sources win)
+
 ## [0.16.1] - 2026-04-04
 
 ### Fixed
@@ -503,7 +512,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/axiomantic/headerkit/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/axiomantic/headerkit/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/axiomantic/headerkit/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/axiomantic/headerkit/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/axiomantic/headerkit/compare/v0.14.0...v0.15.0

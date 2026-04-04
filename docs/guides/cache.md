@@ -378,6 +378,71 @@ per-platform via the config file.
   `headerkit cache populate` natively on those platforms, or use CI jobs
   to generate platform-specific entries.
 
+## Merging stores from multiple platforms
+
+When collecting store entries from multiple CI platforms (e.g., via
+cibuildwheel matrix builds), each platform produces its own `.headerkit/`
+directory. Naive file copy does not work because `index.json` files would
+be overwritten instead of merged.
+
+The `store merge` command combines multiple store directories into one,
+copying entry subdirectories and merging `index.json` files:
+
+```bash
+# Merge platform-specific stores into the project store
+headerkit store merge store-linux/ store-macos/ store-windows/ -o .headerkit/
+
+# Merge a single CI artifact into the existing store
+headerkit store merge /tmp/ci-headerkit-store -o .headerkit/
+```
+
+Merge behavior:
+
+- **New entries** (slug not in target): copied to target.
+- **Duplicate entries** (same slug and cache_key): skipped.
+- **Conflicting entries** (same slug, different cache_key): overwritten
+  by the source entry (later sources win when multiple sources are given).
+
+The merge operates on both `ir/` and `output/<writer>/` layers, updating
+each layer's `index.json` independently.
+
+### Python API
+
+```python
+from headerkit import store_merge
+
+result = store_merge(
+    sources=["/tmp/store-linux", "/tmp/store-macos"],
+    target=".headerkit/",
+)
+print(f"New: {result.new_entries}, Skipped: {result.skipped_entries}")
+```
+
+### CI workflow example
+
+A typical multi-platform CI workflow:
+
+1. Each platform job runs `headerkit cache populate` and uploads
+   `.headerkit/` as an artifact.
+2. A merge job downloads all platform artifacts and runs
+   `headerkit store merge` to combine them.
+3. The merged store is committed or used for subsequent build steps.
+
+```yaml
+merge-stores:
+  needs: [build-linux, build-macos]
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: headerkit-store-linux
+        path: store-linux/
+    - uses: actions/download-artifact@v4
+      with:
+        name: headerkit-store-macos
+        path: store-macos/
+    - run: headerkit store merge store-linux/ store-macos/ -o .headerkit/
+```
+
 ## Glob-based header selection
 
 Instead of listing each header file explicitly, you can use glob patterns

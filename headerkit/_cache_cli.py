@@ -1,8 +1,8 @@
-"""CLI subcommands for cache operations.
+"""CLI subcommands for cache and store operations.
 
-Provides ``cache status``, ``cache clear``, ``cache rebuild-index``, and
-``cache populate`` subcommands, dispatched from the main CLI via early
-dispatch (before argparse construction).
+Provides ``cache status``, ``cache clear``, ``cache rebuild-index``,
+``cache populate``, and ``store merge`` subcommands, dispatched from
+the main CLI via early dispatch (before argparse construction).
 """
 
 from __future__ import annotations
@@ -400,3 +400,50 @@ def _print_results(result: PopulateResult) -> None:
                 print(
                     f"  {entry.target.docker_platform} ({entry.target.target_triple}) [{entry.writer_name}]: {entry.error}"
                 )
+
+
+def store_merge_main(argv: list[str]) -> int:
+    """Entry point for ``headerkit store merge``.
+
+    Merges one or more source store directories into a target directory,
+    combining entry subdirectories and merging ``index.json`` files.
+    """
+    parser = argparse.ArgumentParser(
+        prog="headerkit store merge",
+        description="Merge multiple headerkit store directories into one.",
+    )
+    parser.add_argument(
+        "sources",
+        nargs="+",
+        metavar="SOURCE",
+        help="Source store directories to merge from",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        dest="target",
+        required=True,
+        metavar="DIR",
+        help="Target store directory to merge into",
+    )
+    args = parser.parse_args(argv)
+
+    from headerkit._store_merge import store_merge
+
+    try:
+        result = store_merge(sources=args.sources, target=args.target)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Merged into {args.target}:")
+    print(f"  New entries: {result.new_entries}")
+    print(f"  Skipped (duplicate): {result.skipped_entries}")
+    print(f"  Overwritten (conflict): {result.overwritten_entries}")
+    if result.errors:
+        print(f"  Errors: {len(result.errors)}")
+        for err in result.errors:
+            print(f"    {err}", file=sys.stderr)
+        return 1
+
+    return 0
