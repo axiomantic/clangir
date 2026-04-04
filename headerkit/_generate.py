@@ -529,7 +529,9 @@ def generate(
     :param extra_args: Additional backend args.
     :param writer_options: Writer constructor kwargs.
     :param output_path: If provided, write output to this file.
-    :param store_dir: Store directory (default: .headerkit/ in project root).
+    :param store_dir: Store directory. When ``None``, falls back to the
+        ``HEADERKIT_STORE_DIR`` environment variable, then auto-detects
+        ``.headerkit/`` in the project root.
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
@@ -551,6 +553,11 @@ def generate(
     backend_name = backend_name or "libclang"
     writer_name = writer_name or "json"
     writer_options = writer_options or {}
+
+    # Resolve store_dir: explicit param > HEADERKIT_STORE_DIR env var > auto-detect
+    if store_dir is None:
+        if env_store_dir := os.environ.get("HEADERKIT_STORE_DIR"):
+            store_dir = env_store_dir
 
     resolved_cache_dir: Path | None = None
     if not no_cache:
@@ -677,7 +684,9 @@ def generate_all(
     :param writer_options: Per-writer kwargs, keyed by writer name.
     :param output_dir: Base directory for output files (auto-named).
     :param output_paths: Explicit output paths per writer name.
-    :param store_dir: Store directory (default: .headerkit/ in project root).
+    :param store_dir: Store directory. When ``None``, falls back to the
+        ``HEADERKIT_STORE_DIR`` environment variable, then auto-detects
+        ``.headerkit/`` in the project root.
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.
@@ -843,7 +852,9 @@ def batch_generate(
     :param extra_args: Additional backend args.
     :param writer_options: Per-writer kwargs, keyed by writer name.
     :param output_templates: Per-writer output path templates (highest priority).
-    :param store_dir: Store directory (default: .headerkit/ in project root).
+    :param store_dir: Store directory. When ``None``, falls back to the
+        ``HEADERKIT_STORE_DIR`` environment variable, then auto-detects
+        ``.headerkit/`` in the project root.
     :param no_cache: Disable all caching.
     :param no_ir_cache: Disable IR cache only.
     :param no_output_cache: Disable output cache only.

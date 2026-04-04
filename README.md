@@ -207,7 +207,7 @@ headerkit [options] FILE [FILE ...]
 | `-w WRITER` | Writer to use (repeatable) |
 | `-o WRITER:TEMPLATE` | Output path template for a writer (repeatable) |
 | `--exclude PATTERN` | Exclude headers matching glob pattern (repeatable) |
-| `--store-dir DIR` | Store directory (default: `.headerkit/`) |
+| `--store-dir DIR` | Store directory (default: `.headerkit/`; env: `HEADERKIT_STORE_DIR`) |
 | `--writer-opt WRITER:KEY=VALUE` | Pass an option to a writer (repeatable) |
 | `--config PATH` | Load config from `PATH` instead of searching |
 | `--no-config` | Skip all config file loading |
