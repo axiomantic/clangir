@@ -716,14 +716,10 @@ class TestGenerateStoreDirEnvVar:
         assert (explicit_store / "ir").exists()
         assert not env_store.exists()
 
-    def test_config_store_dir_overrides_env_var(
+    def test_empty_env_var_falls_back_to_auto_detect(
         self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Config store_dir (passed as store_dir param from CLI) takes priority over env var.
-
-        When the CLI reads store_dir from config and passes it as the store_dir
-        parameter to generate(), the explicit parameter wins over the env var.
-        """
+        """Empty HEADERKIT_STORE_DIR is treated as unset (falls back to auto-detect)."""
         mock_header = Header(
             str(header_file),
             [Function("f", CType("void"))],
@@ -733,21 +729,18 @@ class TestGenerateStoreDirEnvVar:
         monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
         monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
 
-        env_store = project_dir / "env-store"
-        config_store = project_dir / "config-store"
-        monkeypatch.setenv("HEADERKIT_STORE_DIR", str(env_store))
+        monkeypatch.setenv("HEADERKIT_STORE_DIR", "")
 
-        # Simulate what CLI does: pass config's store_dir as the parameter
         generate(
             header_path=header_file,
             writer_name="json",
             backend_name="libclang",
-            store_dir=config_store,
         )
 
-        assert config_store.exists()
-        assert (config_store / "ir").exists()
-        assert not env_store.exists()
+        # Auto-detect should create .headerkit/ at project root
+        auto_store = project_dir / ".headerkit"
+        assert auto_store.exists()
+        assert (auto_store / "ir").exists()
 
     def test_env_var_not_set_falls_back_to_auto_detect(
         self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch

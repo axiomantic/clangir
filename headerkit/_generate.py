@@ -556,8 +556,7 @@ def generate(
 
     # Resolve store_dir: explicit param > HEADERKIT_STORE_DIR env var > auto-detect
     if store_dir is None:
-        env_store_dir = os.environ.get("HEADERKIT_STORE_DIR")
-        if env_store_dir is not None:
+        if env_store_dir := os.environ.get("HEADERKIT_STORE_DIR"):
             store_dir = env_store_dir
 
     resolved_cache_dir: Path | None = None

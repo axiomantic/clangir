@@ -447,6 +447,11 @@ def main() -> int:
     resolved_no_ir_cache: bool = args.no_ir_cache or _env_bool("HEADERKIT_NO_IR_CACHE")
     resolved_no_output_cache: bool = args.no_output_cache or _env_bool("HEADERKIT_NO_OUTPUT_CACHE")
     resolved_store_dir: str | None = args.store_dir
+    # Env var takes priority over config (but not over CLI flag)
+    if resolved_store_dir is None:
+        env_store_dir = os.environ.get("HEADERKIT_STORE_DIR")
+        if env_store_dir:
+            resolved_store_dir = env_store_dir
     if not resolved_no_cache and config is not None:
         resolved_no_cache = config.no_cache
         if not resolved_no_ir_cache:
