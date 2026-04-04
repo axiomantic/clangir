@@ -296,13 +296,37 @@ def _populate_matched_defines(
     writer_inst: Any,
     header_path: Path,
     code: str | None,
+    include_dirs: list[str] | None = None,
 ) -> None:
-    """If *writer_inst* has ``define_patterns``, scan source and populate ``_matched_defines``."""
+    """If *writer_inst* has ``define_patterns``, scan source and populate ``_matched_defines``.
+
+    When *code* is provided and contains ``#include`` directives, the
+    referenced files are resolved against *include_dirs* and scanned as
+    well so that ``define_patterns`` can match macros defined in included
+    headers (e.g. the umbrella-header pattern).
+    """
     define_patterns: list[str] | None = getattr(writer_inst, "define_patterns", None)
     if not define_patterns:
         return
-    source = code if code is not None else header_path.read_text(encoding="utf-8")
-    writer_inst._matched_defines = _match_defines(source, define_patterns)
+
+    sources: list[str] = []
+    if code is not None:
+        sources.append(code)
+        # Resolve #include directives so define_patterns can match macros
+        # defined in the included headers (umbrella-header pattern).
+        if include_dirs:
+            for m in re.finditer(r'#include\s*[<"]([^>"]+)[>"]', code):
+                include_name = m.group(1)
+                for inc_dir in include_dirs:
+                    full_path = Path(inc_dir) / include_name
+                    if full_path.is_file():
+                        sources.append(full_path.read_text(encoding="utf-8"))
+                        break
+    else:
+        sources.append(header_path.read_text(encoding="utf-8"))
+
+    combined = "\n".join(sources)
+    writer_inst._matched_defines = _match_defines(combined, define_patterns)
 
 
 def _get_output(
@@ -316,6 +340,7 @@ def _get_output(
     use_output_cache: bool,
     header_path: Path,
     code: str | None,
+    include_dirs: list[str] | None = None,
 ) -> tuple[str, bool]:
     """Resolve output from cache or by running the writer.
 
@@ -349,7 +374,7 @@ def _get_output(
     effective_output_cache = use_output_cache and _should_cache_output(writer_inst)
 
     if output is None:
-        _populate_matched_defines(writer_inst, header_path, code)
+        _populate_matched_defines(writer_inst, header_path, code, include_dirs=include_dirs)
         output = writer_inst.write(header)
 
         if effective_output_cache:
@@ -608,6 +633,7 @@ def generate(
         use_output_cache=use_output_cache,
         header_path=header_path,
         code=code,
+        include_dirs=include_dirs,
     )
 
     if output_path is not None:

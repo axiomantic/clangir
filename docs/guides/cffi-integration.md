@@ -62,6 +62,26 @@ Patterns use Python's `re.search()`, so they match anywhere in the
 names starting with `NNG_FLAG_`, while `"NNG_FLAG"` also matches
 `SOME_NNG_FLAG_EXTRA`.
 
+### Umbrella headers
+
+When using the `code=` parameter with an umbrella header (a string that
+`#include`s other headers), `define_patterns` automatically resolves the
+included files against your `include_dirs` and scans them too. This
+means you can use an umbrella header like:
+
+```python
+generate(
+    "umbrella.h", "cffi",
+    code='#include <nng/nng.h>\n',
+    include_dirs=["/path/to/nng/include"],
+    writer_options={"define_patterns": [r"NNG_FLAG_\w+"]},
+)
+```
+
+headerkit will find and scan `nng/nng.h` for matching `#define` names,
+even though the umbrella string itself contains only `#include`
+directives.
+
 ## Extra cdef lines with extra_cdef
 
 CFFI's `extern "Python"` syntax lets you define Python callbacks that C

@@ -637,3 +637,34 @@ class TestGenerateWithDefinePatterns:
         # OTHER_THING should NOT appear as a "..." define (it may appear via IR as a resolved constant)
         assert "#define OTHER_THING ..." not in output
         assert "some_func" in output
+
+    @pytest.mark.libclang
+    def test_define_patterns_resolves_includes(self, tmp_path: Path) -> None:
+        """define_patterns scans resolved #include files when code= is provided."""
+        import textwrap
+
+        from headerkit._generate import generate
+
+        inc_dir = tmp_path / "include"
+        inc_dir.mkdir()
+        header = inc_dir / "mylib.h"
+        header.write_text(
+            textwrap.dedent("""\
+                #define MY_FLAG_ONE 1
+                #define MY_FLAG_TWO 2
+                int myfunc(void);
+            """)
+        )
+        (tmp_path / ".git").mkdir()
+
+        output = generate(
+            header_path=tmp_path / "umbrella.h",
+            writer_name="cffi",
+            code="#include <mylib.h>\n",
+            include_dirs=[str(inc_dir)],
+            writer_options={"define_patterns": [r"MY_FLAG_\w+"]},
+            no_cache=True,
+        )
+
+        assert "#define MY_FLAG_ONE ..." in output
+        assert "#define MY_FLAG_TWO ..." in output

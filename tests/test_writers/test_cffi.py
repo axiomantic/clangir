@@ -1,6 +1,7 @@
 """Tests for the CFFI cdef writer."""
 
 import textwrap
+from pathlib import Path
 
 from headerkit.ir import (
     Array,
@@ -512,6 +513,78 @@ class TestMatchDefinesHelper:
         source = "# define FOO 1\n#  define BAR 2\n"
         result = _match_defines(source, [r"FOO", r"BAR"])
         assert result == ["FOO", "BAR"]
+
+
+class TestPopulateMatchedDefinesIncludeResolution:
+    """Tests for _populate_matched_defines resolving #include directives."""
+
+    def test_resolves_includes_from_code(self, tmp_path: Path):
+        """When code= contains #include, resolved files are scanned for defines."""
+        from headerkit._generate import _populate_matched_defines
+        from headerkit.writers.cffi import CffiWriter
+
+        inc_dir = tmp_path / "include"
+        inc_dir.mkdir()
+        (inc_dir / "lib.h").write_text("#define LIB_FOO 1\n#define LIB_BAR 2\nint x;\n")
+
+        writer = CffiWriter(define_patterns=[r"LIB_\w+"])
+        _populate_matched_defines(
+            writer,
+            header_path=tmp_path / "umbrella.h",
+            code="#include <lib.h>\n",
+            include_dirs=[str(inc_dir)],
+        )
+        assert writer._matched_defines == ["LIB_FOO", "LIB_BAR"]
+
+    def test_includes_and_inline_defines(self, tmp_path: Path):
+        """Defines from both the code string and included files are matched."""
+        from headerkit._generate import _populate_matched_defines
+        from headerkit.writers.cffi import CffiWriter
+
+        inc_dir = tmp_path / "include"
+        inc_dir.mkdir()
+        (inc_dir / "lib.h").write_text("#define LIB_FROM_HEADER 1\n")
+
+        writer = CffiWriter(define_patterns=[r"LIB_\w+"])
+        _populate_matched_defines(
+            writer,
+            header_path=tmp_path / "umbrella.h",
+            code="#define LIB_FROM_CODE 99\n#include <lib.h>\n",
+            include_dirs=[str(inc_dir)],
+        )
+        assert writer._matched_defines == ["LIB_FROM_CODE", "LIB_FROM_HEADER"]
+
+    def test_no_include_dirs_skips_resolution(self):
+        """Without include_dirs, #include directives in code are not resolved."""
+        from headerkit._generate import _populate_matched_defines
+        from headerkit.writers.cffi import CffiWriter
+
+        writer = CffiWriter(define_patterns=[r"MY_\w+"])
+        _populate_matched_defines(
+            writer,
+            header_path=Path("fake.h"),
+            code="#define MY_INLINE 1\n#include <nonexistent.h>\n",
+            include_dirs=None,
+        )
+        assert writer._matched_defines == ["MY_INLINE"]
+
+    def test_quoted_include(self, tmp_path: Path):
+        """Quoted #include "file.h" directives are also resolved."""
+        from headerkit._generate import _populate_matched_defines
+        from headerkit.writers.cffi import CffiWriter
+
+        inc_dir = tmp_path / "include"
+        inc_dir.mkdir()
+        (inc_dir / "lib.h").write_text("#define QUOTED_FLAG 42\n")
+
+        writer = CffiWriter(define_patterns=[r"QUOTED_\w+"])
+        _populate_matched_defines(
+            writer,
+            header_path=tmp_path / "umbrella.h",
+            code='#include "lib.h"\n',
+            include_dirs=[str(inc_dir)],
+        )
+        assert writer._matched_defines == ["QUOTED_FLAG"]
 
 
 class TestExtraCdef:
