@@ -27,7 +27,7 @@
     
     
       
-        <title>GitHub Action - headerkit</title>
+        <title>CI Store Population - headerkit</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#github-action" class="md-skip">
+        <a href="#ci-store-population" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              GitHub Action
+              CI Store Population
             
           </span>
         </div>
@@ -622,7 +622,7 @@
   <span class="md-ellipsis">
     
   
-    GitHub Action
+    CI Store Population
   
 
     
@@ -640,7 +640,7 @@
   <span class="md-ellipsis">
     
   
-    GitHub Action
+    CI Store Population
   
 
     
@@ -666,72 +666,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-it-does" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What it does
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#inputs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Inputs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pin-a-headerkit-version" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Pin a headerkit version
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-with-cibuildwheel" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage with cibuildwheel
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-with-multiple-platforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage with multiple platforms
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -743,13 +677,74 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#triggering-on-header-changes" class="md-nav__link">
+  <a href="#example-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Triggering on header changes
+        Example workflow
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-cibuildwheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using cibuildwheel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#customizing-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customizing platforms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuring-the-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring the PR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-on-schedule-vs-on-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running on schedule vs on push
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1489,72 +1484,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-it-does" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What it does
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#inputs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Inputs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pin-a-headerkit-version" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Pin a headerkit version
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-with-cibuildwheel" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage with cibuildwheel
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-with-multiple-platforms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage with multiple platforms
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1566,13 +1495,74 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#triggering-on-header-changes" class="md-nav__link">
+  <a href="#example-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Triggering on header changes
+        Example workflow
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-cibuildwheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using cibuildwheel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#customizing-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customizing platforms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuring-the-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring the PR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-on-schedule-vs-on-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running on schedule vs on push
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1607,160 +1597,142 @@
   
 
 
-<h1 id="github-action">GitHub Action<a class="headerlink" href="#github-action" title="Permanent link">&para;</a></h1>
-<p>headerkit ships a composite GitHub Action that populates the
-<code>.headerkit/</code> cache in CI. Use it to keep cache entries up to date
-whenever headers change, so downstream builds never need libclang.</p>
-<h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h2>
-<p>The action runs three steps:</p>
+<h1 id="ci-store-population">CI Store Population<a class="headerlink" href="#ci-store-population" title="Permanent link">&para;</a></h1>
+<p>headerkit's PEP 517 build backend populates <code>.headerkit/</code> during wheel
+builds. To keep the store up to date across platforms, use a CI workflow
+that builds wheels in a matrix, collects artifacts, and opens a PR if
+anything changed. No custom action needed -- just standard GitHub Actions
+building blocks.</p>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p>The <code>.headerkit/</code> directory contains IR (parsed headers) and output
+(generated bindings) so that downstream builds work without libclang
+installed. This directory should be committed to your repository; it is
+not ephemeral cache.</p>
+<p>The CI pattern has two jobs:</p>
 <ol>
-<li>Sets up Python (via <code>actions/setup-python</code>).</li>
-<li>Installs headerkit from PyPI.</li>
-<li>Runs <code>headerkit cache populate</code> with the arguments you provide.</li>
+<li><strong>build</strong> -- runs in a matrix across platforms, builds wheels, and
+   uploads the <code>.headerkit/</code> directory as an artifact.</li>
+<li><strong>update-store</strong> -- downloads all artifacts into a single <code>.headerkit/</code>
+   directory and opens a PR if anything changed.</li>
 </ol>
-<p>Optionally, it commits the updated <code>.headerkit/</code> directory back to the
-branch.</p>
-<h2 id="inputs">Inputs<a class="headerlink" href="#inputs" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Input</th>
-<th>Required</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>headerkit-version</code></td>
-<td>no</td>
-<td>latest</td>
-<td>Pin a specific headerkit version (e.g., <code>0.15.0</code>)</td>
-</tr>
-<tr>
-<td><code>python-version</code></td>
-<td>no</td>
-<td><code>3.12</code></td>
-<td>Python version for the runner</td>
-</tr>
-<tr>
-<td><code>args</code></td>
-<td>no</td>
-<td><code>""</code></td>
-<td>Arguments passed to <code>headerkit cache populate</code></td>
-</tr>
-<tr>
-<td><code>commit</code></td>
-<td>no</td>
-<td><code>false</code></td>
-<td>Commit populated cache files after generation</td>
-</tr>
-</tbody>
-</table>
-<h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Populate headerkit cache</span>
+<h2 id="example-workflow">Example workflow<a class="headerlink" href="#example-workflow" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Update headerkit store</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">on</span><span class="p">:</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">push</span><span class="p">:</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;include/**/*.h&quot;</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">jobs</span><span class="p">:</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">populate</span><span class="p">:</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/amd64&quot;</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">branches</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">main</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;include/**/*.h&quot;</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;pyproject.toml&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">schedule</span><span class="p">:</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cron</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0</span><span class="nv"> </span><span class="s">6</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">1&quot;</span><span class="w">  </span><span class="c1"># weekly on Monday</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">jobs</span><span class="p">:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">build</span><span class="p">:</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">ubuntu-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">macos-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">windows-latest</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ matrix.os }}</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/setup-python@v5</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">          </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.12&quot;</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Build wheel</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install build &amp;&amp; python -m build --wheel</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/upload-artifact@v4</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">          </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headerkit-store-${{ matrix.os }}</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">          </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.headerkit/</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">  </span><span class="nt">update-store</span><span class="p">:</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">    </span><span class="nt">needs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">build</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">    </span><span class="nt">permissions</span><span class="p">:</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">      </span><span class="nt">contents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">write</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">      </span><span class="nt">pull-requests</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">write</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/download-artifact@v4</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="w">          </span><span class="nt">pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headerkit-store-*</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="w">          </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.headerkit/</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="w">          </span><span class="nt">merge-multiple</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">peter-evans/create-pull-request@v8</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="w">          </span><span class="nt">commit-message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;chore:</span><span class="nv"> </span><span class="s">update</span><span class="nv"> </span><span class="s">headerkit</span><span class="nv"> </span><span class="s">store&quot;</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="w">          </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;chore:</span><span class="nv"> </span><span class="s">update</span><span class="nv"> </span><span class="s">headerkit</span><span class="nv"> </span><span class="s">store&quot;</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="w">          </span><span class="nt">branch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headerkit/update-store</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="w">          </span><span class="nt">body</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="w">            </span><span class="no">Automated update of `.headerkit/` store from CI matrix build.</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="w">          </span><span class="nt">labels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">automated</span>
 </code></pre></div>
-<p>This installs the latest headerkit, runs <code>cache populate</code> for the
-specified header and platform, and commits the result.</p>
-<h2 id="pin-a-headerkit-version">Pin a headerkit version<a class="headerlink" href="#pin-a-headerkit-version" title="Permanent link">&para;</a></h2>
-<p>Lock the version to avoid surprises from new releases:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">headerkit-version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.15.0&quot;</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--cibuildwheel&quot;</span>
+<h2 id="using-cibuildwheel">Using cibuildwheel<a class="headerlink" href="#using-cibuildwheel" title="Permanent link">&para;</a></h2>
+<p>If your project uses cibuildwheel, replace the build step:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="w">  </span><span class="nt">build</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">      </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">        </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">ubuntu-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">macos-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">windows-latest</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ matrix.os }}</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/setup-python@v5</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">          </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.12&quot;</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Build wheels</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install cibuildwheel &amp;&amp; cibuildwheel --output-dir dist</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/upload-artifact@v4</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">          </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headerkit-store-${{ matrix.os }}</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">          </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.headerkit/</span>
 </code></pre></div>
-<h2 id="usage-with-cibuildwheel">Usage with cibuildwheel<a class="headerlink" href="#usage-with-cibuildwheel" title="Permanent link">&para;</a></h2>
-<p>If your project uses cibuildwheel, pass <code>--cibuildwheel</code> to auto-detect
-target platforms and Python versions from <code>[tool.cibuildwheel]</code> in
-<code>pyproject.toml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;--cibuildwheel&quot;</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<p>The build backend populates <code>.headerkit/</code> as a side effect of each wheel
+build, so cibuildwheel produces store entries for every platform in the
+matrix automatically.</p>
+<h2 id="configuration-options">Configuration options<a class="headerlink" href="#configuration-options" title="Permanent link">&para;</a></h2>
+<h3 id="customizing-platforms">Customizing platforms<a class="headerlink" href="#customizing-platforms" title="Permanent link">&para;</a></h3>
+<p>Add or remove entries from <code>matrix.os</code> to match your target platforms:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">strategy</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">ubuntu-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">ubuntu-24.04-arm</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">macos-latest</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">windows-latest</span><span class="p p-Indicator">]</span>
 </code></pre></div>
-<p>This reads the <code>build</code> and <code>skip</code> selectors to determine which CPython
-versions and Linux platforms to target.</p>
-<h2 id="usage-with-multiple-platforms">Usage with multiple platforms<a class="headerlink" href="#usage-with-multiple-platforms" title="Permanent link">&para;</a></h2>
-<p>Generate cache entries for specific platforms using <code>--platform</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
+<h3 id="configuring-the-pr">Configuring the PR<a class="headerlink" href="#configuring-the-pr" title="Permanent link">&para;</a></h3>
+<p>The <code>peter-evans/create-pull-request</code> action accepts many options for
+customizing the resulting pull request:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">peter-evans/create-pull-request@v8</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;-</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="no">include/mylib.h -w cffi</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="no">--platform linux/amd64</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="no">--platform linux/arm64</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">commit-message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;chore:</span><span class="nv"> </span><span class="s">update</span><span class="nv"> </span><span class="s">headerkit</span><span class="nv"> </span><span class="s">store&quot;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;chore:</span><span class="nv"> </span><span class="s">update</span><span class="nv"> </span><span class="s">headerkit</span><span class="nv"> </span><span class="s">store&quot;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">branch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headerkit/update-store</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">labels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">automated, dependencies</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">reviewers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-username</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">draft</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
 </code></pre></div>
-<p>For macOS and Windows targets, run the action on the matching runner
-OS instead of relying on Docker emulation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">jobs</span><span class="p">:</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">populate-linux</span><span class="p">:</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/amd64</span><span class="nv"> </span><span class="s">--platform</span><span class="nv"> </span><span class="s">linux/arm64&quot;</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="nt">populate-macos</span><span class="p">:</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">macos-latest</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="nt">needs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">populate-linux</span>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">axiomantic/headerkit@v0</span>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">        </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">          </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;include/mylib.h</span><span class="nv"> </span><span class="s">-w</span><span class="nv"> </span><span class="s">cffi&quot;</span>
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">          </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
-</code></pre></div>
-<p>Note that when <code>commit: "true"</code> is used across multiple jobs, each job
-must pull the latest commit from the previous job to avoid conflicts.
-Use <code>needs:</code> to sequence them.</p>
-<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p>The action is a <a href="https://docs.github.com/en/actions/sharing-automations/creating-actions/creating-a-composite-action">composite action</a>
-defined in <code>action.yml</code> at the repository root. It:</p>
-<ol>
-<li>Calls <code>actions/setup-python</code> with the requested Python version.</li>
-<li>Installs headerkit via pip. If <code>headerkit-version</code> is set, it pins
-   that exact version; otherwise it installs the latest release.</li>
-<li>Runs <code>headerkit cache populate</code> with your <code>args</code> value. The args
-   are passed through to the command as-is, so any flag that
-   <code>cache populate</code> accepts works here.</li>
-<li>If <code>commit</code> is <code>"true"</code>, it configures a bot git identity, stages
-   <code>.headerkit/</code>, and commits if there are changes. If the cache is
-   already up to date, the commit step is a no-op.</li>
-</ol>
-<p>All input values are passed via environment variables (not shell
-interpolation) to prevent injection attacks.</p>
-<h2 id="triggering-on-header-changes">Triggering on header changes<a class="headerlink" href="#triggering-on-header-changes" title="Permanent link">&para;</a></h2>
-<p>Use <code>paths</code> filters to run the action only when headers change:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">on</span><span class="p">:</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">push</span><span class="p">:</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;include/**/*.h&quot;</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;vendor/**/*.h&quot;</span>
-</code></pre></div>
-<p>This avoids unnecessary cache populate runs on unrelated commits.</p>
+<p>See the <a href="https://github.com/peter-evans/create-pull-request">create-pull-request documentation</a>
+for the full list of inputs.</p>
+<h3 id="running-on-schedule-vs-on-push">Running on schedule vs on push<a class="headerlink" href="#running-on-schedule-vs-on-push" title="Permanent link">&para;</a></h3>
+<p>The example workflow triggers both on push (when headers change) and on a
+weekly schedule. Adjust to fit your project:</p>
+<ul>
+<li><strong>On push with path filters</strong> -- reacts to header changes immediately.</li>
+<li><strong>On schedule</strong> -- catches changes from dependency updates or toolchain
+  upgrades that affect generated output.</li>
+<li><strong>Manual dispatch</strong> -- add <code>workflow_dispatch:</code> to the <code>on:</code> block
+  to allow manual runs from the Actions tab.</li>
+</ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../cache/">Cache Strategy Guide</a> for cache layout, bypass flags, and
   multi-platform population details.</li>
 <li><a href="../build-backend/">Build Backend Guide</a> for using headerkit as a
-  PEP 517 build backend with committed cache.</li>
+  PEP 517 build backend with committed store.</li>
 </ul>
 
 
