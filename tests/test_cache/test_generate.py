@@ -655,3 +655,121 @@ class TestIsBackendAvailable:
         from headerkit.backends import is_backend_available
 
         assert is_backend_available("nonexistent_backend") is False
+
+
+class TestGenerateStoreDirEnvVar:
+    """Test HEADERKIT_STORE_DIR environment variable support."""
+
+    def test_env_var_used_when_store_dir_is_none(
+        self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """HEADERKIT_STORE_DIR is used when store_dir parameter is None."""
+        mock_header = Header(
+            str(header_file),
+            [Function("add", CType("int"), [Parameter("a", CType("int"))])],
+        )
+        mock_backend = MagicMock()
+        mock_backend.parse.return_value = mock_header
+        monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
+        monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
+
+        env_store = project_dir / "env-store"
+        monkeypatch.setenv("HEADERKIT_STORE_DIR", str(env_store))
+
+        generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+        )
+
+        # The env var store directory should have been created and used
+        assert env_store.exists()
+        ir_dir = env_store / "ir"
+        assert ir_dir.exists()
+
+    def test_explicit_store_dir_overrides_env_var(
+        self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit store_dir parameter takes priority over HEADERKIT_STORE_DIR."""
+        mock_header = Header(
+            str(header_file),
+            [Function("f", CType("void"))],
+        )
+        mock_backend = MagicMock()
+        mock_backend.parse.return_value = mock_header
+        monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
+        monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
+
+        env_store = project_dir / "env-store"
+        explicit_store = project_dir / "explicit-store"
+        monkeypatch.setenv("HEADERKIT_STORE_DIR", str(env_store))
+
+        generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+            store_dir=explicit_store,
+        )
+
+        # Explicit store should be used, env var store should not exist
+        assert explicit_store.exists()
+        assert (explicit_store / "ir").exists()
+        assert not env_store.exists()
+
+    def test_config_store_dir_overrides_env_var(
+        self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config store_dir (passed as store_dir param from CLI) takes priority over env var.
+
+        When the CLI reads store_dir from config and passes it as the store_dir
+        parameter to generate(), the explicit parameter wins over the env var.
+        """
+        mock_header = Header(
+            str(header_file),
+            [Function("f", CType("void"))],
+        )
+        mock_backend = MagicMock()
+        mock_backend.parse.return_value = mock_header
+        monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
+        monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
+
+        env_store = project_dir / "env-store"
+        config_store = project_dir / "config-store"
+        monkeypatch.setenv("HEADERKIT_STORE_DIR", str(env_store))
+
+        # Simulate what CLI does: pass config's store_dir as the parameter
+        generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+            store_dir=config_store,
+        )
+
+        assert config_store.exists()
+        assert (config_store / "ir").exists()
+        assert not env_store.exists()
+
+    def test_env_var_not_set_falls_back_to_auto_detect(
+        self, project_dir: Path, header_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When HEADERKIT_STORE_DIR is not set and store_dir is None, auto-detect is used."""
+        mock_header = Header(
+            str(header_file),
+            [Function("f", CType("void"))],
+        )
+        mock_backend = MagicMock()
+        mock_backend.parse.return_value = mock_header
+        monkeypatch.setattr("headerkit._generate.get_backend", lambda _name: mock_backend)
+        monkeypatch.setattr("headerkit._generate.is_backend_available", lambda _name: True)
+        monkeypatch.delenv("HEADERKIT_STORE_DIR", raising=False)
+
+        generate(
+            header_path=header_file,
+            writer_name="json",
+            backend_name="libclang",
+        )
+
+        # Auto-detect should create .headerkit/ at project root (where .git is)
+        auto_store = project_dir / ".headerkit"
+        assert auto_store.exists()
+        assert (auto_store / "ir").exists()

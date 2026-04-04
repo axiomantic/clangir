@@ -207,8 +207,22 @@ scans all `metadata.json` files and regenerates the `index.json` mappings.
 
 ## Configuration
 
-The store directory can be configured at the top level of `[tool.headerkit]`
-(or `.headerkit.toml`). Cache bypass settings live in the `[cache]` section.
+The store directory can be configured via multiple layers (highest priority first):
+
+1. `--store-dir` CLI flag or `store_dir` parameter in the Python API
+2. `HEADERKIT_STORE_DIR` environment variable
+3. `store_dir` key in config file (`.headerkit.toml` or `[tool.headerkit]`)
+4. Auto-detect `.headerkit/` at the project root
+
+The environment variable is especially useful for **cibuildwheel** integration,
+where the store directory must reside on a mounted volume visible to the host:
+
+```bash
+export HEADERKIT_STORE_DIR=/host/project/.headerkit
+headerkit include/mylib.h -w cffi
+```
+
+Cache bypass settings live in the `[cache]` section of the config file.
 
 ```toml
 # .headerkit.toml

@@ -180,7 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="store_dir",
         metavar="DIR",
         default=None,
-        help="Store directory (default: .headerkit/ in project root)",
+        help=("Store directory (default: .headerkit/ in project root). Env: HEADERKIT_STORE_DIR"),
     )
     parser.add_argument(
         "--target",
