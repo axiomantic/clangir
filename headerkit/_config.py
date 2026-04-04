@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -148,6 +150,39 @@ def _require_str_list(val: object, field_name: str, source: Path) -> list[str]:
             f"headerkit: config error in {source}: {field_name} must be list[str], got {type(val).__name__}"
         )
     return cast(list[str], val)
+
+
+_ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+
+
+def _expand_env_vars(value: object) -> object:
+    """Recursively expand ``${VAR}`` references in string values.
+
+    - **str**: replace all ``${VAR}`` patterns with ``os.environ[VAR]``.
+    - **list**: recursively expand each element.
+    - **dict**: recursively expand each value (keys are left unchanged).
+    - Everything else is returned as-is.
+
+    Raises ``ValueError`` if a referenced variable is not set.
+    """
+    if isinstance(value, str):
+
+        def _replace(match: re.Match[str]) -> str:
+            var = match.group(1)
+            try:
+                return os.environ[var]
+            except KeyError:
+                raise ValueError(f"headerkit: environment variable '{var}' is not set (referenced in config)") from None
+
+        return _ENV_VAR_RE.sub(_replace, value)
+
+    if isinstance(value, list):
+        return [_expand_env_vars(item) for item in value]
+
+    if isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+
+    return value
 
 
 def _extract_config(data: dict[str, object], source: Path) -> HeaderkitConfig:
@@ -315,6 +350,8 @@ def load_config(path: Path) -> HeaderkitConfig:
         data: dict[str, object] = cast(dict[str, object], headerkit_section)
     else:
         data = raw
+
+    data = cast(dict[str, object], _expand_env_vars(data))
 
     return _extract_config(data, path)
 
