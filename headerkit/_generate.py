@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -268,6 +269,42 @@ def _get_ir(
     return header, ir_cache_key, ir_slug, ir_from_cache
 
 
+def _match_defines(source: str, patterns: list[str]) -> list[str]:
+    """Scan *source* for ``#define`` names matching any of *patterns*.
+
+    Each pattern is compiled as a regex and tested against every
+    ``#define NAME`` token found in the source.  Returns a
+    deduplicated, stable-order list of matching names.
+    """
+    compiled = [re.compile(p) for p in patterns]
+    define_re = re.compile(r"^#define\s+(\w+)", re.MULTILINE)
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in define_re.finditer(source):
+        name = m.group(1)
+        if name in seen:
+            continue
+        for pat in compiled:
+            if pat.search(name):
+                seen.add(name)
+                result.append(name)
+                break
+    return result
+
+
+def _populate_matched_defines(
+    writer_inst: Any,
+    header_path: Path,
+    code: str | None,
+) -> None:
+    """If *writer_inst* has ``define_patterns``, scan source and populate ``_matched_defines``."""
+    define_patterns: list[str] | None = getattr(writer_inst, "define_patterns", None)
+    if not define_patterns:
+        return
+    source = code if code is not None else header_path.read_text(encoding="utf-8")
+    writer_inst._matched_defines = _match_defines(source, define_patterns)
+
+
 def _get_output(
     *,
     header: Header,
@@ -277,6 +314,8 @@ def _get_output(
     ir_slug: str,
     resolved_cache_dir: Path | None,
     use_output_cache: bool,
+    header_path: Path,
+    code: str | None,
 ) -> tuple[str, bool]:
     """Resolve output from cache or by running the writer.
 
@@ -310,6 +349,7 @@ def _get_output(
     effective_output_cache = use_output_cache and _should_cache_output(writer_inst)
 
     if output is None:
+        _populate_matched_defines(writer_inst, header_path, code)
         output = writer_inst.write(header)
 
         if effective_output_cache:
@@ -566,6 +606,8 @@ def generate(
         ir_slug=ir_slug,
         resolved_cache_dir=resolved_cache_dir,
         use_output_cache=use_output_cache,
+        header_path=header_path,
+        code=code,
     )
 
     if output_path is not None:

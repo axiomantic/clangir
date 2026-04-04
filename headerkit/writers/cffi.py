@@ -502,6 +502,14 @@ class CffiWriter:
     exclude_patterns : list[str] | None
         Regex patterns. Declarations with names matching any pattern
         are excluded from output.
+    define_patterns : list[str] | None
+        Regex patterns matched against ``#define`` names in the raw header
+        source.  Matching names are appended as ``#define NAME ...`` lines
+        (CFFI's "resolve at verify-time" syntax).  The actual matching is
+        performed by the ``generate()`` pipeline, which sets
+        ``_matched_defines`` before calling ``write()``.
+    extra_cdef : list[str] | None
+        Arbitrary cdef lines appended verbatim after all generated output.
 
     Example
     -------
@@ -520,12 +528,32 @@ class CffiWriter:
 
     default_output_pattern: str = "{dir}/{stem}_cffi.py"
 
-    def __init__(self, exclude_patterns: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        exclude_patterns: list[str] | None = None,
+        define_patterns: list[str] | None = None,
+        extra_cdef: list[str] | None = None,
+    ) -> None:
         self._exclude_patterns = exclude_patterns
+        self.define_patterns = define_patterns
+        self.extra_cdef = extra_cdef
+        self._matched_defines: list[str] | None = None
 
     def write(self, header: Header) -> str:
         """Convert header IR to CFFI cdef string."""
-        return header_to_cffi(header, exclude_patterns=self._exclude_patterns)
+        output = header_to_cffi(header, exclude_patterns=self._exclude_patterns)
+
+        # Append #define lines for names matched by generate()
+        if self._matched_defines:
+            define_lines = "\n".join(f"#define {name} ..." for name in self._matched_defines)
+            output = output + "\n" + define_lines if output else define_lines
+
+        # Append extra cdef lines verbatim
+        if self.extra_cdef:
+            extra = "\n".join(self.extra_cdef)
+            output = output + "\n" + extra if output else extra
+
+        return output
 
     @property
     def name(self) -> str:
