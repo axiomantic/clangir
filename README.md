@@ -45,10 +45,10 @@ _lib.distance.restype = ctypes.c_int
 
 **CFFI -- declarations for `ffibuilder.cdef()`:**
 ```bash
-headerkit mylib.h -w cffi -o cffi:_defs.py
+headerkit mylib.h -w cffi -o cffi:_defs.cdef.txt
 ```
 ```c
-/* generated  _defs.py */
+/* generated  _defs.cdef.txt */
 typedef struct Point {
     int x;
     int y;
@@ -296,7 +296,7 @@ output = generate("mylib.h", "cffi")
 
 ```bash
 # CLI: generate with caching (on by default)
-headerkit mylib.h -w cffi -o cffi:bindings.py --store-dir .headerkit
+headerkit mylib.h -w cffi -o cffi:mylib.cdef.txt --store-dir .headerkit
 ```
 
 headerkit also ships a PEP 517 build backend. Consumer projects declare it in `pyproject.toml` and get bindings generated automatically during `pip install` or `python -m build`, with no libclang required when the cache is committed:

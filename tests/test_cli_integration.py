@@ -415,8 +415,8 @@ class TestCliMultipleWriters:
 
         assert result == 0
         assert json_out.exists()
-        # cffi writer uses default pattern {dir}/{stem}_cffi.py
-        cffi_default = tmp_path / "test_cffi.py"
+        # cffi writer uses default pattern {dir}/{stem}.cdef.txt
+        cffi_default = tmp_path / "test.cdef.txt"
         assert cffi_default.exists()
         assert "multiply" in cffi_default.read_text(encoding="utf-8")
 
@@ -457,9 +457,9 @@ class TestCliMultipleInputFiles:
         result = main()
 
         assert result == 0
-        # Batch mode writes to default output pattern {dir}/{stem}_cffi.py
-        cffi_a = tmp_path / "a_cffi.py"
-        cffi_b = tmp_path / "b_cffi.py"
+        # Batch mode writes to default output pattern {dir}/{stem}.cdef.txt
+        cffi_a = tmp_path / "a.cdef.txt"
+        cffi_b = tmp_path / "b.cdef.txt"
         assert cffi_a.exists()
         assert cffi_b.exists()
         assert "func_a" in cffi_a.read_text(encoding="utf-8")

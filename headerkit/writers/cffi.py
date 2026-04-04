@@ -526,7 +526,7 @@ class CffiWriter:
         cdef_string = writer.write(header)
     """
 
-    default_output_pattern: str = "{dir}/{stem}_cffi.py"
+    default_output_pattern: str = "{dir}/{stem}.cdef.txt"
 
     def __init__(
         self,

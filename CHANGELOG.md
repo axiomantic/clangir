@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CFFI writer default output extension changed from `.py` to `.cdef.txt` (output is C declarations, not Python)
+
 ## [0.18.0] - 2026-04-04
 
 ### Added

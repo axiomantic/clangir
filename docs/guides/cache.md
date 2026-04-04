@@ -87,7 +87,7 @@ results = generate_all(
     "include/mylib.h",
     writers=["cffi", "ctypes", "json"],
     output_paths={
-        "cffi": "bindings/mylib_cffi.py",
+        "cffi": "bindings/mylib.cdef.txt",
         "ctypes": "bindings/mylib_ctypes.py",
         "json": "bindings/mylib_ir.json",
     },
@@ -114,13 +114,13 @@ output = generate(
 
 ```bash
 # Generate with caching (default behavior)
-headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib.cdef.txt
 
 # Second run uses cache automatically
-headerkit include/mylib.h -w cffi -o cffi:bindings/mylib_cffi.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/mylib.cdef.txt
 
 # Multiple writers in one pass
-headerkit include/mylib.h -w cffi -o cffi:bindings/cffi.py -w ctypes -o ctypes:bindings/ctypes.py
+headerkit include/mylib.h -w cffi -o cffi:bindings/cffi.cdef.txt -w ctypes -o ctypes:bindings/ctypes.py
 
 # Custom store directory
 headerkit include/mylib.h -w cffi --store-dir /tmp/headerkit-store
@@ -273,10 +273,10 @@ To verify the committed cache is up-to-date in CI:
 
 ```bash
 # Generate with current sources
-headerkit mylib.h -w cffi -o cffi:bindings.py
+headerkit mylib.h -w cffi -o cffi:mylib.cdef.txt
 
 # Check for uncommitted changes
-git diff --exit-code .headerkit/ bindings.py
+git diff --exit-code .headerkit/ mylib.cdef.txt
 ```
 
 If the diff is non-empty, the cache is stale and needs to be regenerated.
@@ -464,7 +464,7 @@ to select headers:
 
 ```bash
 # Process all .h files under include/
-headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}_cffi.py
+headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}.cdef.txt
 
 # Exclude internal headers
 headerkit 'include/**/*.h' --exclude 'include/internal/**' -w cffi
@@ -486,11 +486,11 @@ Templates support these variables:
 
 ```bash
 # Each header gets its own output file
-headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}_cffi.py
+headerkit 'include/**/*.h' -w cffi -o cffi:{dir}/{stem}.cdef.txt
 
 # Multiple writers with different templates
 headerkit 'include/**/*.h' \
-    -w cffi -o cffi:{dir}/{stem}_cffi.py \
+    -w cffi -o cffi:{dir}/{stem}.cdef.txt \
     -w json -o json:{dir}/{stem}.json
 ```
 
@@ -510,7 +510,7 @@ pattern = "vendor/special.h"
 defines = ["VENDOR_MODE"]
 
 [tool.headerkit.output]
-cffi = "{dir}/{stem}_cffi.py"
+cffi = "{dir}/{stem}.cdef.txt"
 json = "{dir}/{stem}.json"
 ```
 
