@@ -2054,7 +2054,9 @@ instead of reading <em>header_path</em> from disk.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Store directory (default: .headerkit/ in project root).</p>
+                <p>Store directory. When <code>None</code>, falls back to the
+<code>HEADERKIT_STORE_DIR</code> environment variable, then auto-detects
+<code>.headerkit/</code> in the project root.</p>
               </div>
             </td>
             <td>
@@ -2420,7 +2422,9 @@ writer (or loads from output cache).</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Store directory (default: .headerkit/ in project root).</p>
+                <p>Store directory. When <code>None</code>, falls back to the
+<code>HEADERKIT_STORE_DIR</code> environment variable, then auto-detects
+<code>.headerkit/</code> in the project root.</p>
               </div>
             </td>
             <td>
