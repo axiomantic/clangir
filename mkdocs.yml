@@ -80,6 +80,7 @@ nav:
     - Cache System: guides/cache.md
     - Build Backend: guides/build-backend.md
     - CI Store Population: guides/github-action.md
+    - cibuildwheel Integration: guides/cibuildwheel.md
     - CFFI Integration: guides/cffi-integration.md
     - Using CFFI Writer: guides/cffi.md
     - Writing Custom Backends: guides/custom-backends.md

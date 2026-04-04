@@ -346,7 +346,7 @@ Full documentation, guides, and API reference: [axiomantic.github.io/headerkit](
 
 ## CI Store Population
 
-headerkit's build backend populates `.headerkit/` during wheel builds. To keep the store updated across platforms in CI, see the [CI Store Population guide](https://axiomantic.github.io/headerkit/guides/github-action/).
+headerkit's build backend populates `.headerkit/` during wheel builds. To keep the store updated across platforms in CI, see the [CI Store Population guide](https://axiomantic.github.io/headerkit/guides/github-action/). For projects using [cibuildwheel](https://cibuildwheel.pypa.io/), see the [cibuildwheel Integration guide](https://axiomantic.github.io/headerkit/guides/cibuildwheel/) for Linux Docker volume mount configuration.
 
 ## Development
 
