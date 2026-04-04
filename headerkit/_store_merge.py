@@ -153,12 +153,14 @@ def _merge_layer(
         # Remove existing directory if present (may exist on disk even if
         # not tracked in index, e.g., from a partial merge), preventing
         # shutil.copytree from raising FileExistsError.
-        if dst_entry_dir.is_dir():
+        if dst_entry_dir.is_symlink():
+            dst_entry_dir.unlink()
+        elif dst_entry_dir.is_dir():
             shutil.rmtree(dst_entry_dir)
 
         # Copy entry directory
         try:
-            shutil.copytree(str(entry_dir), str(dst_entry_dir))
+            shutil.copytree(entry_dir, dst_entry_dir)
         except OSError as exc:
             result.errors.append(f"Failed to copy {entry_dir} -> {dst_entry_dir}: {exc}")
             logger.warning("Failed to copy entry %s: %s", slug, exc)
