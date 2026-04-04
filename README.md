@@ -254,7 +254,11 @@ exclude_patterns = ["^__", "^_internal"]
 lib_name = "mylib"
 ```
 
+Config string values support `${VAR}` environment variable expansion at load time, which is useful for build-time paths injected by CMake or similar tools (e.g., `include_dirs = ["${MY_INCLUDE_DIR}"]`).
+
 Command-line flags override config file values.
+
+For projects using CFFI with `cffi_buildtool`, see the [CFFI Integration Guide](https://axiomantic.github.io/headerkit/guides/cffi-integration/).
 
 ### Plugins
 
