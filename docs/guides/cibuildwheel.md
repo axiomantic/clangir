@@ -233,10 +233,10 @@ platforms.
 **Symptom**: The `update-store` job creates a PR but some platform
 entries are missing.
 
-**Check**: Verify the artifact upload includes both `.headerkit/` and
-`.headerkit-collected/` paths. The `merge-multiple: true` option in
-`download-artifact` merges files from all matrix jobs into a single
-directory.
+**Check**: Verify the artifact upload includes the `.headerkit/` path
+and that the Linux collect step ran successfully. The `merge-multiple: true`
+option in `download-artifact` merges files from all matrix jobs into a
+single directory.
 
 ## See also
 
