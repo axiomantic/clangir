@@ -8,8 +8,8 @@ import shutil
 import subprocess
 from unittest.mock import patch
 
-import tripwire
 import pytest
+import tripwire
 from dirty_equals import AnyThing
 
 import headerkit.backends.libclang as mod
@@ -739,7 +739,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=FileNotFoundError(),
         )
@@ -747,7 +747,7 @@ class TestGetSystemIncludeDirs:
             result = get_system_include_dirs()
         assert result == []
         tripwire.assert_interaction(
-            tripwire.subprocess_mock.run,
+            tripwire.subprocess.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=AnyThing,
             stdout=AnyThing,
@@ -760,7 +760,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=subprocess.TimeoutExpired(cmd="clang", timeout=10),
         )
@@ -768,7 +768,7 @@ class TestGetSystemIncludeDirs:
             result = get_system_include_dirs()
         assert result == []
         tripwire.assert_interaction(
-            tripwire.subprocess_mock.run,
+            tripwire.subprocess.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=AnyThing,
             stdout=AnyThing,
@@ -781,7 +781,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stderr=(
@@ -796,7 +796,7 @@ class TestGetSystemIncludeDirs:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/lib/clang/18/include", "-isystem/usr/include"]
         tripwire.assert_interaction(
-            tripwire.subprocess_mock.run,
+            tripwire.subprocess.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stdout=AnyThing,
@@ -809,7 +809,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stderr=(
@@ -823,7 +823,7 @@ class TestGetSystemIncludeDirs:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/include"]
         tripwire.assert_interaction(
-            tripwire.subprocess_mock.run,
+            tripwire.subprocess.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stdout=AnyThing,
@@ -1148,6 +1148,7 @@ class TestPipClangNativeSearchPath:
             ),
         ],
     )
+    @pytest.mark.allow(tripwire.M(protocol="subprocess", binary="xcrun"))
     def test_clang_native_dir_included(
         self, platform: str, search_location: list[str], native_result: list[str]
     ) -> None:

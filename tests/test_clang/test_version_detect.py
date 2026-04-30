@@ -5,8 +5,8 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
-import tripwire
 import pytest
+import tripwire
 from dirty_equals import AnyThing
 
 from headerkit._clang._version import detect_llvm_version
@@ -45,7 +45,7 @@ class TestEnvVarOverride:
 
     def test_cir_clang_version_env_var_takes_precedence(self):
         """Env var should take precedence over llvm-config."""
-        tripwire.subprocess_mock.install()
+        tripwire.subprocess.install()
         with (
             patch.dict(os.environ, {"CIR_CLANG_VERSION": "20"}),
             tripwire,
@@ -77,8 +77,8 @@ class TestLlvmConfig:
         # Interaction sequence:
         # 1. which("llvm-config") -> "/usr/bin/llvm-config"
         # 2. run(["/usr/bin/llvm-config", "--version"]) -> rc=0, stdout="18.1.0\n"
-        tripwire.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/llvm-config", "--version"],
             returncode=0,
             stdout="18.1.0\n",
@@ -90,9 +90,9 @@ class TestLlvmConfig:
         ):
             assert detect_llvm_version() == "18"
 
-        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="llvm-config", returns="/usr/bin/llvm-config")
+        tripwire.assert_interaction(tripwire.subprocess.which, name="llvm-config", returns="/usr/bin/llvm-config")
         tripwire.assert_interaction(
-            tripwire.subprocess_mock.run,
+            tripwire.subprocess.run,
             command=["/usr/bin/llvm-config", "--version"],
             returncode=0,
             stdout="18.1.0\n",
@@ -106,8 +106,8 @@ class TestLlvmConfig:
         # which("llvm-config-30") through which("llvm-config-19") -> None (unregistered)
         # which("llvm-config-18") -> "/usr/bin/llvm-config-18" (registered)
         # run(["/usr/bin/llvm-config-18", "--version"]) -> rc=0, stdout="18.1.8\n"
-        tripwire.subprocess_mock.mock_which("llvm-config-18", returns="/usr/bin/llvm-config-18")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("llvm-config-18", returns="/usr/bin/llvm-config-18")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/llvm-config-18", "--version"],
             returncode=0,
             stdout="18.1.8\n",
@@ -125,12 +125,12 @@ class TestLlvmConfig:
             for name in _LLVM_CONFIG_PROBE_NAMES:
                 if name == "llvm-config-18":
                     break
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.which, name="llvm-config-18", returns="/usr/bin/llvm-config-18"
+                tripwire.subprocess.which, name="llvm-config-18", returns="/usr/bin/llvm-config-18"
             )
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/llvm-config-18", "--version"],
                 returncode=0,
                 stdout="18.1.8\n",
@@ -144,8 +144,8 @@ class TestLlvmConfig:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 19\n#define __clang_minor__ 0\n",
@@ -161,12 +161,12 @@ class TestLlvmConfig:
         with tripwire.in_any_order():
             # All llvm-config probes return None
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
             # pkg-config not found
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 19\n#define __clang_minor__ 0\n",
@@ -181,14 +181,14 @@ class TestLlvmConfig:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/llvm-config", "--version"],
             returncode=1,
             stdout="",
         )
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 21\n",
@@ -202,21 +202,19 @@ class TestLlvmConfig:
             assert detect_llvm_version() == "21"
 
         with tripwire.in_any_order():
+            tripwire.assert_interaction(tripwire.subprocess.which, name="llvm-config", returns="/usr/bin/llvm-config")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.which, name="llvm-config", returns="/usr/bin/llvm-config"
-            )
-            tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/llvm-config", "--version"],
                 returncode=1,
                 stdout="",
                 stderr="",
             )
             # pkg-config not found
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 21\n",
@@ -231,14 +229,14 @@ class TestLlvmConfig:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/llvm-config", "--version"],
             returncode=0,
             stdout="not-a-version\n",
         )
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 20\n",
@@ -252,21 +250,19 @@ class TestLlvmConfig:
             assert detect_llvm_version() == "20"
 
         with tripwire.in_any_order():
+            tripwire.assert_interaction(tripwire.subprocess.which, name="llvm-config", returns="/usr/bin/llvm-config")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.which, name="llvm-config", returns="/usr/bin/llvm-config"
-            )
-            tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/llvm-config", "--version"],
                 returncode=0,
                 stdout="not-a-version\n",
                 stderr="",
             )
             # pkg-config not found
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 20\n",
@@ -281,13 +277,13 @@ class TestLlvmConfig:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("llvm-config", returns="/usr/bin/llvm-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("llvm-config", returns="/usr/bin/llvm-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/llvm-config", "--version"],
             raises=subprocess.TimeoutExpired(cmd="llvm-config", timeout=5),
         )
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 19\n",
@@ -301,21 +297,19 @@ class TestLlvmConfig:
             assert detect_llvm_version() == "19"
 
         with tripwire.in_any_order():
+            tripwire.assert_interaction(tripwire.subprocess.which, name="llvm-config", returns="/usr/bin/llvm-config")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.which, name="llvm-config", returns="/usr/bin/llvm-config"
-            )
-            tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/llvm-config", "--version"],
                 returncode=AnyThing,
                 stdout=AnyThing,
                 stderr=AnyThing,
             )
             # pkg-config not found
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 19\n",
@@ -330,8 +324,8 @@ class TestClangPreprocessor:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 20\n#define __clang_minor__ 1\n#define __clang_patchlevel__ 0\n",
@@ -346,11 +340,11 @@ class TestClangPreprocessor:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 20\n#define __clang_minor__ 1\n#define __clang_patchlevel__ 0\n",
@@ -366,8 +360,8 @@ class TestClangPreprocessor:
         # which("clang-30") through which("clang-20") -> None (unregistered)
         # which("clang-19") -> "/usr/bin/clang-19" (registered)
         # run(["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("clang-19", returns="/usr/bin/clang-19")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang-19", returns="/usr/bin/clang-19")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 19\n",
@@ -382,15 +376,15 @@ class TestClangPreprocessor:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
             for name in _CLANG_PROBE_NAMES:
                 if name == "clang-19":
                     break
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang-19", returns="/usr/bin/clang-19")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang-19", returns="/usr/bin/clang-19")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang-19", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 19\n",
@@ -406,8 +400,8 @@ class TestClangPreprocessor:
         versions. This is approximate but consistent: the caller (get_cindex)
         handles the fallback when the version falls outside vendored range.
         """
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout=(
@@ -429,11 +423,11 @@ class TestClangPreprocessor:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout=(
@@ -449,8 +443,8 @@ class TestClangPreprocessor:
 
     def test_clang_preprocessor_no_clang_major(self):
         """When clang output has no __clang_major__, falls through to soname."""
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __STDC__ 1\n#define __STDC_VERSION__ 201710L\n",
@@ -465,11 +459,11 @@ class TestClangPreprocessor:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __STDC__ 1\n#define __STDC_VERSION__ 201710L\n",
@@ -478,8 +472,8 @@ class TestClangPreprocessor:
 
     def test_clang_subprocess_oserror(self):
         """When clang subprocess raises OSError, falls through to soname."""
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             raises=OSError("Permission denied"),
         )
@@ -493,11 +487,11 @@ class TestClangPreprocessor:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=AnyThing,
                 stdout=AnyThing,
@@ -512,8 +506,8 @@ class TestPkgConfig:
         # All llvm-config variants -> None (unregistered)
         # which("pkg-config") -> "/usr/bin/pkg-config" (registered)
         # run(["/usr/bin/pkg-config", "--modversion", "clang"]) -> rc=0, stdout="18.1.8\n"
-        tripwire.subprocess_mock.mock_which("pkg-config", returns="/usr/bin/pkg-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("pkg-config", returns="/usr/bin/pkg-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/pkg-config", "--modversion", "clang"],
             returncode=0,
             stdout="18.1.8\n",
@@ -527,10 +521,10 @@ class TestPkgConfig:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns="/usr/bin/pkg-config")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns="/usr/bin/pkg-config")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/pkg-config", "--modversion", "clang"],
                 returncode=0,
                 stdout="18.1.8\n",
@@ -544,8 +538,8 @@ class TestPkgConfig:
         # which("pkg-config") -> None (unregistered)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 20\n",
@@ -560,11 +554,11 @@ class TestPkgConfig:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 20\n",
@@ -580,19 +574,19 @@ class TestPkgConfig:
         # run(["/usr/bin/pkg-config", "--modversion", "libclang"]) -> rc=1 (fail)
         # which("clang") -> "/usr/bin/clang" (registered)
         # run(["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"]) -> rc=0
-        tripwire.subprocess_mock.mock_which("pkg-config", returns="/usr/bin/pkg-config")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("pkg-config", returns="/usr/bin/pkg-config")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/pkg-config", "--modversion", "clang"],
             returncode=1,
             stdout="",
         )
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             ["/usr/bin/pkg-config", "--modversion", "libclang"],
             returncode=1,
             stdout="",
         )
-        tripwire.subprocess_mock.mock_which("clang", returns="/usr/bin/clang")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("clang", returns="/usr/bin/clang")
+        tripwire.subprocess.mock_run(
             ["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
             returncode=0,
             stdout="#define __clang_major__ 19\n",
@@ -607,25 +601,25 @@ class TestPkgConfig:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns="/usr/bin/pkg-config")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns="/usr/bin/pkg-config")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/pkg-config", "--modversion", "clang"],
                 returncode=1,
                 stdout="",
                 stderr="",
             )
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/pkg-config", "--modversion", "libclang"],
                 returncode=1,
                 stdout="",
                 stderr="",
             )
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="clang", returns="/usr/bin/clang")
+            tripwire.assert_interaction(tripwire.subprocess.which, name="clang", returns="/usr/bin/clang")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/bin/clang", "-dM", "-E", "-x", "c", "/dev/null"],
                 returncode=0,
                 stdout="#define __clang_major__ 19\n",
@@ -683,13 +677,13 @@ class TestHomebrewLlvm:
         # builds on the current OS (backslashes on Windows, forward slashes elsewhere).
         _brew_prefix = "/opt/homebrew/opt/llvm"
         _llvm_config = os.path.join(_brew_prefix, "bin", "llvm-config")
-        tripwire.subprocess_mock.mock_which("brew", returns="/usr/local/bin/brew")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_which("brew", returns="/usr/local/bin/brew")
+        tripwire.subprocess.mock_run(
             ["/usr/local/bin/brew", "--prefix", "llvm"],
             returncode=0,
             stdout=f"{_brew_prefix}\n",
         )
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             [_llvm_config, "--version"],
             returncode=0,
             stdout="20.1.0\n",
@@ -705,20 +699,20 @@ class TestHomebrewLlvm:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
             for name in _CLANG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="brew", returns="/usr/local/bin/brew")
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="brew", returns="/usr/local/bin/brew")
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=["/usr/local/bin/brew", "--prefix", "llvm"],
                 returncode=0,
                 stdout=f"{_brew_prefix}\n",
                 stderr="",
             )
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=[_llvm_config, "--version"],
                 returncode=0,
                 stdout="20.1.0\n",
@@ -762,7 +756,7 @@ class TestWindowsDetectionOrder:
         # The source uses os.path.join on the host OS, so we compute the same path.
         _install_dir = r"C:\Program Files\LLVM"
         _clang_exe = os.path.join(_install_dir, "bin", "clang.exe")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             [_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 18\n",
@@ -779,12 +773,12 @@ class TestWindowsDetectionOrder:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
             for name in _CLANG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=[_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
                 returncode=0,
                 stdout="#define __clang_major__ 18\n",
@@ -809,7 +803,7 @@ class TestWindowsDetectionOrder:
         # The source uses os.path.join on the host OS, so we compute the same path.
         _program_files = r"C:\Program Files"
         _clang_exe = os.path.join(_program_files, "LLVM", "bin", "clang.exe")
-        tripwire.subprocess_mock.mock_run(
+        tripwire.subprocess.mock_run(
             [_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 20\n",
@@ -833,12 +827,12 @@ class TestWindowsDetectionOrder:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
             for name in _CLANG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
             tripwire.assert_interaction(
-                tripwire.subprocess_mock.run,
+                tripwire.subprocess.run,
                 command=[_clang_exe, "-dM", "-E", "-x", "c", "NUL"],
                 returncode=0,
                 stdout="#define __clang_major__ 20\n",
@@ -848,7 +842,7 @@ class TestWindowsDetectionOrder:
 
 class TestFallback:
     def test_all_methods_fail_returns_none(self):
-        tripwire.subprocess_mock.install()
+        tripwire.subprocess.install()
         with (
             patch.dict(os.environ, {}, clear=False),
             _no_llvm_dir,
@@ -860,9 +854,9 @@ class TestFallback:
 
         with tripwire.in_any_order():
             for name in _LLVM_CONFIG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
-            tripwire.assert_interaction(tripwire.subprocess_mock.which, name="pkg-config", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
+            tripwire.assert_interaction(tripwire.subprocess.which, name="pkg-config", returns=None)
             for name in _CLANG_PROBE_NAMES:
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name=name, returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name=name, returns=None)
             if sys.platform == "darwin":
-                tripwire.assert_interaction(tripwire.subprocess_mock.which, name="brew", returns=None)
+                tripwire.assert_interaction(tripwire.subprocess.which, name="brew", returns=None)

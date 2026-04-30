@@ -116,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** Removed `py_impl_for_version()` from `_populate` module
 - Python version removed from IR cache key (IR represents parsed C declarations, not Python-specific output)
 - `-target` flag automatically passed to libclang for correct cross-platform parsing
-- Bump `python-tripwire` test dependency minimum to 0.19
+- Bump `python-tripwire` test dependency minimum to 0.20
 
 ### Fixed
 
@@ -267,7 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Updated python-tripwire dependency to >=0.4.1 and adopted `with python-tripwire:` context manager syntax
-- Test suite now uses [python-tripwire](https://github.com/axiomantic/python-tripwire) for subprocess interception. `subprocess.run` and `shutil.which` mocks in `test_install_libclang.py`, `test_version_detect.py`, `test_libclang.py`, and `test_windows_detection.py` are replaced with `python-tripwire.subprocess_mock`, which enforces strict FIFO ordering and fails fast on unexpected calls.
+- Test suite now uses [python-tripwire](https://github.com/axiomantic/python-tripwire) for subprocess interception. `subprocess.run` and `shutil.which` mocks in `test_install_libclang.py`, `test_version_detect.py`, `test_libclang.py`, and `test_windows_detection.py` are replaced with `python-tripwire.subprocess`, which enforces strict FIFO ordering and fails fast on unexpected calls.
 - Integration test writer assertions extracted into shared helpers (`_check_ctypes_write`, `_check_cython_write`, etc.) in `test_real_headers.py`, eliminating repeated assertion logic across the five library test classes.
 
 ## [0.8.1] - 2026-03-04
