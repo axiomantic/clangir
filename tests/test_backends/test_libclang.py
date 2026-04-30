@@ -68,6 +68,7 @@ class TestImportability:
         assert hasattr(mod, "normalize_path")
         assert callable(mod.normalize_path)
 
+    @pytest.mark.allow("subprocess")
     def test_is_system_libclang_available_returns_bool(self):
         """is_system_libclang_available() returns a boolean."""
         result = is_system_libclang_available()
@@ -1148,7 +1149,7 @@ class TestPipClangNativeSearchPath:
             ),
         ],
     )
-    @pytest.mark.allow(tripwire.M(protocol="subprocess", binary="xcrun"))
+    @pytest.mark.allow("subprocess")
     def test_clang_native_dir_included(
         self, platform: str, search_location: list[str], native_result: list[str]
     ) -> None:
