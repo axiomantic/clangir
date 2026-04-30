@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from unittest.mock import patch
 
-import bigfoot
+import tripwire
 import pytest
 from dirty_equals import AnyThing
 
@@ -739,15 +739,15 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=FileNotFoundError(),
         )
-        with bigfoot:
+        with tripwire:
             result = get_system_include_dirs()
         assert result == []
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=AnyThing,
             stdout=AnyThing,
@@ -760,15 +760,15 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             raises=subprocess.TimeoutExpired(cmd="clang", timeout=10),
         )
-        with bigfoot:
+        with tripwire:
             result = get_system_include_dirs()
         assert result == []
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=AnyThing,
             stdout=AnyThing,
@@ -781,7 +781,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stderr=(
@@ -792,11 +792,11 @@ class TestGetSystemIncludeDirs:
                 "End of search list.\n"
             ),
         )
-        with bigfoot:
+        with tripwire:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/lib/clang/18/include", "-isystem/usr/include"]
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stdout=AnyThing,
@@ -809,7 +809,7 @@ class TestGetSystemIncludeDirs:
 
         null_file = "NUL" if sys.platform == "win32" else "/dev/null"
         mod._system_include_cache_c = None
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             ["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stderr=(
@@ -819,11 +819,11 @@ class TestGetSystemIncludeDirs:
                 "End of search list.\n"
             ),
         )
-        with bigfoot:
+        with tripwire:
             result = get_system_include_dirs()
         assert result == ["-isystem/usr/include"]
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["clang", "-v", "-x", "c", "-E", null_file],
             returncode=0,
             stdout=AnyThing,

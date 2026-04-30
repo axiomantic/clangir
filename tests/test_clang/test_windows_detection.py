@@ -5,7 +5,7 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
-import bigfoot
+import tripwire
 import pytest
 from dirty_equals import AnyThing
 
@@ -36,13 +36,13 @@ class TestWindowsRegistry:
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
         expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 18\n#define __clang_minor__ 1\n",
         )
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
@@ -50,8 +50,8 @@ class TestWindowsRegistry:
         ):
             result = _try_windows_registry()
         assert result == "18"
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 18\n#define __clang_minor__ 1\n",
@@ -109,13 +109,13 @@ class TestWindowsRegistry:
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
         expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __STDC__ 1\n",
         )
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
@@ -123,8 +123,8 @@ class TestWindowsRegistry:
         ):
             result = _try_windows_registry()
         assert result is None
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __STDC__ 1\n",
@@ -145,12 +145,12 @@ class TestWindowsRegistry:
         mock_winreg.QueryValueEx.return_value = (r"C:\Program Files\LLVM", 1)
 
         expected_path = os.path.join(r"C:\Program Files\LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [expected_path, "-dM", "-E", "-x", "c", "NUL"],
             raises=subprocess.TimeoutExpired(cmd="clang.exe", timeout=5),
         )
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(sys.modules, {"winreg": mock_winreg}),
             patch("headerkit._clang._version.os.path.isdir", return_value=True),
@@ -158,8 +158,8 @@ class TestWindowsRegistry:
         ):
             result = _try_windows_registry()
         assert result is None
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=AnyThing,
             stdout=AnyThing,
@@ -182,13 +182,13 @@ class TestWindowsProgramFiles:
     def test_finds_version_from_programfiles(self):
         """Finds LLVM in PROGRAMFILES directory."""
         expected_path = os.path.join(r"C:\Program Files", "LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 20\n",
         )
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -201,8 +201,8 @@ class TestWindowsProgramFiles:
         ):
             result = _try_windows_program_files()
         assert result == "20"
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[expected_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 20\n",
@@ -212,7 +212,7 @@ class TestWindowsProgramFiles:
     def test_finds_version_from_programfiles_x86(self):
         """Finds LLVM in PROGRAMFILES(X86) when PROGRAMFILES path has no clang."""
         x86_path = os.path.join(r"C:\Program Files (x86)", "LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [x86_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 19\n",
@@ -224,7 +224,7 @@ class TestWindowsProgramFiles:
             return os.path.normpath(path) == os.path.normpath(expected)
 
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -237,8 +237,8 @@ class TestWindowsProgramFiles:
         ):
             result = _try_windows_program_files()
         assert result == "19"
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[x86_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 19\n",
@@ -283,17 +283,17 @@ class TestWindowsProgramFiles:
         """If clang.exe fails for PROGRAMFILES, tries PROGRAMFILES(X86)."""
         first_path = os.path.join(r"C:\Program Files", "LLVM", "bin", "clang.exe")
         x86_path = os.path.join(r"C:\Program Files (x86)", "LLVM", "bin", "clang.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [first_path, "-dM", "-E", "-x", "c", "NUL"],
             raises=subprocess.SubprocessError("clang.exe crashed"),
         )
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [x86_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 21\n",
         )
         with (
-            bigfoot,
+            tripwire,
             patch("headerkit._clang._version.sys.platform", "win32"),
             patch.dict(
                 os.environ,
@@ -306,15 +306,15 @@ class TestWindowsProgramFiles:
         ):
             result = _try_windows_program_files()
         assert result == "21"
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[first_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=AnyThing,
             stdout=AnyThing,
             stderr=AnyThing,
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[x86_path, "-dM", "-E", "-x", "c", "NUL"],
             returncode=0,
             stdout="#define __clang_major__ 21\n",

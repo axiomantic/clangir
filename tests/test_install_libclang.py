@@ -7,7 +7,7 @@ import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
-import bigfoot
+import tripwire
 
 from headerkit.install_libclang import (
     _WINDOWS_LIBCLANG_DLL,
@@ -26,20 +26,20 @@ from headerkit.install_libclang import (
 class TestInstallLinux:
     def test_install_linux_dnf_clang_libs(self) -> None:
         """When dnf is available, install_linux tries clang-libs first."""
-        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
-        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=0)
+        tripwire.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        tripwire.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="dnf",
             returns="/usr/bin/dnf",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-libs"],
             returncode=0,
             stdout="",
@@ -48,28 +48,28 @@ class TestInstallLinux:
 
     def test_install_linux_dnf_clang_libs_fails_falls_back_to_clang_devel(self) -> None:
         """When clang-libs fails, install_linux falls back to clang-devel."""
-        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
-        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
-        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=0)
+        tripwire.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        tripwire.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
+        tripwire.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="dnf",
             returns="/usr/bin/dnf",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-libs"],
             returncode=1,
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-devel"],
             returncode=0,
             stdout="",
@@ -78,29 +78,29 @@ class TestInstallLinux:
 
     def test_install_linux_apt(self) -> None:
         """When dnf is unavailable but apt-get is, install_linux uses apt-get."""
-        bigfoot.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
-        bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
-        bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
+        tripwire.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
+        tripwire.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
+        tripwire.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is True
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="dnf", returns=None)
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="apt-get",
             returns="/usr/bin/apt-get",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["apt-get", "update", "-qq"],
             returncode=0,
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["apt-get", "install", "-y", "libclang-dev"],
             returncode=0,
             stdout="",
@@ -109,22 +109,22 @@ class TestInstallLinux:
 
     def test_install_linux_apk(self) -> None:
         """When dnf and apt-get are unavailable but apk is, install_linux uses apk."""
-        bigfoot.subprocess_mock.mock_which("apk", returns="/sbin/apk")
-        bigfoot.subprocess_mock.mock_run(["apk", "add", "clang-dev"], returncode=0)
+        tripwire.subprocess_mock.mock_which("apk", returns="/sbin/apk")
+        tripwire.subprocess_mock.mock_run(["apk", "add", "clang-dev"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is True
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apt-get", returns=None)
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="dnf", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="apt-get", returns=None)
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="apk",
             returns="/sbin/apk",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["apk", "add", "clang-dev"],
             returncode=0,
             stdout="",
@@ -135,62 +135,62 @@ class TestInstallLinux:
         """When no package manager is available, install_linux returns False."""
         # Access the proxy to ensure the plugin is created and registered before
         # sandbox entry. Without this, subprocess.run would not be intercepted.
-        bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
+        tripwire.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is False
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="dnf", returns=None)
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apt-get", returns=None)
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="apk", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="dnf", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="apt-get", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="apk", returns=None)
 
     def test_install_linux_dnf_fails_falls_through_to_apt(self) -> None:
         """When both dnf packages fail, install_linux falls through to apt-get."""
-        bigfoot.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
-        bigfoot.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
-        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
-        bigfoot.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=1)
-        bigfoot.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
-        bigfoot.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
+        tripwire.subprocess_mock.mock_which("dnf", returns="/usr/bin/dnf")
+        tripwire.subprocess_mock.mock_which("apt-get", returns="/usr/bin/apt-get")
+        tripwire.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-libs"], returncode=1)
+        tripwire.subprocess_mock.mock_run(["dnf", "install", "-y", "clang-devel"], returncode=1)
+        tripwire.subprocess_mock.mock_run(["apt-get", "update", "-qq"], returncode=0)
+        tripwire.subprocess_mock.mock_run(["apt-get", "install", "-y", "libclang-dev"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_linux()
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="dnf",
             returns="/usr/bin/dnf",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-libs"],
             returncode=1,
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["dnf", "install", "-y", "clang-devel"],
             returncode=1,
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="apt-get",
             returns="/usr/bin/apt-get",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["apt-get", "update", "-qq"],
             returncode=0,
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["apt-get", "install", "-y", "libclang-dev"],
             returncode=0,
             stdout="",
@@ -201,20 +201,20 @@ class TestInstallLinux:
 class TestInstallMacos:
     def test_install_macos_success(self) -> None:
         """When brew is available, install_macos runs 'brew install llvm'."""
-        bigfoot.subprocess_mock.mock_which("brew", returns="/opt/homebrew/bin/brew")
-        bigfoot.subprocess_mock.mock_run(["brew", "install", "llvm"], returncode=0)
+        tripwire.subprocess_mock.mock_which("brew", returns="/opt/homebrew/bin/brew")
+        tripwire.subprocess_mock.mock_run(["brew", "install", "llvm"], returncode=0)
 
-        with bigfoot:
+        with tripwire:
             result = install_macos()
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="brew",
             returns="/opt/homebrew/bin/brew",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["brew", "install", "llvm"],
             returncode=0,
             stdout="",
@@ -223,20 +223,20 @@ class TestInstallMacos:
 
     def test_install_macos_no_brew(self) -> None:
         """When brew is unavailable, install_macos returns False."""
-        bigfoot.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
+        tripwire.subprocess_mock.install()  # no mocks; any call raises UnmockedInteractionError
 
-        with bigfoot:
+        with tripwire:
             result = install_macos()
 
         assert result is False
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="brew", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="brew", returns=None)
 
 
 class TestInstallWindows:
     def test_install_windows_x64(self) -> None:
         """On x64 Windows with choco (no pre-installed LLVM), install_windows pins the LLVM version."""
-        bigfoot.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
+        tripwire.subprocess_mock.mock_run(
             ["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
             returncode=0,
         )
@@ -246,18 +246,18 @@ class TestInstallWindows:
             patch("headerkit.install_libclang.os.path.isfile", return_value=False),
             patch("headerkit.install_libclang.os.path.isdir", return_value=True),
             patch("headerkit.install_libclang._configure_windows_dll_path"),
-            bigfoot,
+            tripwire,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="choco",
             returns=r"C:\ProgramData\chocolatey\bin\choco.exe",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
             returncode=0,
             stdout="",
@@ -266,17 +266,17 @@ class TestInstallWindows:
 
     def test_install_windows_x64_no_choco(self) -> None:
         """On x64 Windows without choco (no pre-installed LLVM), install_windows returns False."""
-        bigfoot.subprocess_mock.install()
+        tripwire.subprocess_mock.install()
 
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "AMD64"}, clear=False),
             patch("headerkit.install_libclang.os.path.isfile", return_value=False),
-            bigfoot,
+            tripwire,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
 
         assert result is False
-        bigfoot.assert_interaction(bigfoot.subprocess_mock.which, name="choco", returns=None)
+        tripwire.assert_interaction(tripwire.subprocess_mock.which, name="choco", returns=None)
 
     def test_install_windows_arm64(self) -> None:
         """On ARM64 Windows, install_windows downloads and runs the LLVM installer."""
@@ -284,7 +284,7 @@ class TestInstallWindows:
         expected_installer = os.path.join(tempfile.gettempdir(), "llvm-installer.exe")
         curl_url = f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/LLVM-{version}-woa64.exe"
 
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [
                 "curl",
                 "-sSL",
@@ -294,7 +294,7 @@ class TestInstallWindows:
             ],
             returncode=0,
         )
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [
                 "powershell",
                 "-Command",
@@ -306,14 +306,14 @@ class TestInstallWindows:
         with (
             patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "ARM64"}, clear=False),
             patch("headerkit.install_libclang.os.remove") as mock_remove,
-            bigfoot,
+            tripwire,
         ):
             result = install_windows(version)
 
         assert result is True
         mock_remove.assert_called_once_with(expected_installer)
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[
                 "curl",
                 "-sSL",
@@ -325,8 +325,8 @@ class TestInstallWindows:
             stdout="",
             stderr="",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[
                 "powershell",
                 "-Command",
@@ -585,17 +585,17 @@ class TestTryPipInstallLibclang:
 
     def test_pip_install_success(self) -> None:
         """_try_pip_install_libclang() returns True when pip succeeds."""
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [sys.executable, "-m", "pip", "install", "libclang"],
             returncode=0,
         )
 
-        with bigfoot:
+        with tripwire:
             result = _try_pip_install_libclang()
 
         assert result is True
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[sys.executable, "-m", "pip", "install", "libclang"],
             returncode=0,
             stdout="",
@@ -604,17 +604,17 @@ class TestTryPipInstallLibclang:
 
     def test_pip_install_failure(self) -> None:
         """_try_pip_install_libclang() returns False when pip fails."""
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_run(
             [sys.executable, "-m", "pip", "install", "libclang"],
             returncode=1,
         )
 
-        with bigfoot:
+        with tripwire:
             result = _try_pip_install_libclang()
 
         assert result is False
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=[sys.executable, "-m", "pip", "install", "libclang"],
             returncode=1,
             stdout="",
@@ -640,8 +640,8 @@ class TestInstallWindowsPreInstalled:
 
     def test_falls_through_to_choco_when_not_pre_installed(self) -> None:
         """install_windows tries Chocolatey when pre-installed LLVM is absent."""
-        bigfoot.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
-        bigfoot.subprocess_mock.mock_run(
+        tripwire.subprocess_mock.mock_which("choco", returns=r"C:\ProgramData\chocolatey\bin\choco.exe")
+        tripwire.subprocess_mock.mock_run(
             ["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
             returncode=0,
         )
@@ -651,19 +651,19 @@ class TestInstallWindowsPreInstalled:
             patch("headerkit.install_libclang.os.path.isfile", return_value=False),
             patch("headerkit.install_libclang.os.path.isdir", return_value=True),
             patch("headerkit.install_libclang._configure_windows_dll_path") as mock_configure,
-            bigfoot,
+            tripwire,
         ):
             result = install_windows(DEFAULT_LLVM_VERSION)
 
         assert result is True
         mock_configure.assert_called_once_with(_WINDOWS_LLVM_BIN, quiet=False)
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.which,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.which,
             name="choco",
             returns=r"C:\ProgramData\chocolatey\bin\choco.exe",
         )
-        bigfoot.assert_interaction(
-            bigfoot.subprocess_mock.run,
+        tripwire.assert_interaction(
+            tripwire.subprocess_mock.run,
             command=["choco", "install", "llvm", f"--version={DEFAULT_LLVM_VERSION}", "-y"],
             returncode=0,
             stdout="",
