@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated test subprocess interception dependency from `bigfoot` to `python-tripwire`. The package was renamed upstream in 0.20.0 (2026-04-26); the import name is now `tripwire` (was `bigfoot`) and the plugin proxy attribute is `tripwire.subprocess` (was `bigfoot.subprocess_mock`). Test minimum is `python-tripwire>=0.20,<1`.
+
 ## [0.19.0] - 2026-04-04
 
 ### Changed
