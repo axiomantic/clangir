@@ -1229,6 +1229,10 @@ class PxdWriter:
         operator_aliases: dict[str, str] = {
             "operator->": "deref",
             "operator()": "call",
+            # Cython has no syntax for a C++ comma operator, so an unaliased
+            # ``operator,`` declaration compiles but can never be called: the
+            # member is unreachable from a .pyx and ``a, b`` builds a tuple.
+            "operator,": "comma",
         }
         # A conversion operator is filed separately by the backend but is an
         # ordinary member function here: ``_write_function`` already routes an

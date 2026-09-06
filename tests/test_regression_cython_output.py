@@ -2684,15 +2684,41 @@ class TestConversionOperatorsAreEmittedOrDiagnosed:
 
         assert "cdef cppclass OnlyConversions:\n        bool operator bool() const" in pxd
 
-    def test_comma_operator_is_emitted(self, backend: Any) -> None:
-        """Cython parses ``operator,``; it was dropped by a stale hard-coded set.
+    def test_comma_operator_is_aliased(self, backend: Any) -> None:
+        """``operator,`` rides the same alias channel as ``operator->`` and ``operator()``.
 
-        Python syntax offers no way to invoke it from a ``.pyx``, but the
-        binding describes the header, and dropping it silently lost API.
+        Cython parses the unaliased declaration, so emitting it looked correct,
+        but no ``.pyx`` syntax reached it: ``a.operator,(b)`` is rejected with
+        "has no attribute 'operator'" and ``a, b`` builds a tuple, generating
+        zero call sites in the C++. The quoted C name keeps the spelling in the
+        output while giving the member a name a ``.pyx`` can call.
         """
         pxd = render_cpp(backend, _CONVERSION_HEADER)
 
-        assert "Conv operator,(const Conv& o) const" in pxd
+        assert 'Conv comma "operator,"(const Conv& o)' in pxd
+        assert "Conv operator,(" not in pxd
+
+    @requires_cxx_toolchain
+    def test_comma_operator_alias_calls_the_c_plus_plus_body(self, tmp_path: Path) -> None:
+        """The alias must reach ``Conv::operator,``, not merely parse.
+
+        Cythonizing, compiling and linking all succeed for an unaliased
+        declaration that no call site ever references, so the assertion is on
+        the value the C++ body computes: ``v * 100 + o.v`` distinguishes it
+        from any other member that could plausibly answer.
+        """
+        pxd = render_cpp(get_backend("libclang"), _CONVERSION_HEADER)
+        pyx = textwrap.dedent("""\
+            # distutils: language = c++
+            from m cimport Conv
+
+            def run():
+                cdef Conv a = Conv(3)
+                cdef Conv b = Conv(7)
+                return a.comma(b).v
+        """)
+
+        assert build_and_run_cpp(tmp_path, _CONVERSION_HEADER, pxd, pyx) == "307"
 
     @requires_cxx_toolchain
     def test_operator_bool_converts_at_runtime(self, tmp_path: Path) -> None:
