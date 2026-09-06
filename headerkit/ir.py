@@ -50,6 +50,7 @@ from __future__ import (
 from dataclasses import (
     dataclass,
     field,
+    replace,
 )
 from typing import (
     Protocol,
@@ -364,6 +365,14 @@ class Field:
     :param access: Access specifier (``"public"``, ``"protected"``, ``"private"``),
         or None for C struct fields / default access.
     :param is_static: True if this is a static data member.
+    :param is_padding: True for an unnamed bitfield (``int : 3;``), which
+        C17 6.7.2.1p13 gives no member name. Such an entry is not an
+        accessible member, but it does occupy bits, so a consumer that
+        reconstructs layout (the ctypes writer) needs it. A ``bit_width``
+        of 0 is the zero-width form (``int : 0;``), which aligns the next
+        field to a fresh storage unit rather than reserving bits.
+        Writers that emit C source must skip these: the C compiler lays
+        the record out from the original declaration.
 
     Examples
     --------
@@ -387,6 +396,10 @@ class Field:
 
         inner = Struct(None, [Field("x", CType("int"))], is_union=False)
         field = Field("pos", CType("void"), anonymous_struct=inner)
+
+    Unnamed bitfield padding::
+
+        pad = Field("", CType("unsigned int"), bit_width=3, is_padding=True)
     """
 
     name: str
@@ -396,8 +409,11 @@ class Field:
     is_anonymous_transparent: bool = False
     access: str | None = None
     is_static: bool = False
+    is_padding: bool = False
 
     def __str__(self) -> str:
+        if self.is_padding:
+            return f"{self.type} : {self.bit_width}"
         base = f"{self.type} {self.name}"
         if self.bit_width is not None:
             base += f" : {self.bit_width}"
@@ -449,7 +465,17 @@ class Enum:
     :param name: The enum tag name, or None for anonymous enums.
     :param values: List of enumeration constants.
     :param is_typedef: True if this enum came from a typedef declaration.
+    :param namespace: Enclosing C++ namespace, or None at global scope. Part of
+        the enum's identity: ``a::E`` and ``b::E`` are distinct declarations.
     :param location: Source location for error reporting.
+    :param is_scoped: True for a C++ ``enum class``/``enum struct``. A scoped
+        enumerator is a member of the tag, spelled ``E::X``, and is not
+        introduced into the enclosing namespace as ``X``.
+    :param cpp_name: Fully-qualified C++ spelling of the tag, when it is not
+        derivable from ``namespace`` and ``name``. A member enum is hoisted to
+        the top level and loses its enclosing record, so ``class C { enum M; }``
+        records ``C::M`` here; ``None`` means ``namespace``-plus-``name`` is the
+        whole spelling.
 
     Examples
     --------
@@ -469,7 +495,19 @@ class Enum:
     name: str | None
     values: list[EnumValue] = field(default_factory=list)
     is_typedef: bool = False
+    namespace: str | None = None
     location: SourceLocation | None = None
+    is_scoped: bool = False
+    cpp_name: str | None = None
+
+    @property
+    def qualified_name(self) -> str | None:
+        """The tag's full C++ spelling, or None if it is anonymous."""
+        if self.cpp_name:
+            return self.cpp_name
+        if not self.name:
+            return None
+        return f"{self.namespace}::{self.name}" if self.namespace else self.name
 
     def __str__(self) -> str:
         name_str = self.name or "(anonymous)"
@@ -491,6 +529,10 @@ class Struct:
     :param is_typedef: True if this came from a typedef declaration.
     :param is_packed: True if the struct has ``__attribute__((packed))``,
         which disables padding and alignment. Affects memory layout.
+    :param nested_records: Records defined inside this record's body. A C++
+        nested class stays here rather than being lifted to the top level,
+        because its name is only meaningful when qualified by the enclosing
+        scope.
     :param location: Source location for error reporting.
 
     Examples
@@ -537,6 +579,7 @@ class Struct:
     cpp_name: str | None = None
     notes: list[str] = field(default_factory=list)
     inner_typedefs: dict[str, str] = field(default_factory=dict)  # name -> underlying_type
+    nested_records: list[Struct] = field(default_factory=list)
     bases: list[BaseSpecifier] = field(default_factory=list)
     is_abstract: bool = False
     constructors: list[Function] = field(default_factory=list)
@@ -884,6 +927,34 @@ class SourceUnit:
 Header = SourceUnit
 
 
+def strip_padding_fields(unit: SourceUnit) -> SourceUnit:
+    """Return a copy of ``unit`` with every unnamed-bitfield padding Field removed.
+
+    Padding is layout information, not API. A writer that emits C source (Cython,
+    cffi, cshim, Nim, Lua, Mojo) hands the record back to a C compiler, which
+    recomputes the layout from the original declaration; a padding entry in that
+    output would be a spurious member. Only a writer that reconstructs the layout
+    itself -- ctypes -- consumes them.
+
+    Filtering here rather than at each writer's field loop keeps the rule in one
+    place: a writer cannot forget to apply it, and a new writer inherits the safe
+    default.
+    """
+
+    def _struct(st: Struct) -> Struct:
+        return replace(
+            st,
+            fields=[
+                replace(f, anonymous_struct=_struct(f.anonymous_struct) if f.anonymous_struct else None)
+                for f in st.fields
+                if not f.is_padding
+            ],
+            nested_records=[_struct(n) for n in st.nested_records],
+        )
+
+    return replace(unit, declarations=[_struct(d) if isinstance(d, Struct) else d for d in unit.declarations])
+
+
 # =============================================================================
 # Parser Backend Protocol
 # =============================================================================
@@ -930,9 +1001,31 @@ class ParserBackend(Protocol):  # pylint: disable=too-few-public-methods
         recursive_includes: bool = True,
         max_depth: int = 10,
         project_prefixes: tuple[str, ...] | None = None,
-        whitelist: list[str] | None = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
     ) -> Header:
         """Parse C/C++ code and return the IR representation.
+
+        Traversal and filtering
+        -----------------------
+        ``recursive_includes`` governs *traversal*: descending into each
+        non-system included header and merging what it declares.
+        ``project_prefixes`` decides which paths count as project rather than
+        system headers, and ``max_depth`` (with a backend-internal cycle guard)
+        bounds the descent.
+
+        ``allowlist`` and ``denylist`` govern *filtering*, and they narrow the
+        merged result in **both** traversal modes:
+
+        * ``recursive_includes=True`` with no ``allowlist`` returns declarations
+          from every non-system included header.
+        * ``recursive_includes=True`` with an ``allowlist`` returns the main
+          file's declarations plus those of the named files, and nothing else.
+        * ``recursive_includes=False`` with no ``allowlist`` returns the main
+          file's declarations alone.
+        * **Deny wins over allow.** A file named by both lists is excluded.
+        * The main file is never denied; a denylist governs included files only.
+        * A list entry matching nothing is not an error.
 
         :param code: Source code to parse.
         :param filename: Name of the source file. Used for error messages
@@ -942,15 +1035,25 @@ class ParserBackend(Protocol):  # pylint: disable=too-few-public-methods
         :param extra_args: Additional arguments for the preprocessor/compiler.
             Format is backend-specific.
         :param use_default_includes: If True, add system include directories.
-        :param recursive_includes: If True, detect umbrella headers and
-            recursively parse included project headers.
+        :param recursive_includes: If True, descend into included project headers
+            and merge their declarations into the result. False parses only the
+            main file, and is the only way to exclude included declarations
+            entirely.
         :param max_depth: Maximum recursion depth for include processing.
-        :param project_prefixes: Path prefixes to treat as project headers.
-        :param whitelist: Files whose declarations are retained alongside the
-            main file's. Absolute entries are used as-is; relative entries
-            (including a bare basename) resolve against the parsed file's
-            directory, then ``include_dirs``, then the current working
-            directory. ``None`` keeps only the main file's declarations.
+        :param project_prefixes: Path prefixes to treat as project headers rather
+            than system headers, so that they are descended into.
+        :param allowlist: Files whose declarations are kept, alongside the main
+            file's own. ``None`` keeps every non-system file reached by traversal.
+            Absolute entries are used as-is; relative entries (including a bare
+            basename) resolve against the parsed file's directory, then
+            ``include_dirs``, then the current working directory. An entry
+            containing ``*``, ``?`` or ``[`` is an :mod:`fnmatch` pattern whose
+            directory part resolves the same way. Matching is on whole resolved
+            paths, never substrings.
+        :param denylist: Files whose declarations are dropped, using the same
+            resolution and glob rules as ``allowlist``. Deny wins over allow. A
+            denylist with no allowlist means "everything except these". The
+            parsed file itself cannot be denied.
         :returns: Parsed header containing all extracted declarations.
         :raises RuntimeError: If parsing fails due to syntax errors.
         """

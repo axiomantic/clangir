@@ -6,6 +6,8 @@ import glob
 import os
 import shutil
 import subprocess
+import textwrap
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +21,6 @@ from headerkit.backends.libclang import (
     _deduplicate_declarations,
     _get_libclang_search_paths,
     _is_system_header,
-    _is_umbrella_header,
     _mangle_specialization_name,
     get_system_include_dirs,
     is_system_libclang_available,
@@ -129,7 +130,7 @@ class TestHelperFunctions:
         assert _is_system_header("/home/user/project/include/mylib.h") is False
 
     def test_is_system_header_project_prefix_overrides(self):
-        """project_prefixes can whitelist paths that would otherwise be system."""
+        """project_prefixes can allowlist paths that would otherwise be system."""
         path = "/opt/homebrew/include/sodium/crypto_auth.h"
         assert _is_system_header(path) is True
         assert _is_system_header(path, project_prefixes=("/opt/homebrew/include/sodium",)) is False
@@ -137,67 +138,6 @@ class TestHelperFunctions:
     def test_is_system_header_case_insensitive_with_backslashes(self):
         """System header detection works with Windows-style backslash paths."""
         assert _is_system_header(r"C:\some\path\clang\include\stddef.h") is True
-
-    def test_is_umbrella_header_true(self):
-        """Umbrella header detection when many includes, few declarations.
-
-        Threshold mechanics (default threshold=3):
-        - Umbrella if: non-system project includes >= threshold AND declarations < threshold
-        - _is_system_header filters out system paths (e.g. /usr/include/*)
-        - All 4 paths here are non-system (/home/user/lib/*), so project_includes=4 >= 3
-        - declarations=0 < 3, so this is an umbrella header
-        """
-        header = Header(
-            path="umbrella.h",
-            declarations=[],
-            included_headers={
-                "/home/user/lib/a.h",
-                "/home/user/lib/b.h",
-                "/home/user/lib/c.h",
-                "/home/user/lib/d.h",
-            },
-        )
-        assert _is_umbrella_header(header) is True
-
-    def test_is_umbrella_header_false_many_decls(self):
-        """Non-umbrella header with declarations.
-
-        Threshold mechanics (default threshold=3):
-        - project includes=1 (only /home/user/lib/a.h), which is < 3
-        - declarations=4, which is >= 3
-        - Fails both criteria, so NOT an umbrella header
-        """
-        header = Header(
-            path="normal.h",
-            declarations=[
-                Struct("A", [Field("x", CType("int"))]),
-                Struct("B", [Field("y", CType("int"))]),
-                Struct("C", [Field("z", CType("int"))]),
-                Function("foo", CType("void"), []),
-            ],
-            included_headers={"/home/user/lib/a.h"},
-        )
-        assert _is_umbrella_header(header) is False
-
-    def test_is_umbrella_header_system_headers_excluded(self):
-        """_is_system_header influences umbrella detection by filtering system includes.
-
-        System headers (e.g. /usr/include/*) are not counted as project includes,
-        so a header that includes many system headers but few project headers
-        is NOT considered an umbrella header.
-        """
-        header = Header(
-            path="not_umbrella.h",
-            declarations=[],
-            included_headers={
-                "/usr/include/stdio.h",
-                "/usr/include/stdlib.h",
-                "/usr/include/string.h",
-                "/usr/include/math.h",
-            },
-        )
-        # All includes are system headers, so project_includes=0, not >= threshold
-        assert _is_umbrella_header(header) is False
 
     def test_deduplicate_declarations_removes_duplicates(self):
         """_deduplicate_declarations removes duplicate declarations."""
@@ -1287,3 +1227,176 @@ class TestResetCindexConfig:
         finally:
             _cached_cindex.Config.loaded = orig_loaded
             _cached_cindex.Config.library_file = orig_library_file
+
+
+@libclang
+class TestRecursiveIncludeExpansion:
+    """``recursive_includes`` alone decides whether includes are followed.
+
+    Expansion used to be gated by an ``_is_umbrella_header`` heuristic that
+    required at least three project includes, so a forwarding header with one
+    or two includes silently produced an empty result. Scope is now bounded
+    only by the principled mechanisms: system-header classification,
+    ``max_depth``, and the visited set.
+    """
+
+    @staticmethod
+    def _tree(tmp_path: Path, include_count: int) -> Path:
+        for n in range(1, include_count + 1):
+            (tmp_path / f"dep{n}.h").write_text(f"void decl_{n}(int x);\n")
+        includes = "".join(f'#include "dep{n}.h"\n' for n in range(1, include_count + 1))
+        top = tmp_path / "top.h"
+        top.write_text(includes)
+        return top
+
+    def _parse(self, top: Path, **kwargs: object) -> Header:
+        backend = LibclangBackend()
+        return backend.parse(top.read_text(), str(top), [str(top.parent)], **kwargs)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("include_count", [1, 2, 3])
+    def test_forwarding_header_expands_regardless_of_include_count(self, tmp_path: Path, include_count: int) -> None:
+        """A header that only forwards includes yields every included declaration."""
+        top = self._tree(tmp_path, include_count)
+
+        header = self._parse(top)
+
+        assert sorted(d.name for d in header.declarations) == [f"decl_{n}" for n in range(1, include_count + 1)]
+
+    @pytest.mark.parametrize("include_count", [1, 2, 3])
+    def test_recursive_includes_false_suppresses_expansion(self, tmp_path: Path, include_count: int) -> None:
+        """An explicit opt-out is honoured at every include count."""
+        top = self._tree(tmp_path, include_count)
+
+        header = self._parse(top, recursive_includes=False)
+
+        assert header.declarations == []
+
+    @pytest.mark.parametrize("include_count", [1, 2, 3])
+    def test_max_depth_zero_suppresses_expansion(self, tmp_path: Path, include_count: int) -> None:
+        """``max_depth=0`` bounds recursion before the first level."""
+        top = self._tree(tmp_path, include_count)
+
+        header = self._parse(top, max_depth=0)
+
+        assert header.declarations == []
+
+    def test_system_includes_are_not_followed(self, tmp_path: Path) -> None:
+        """A system include contributes no declarations, even alongside a project one."""
+        (tmp_path / "dep1.h").write_text("void decl_1(int x);\n")
+        top = tmp_path / "top.h"
+        top.write_text(
+            textwrap.dedent("""\
+            #include <stdio.h>
+            #include "dep1.h"
+        """)
+        )
+
+        header = self._parse(top)
+
+        names = sorted(d.name for d in header.declarations)
+        assert names == ["decl_1"], f"system declarations leaked: {names}"
+        assert not any(d.name == "printf" for d in header.declarations)
+
+
+@libclang
+class TestBitfieldWidths:
+    """``Field.bit_width`` must carry a bitfield's declared width.
+
+    The backend called ``cursor.is_bitfield()`` only to discard unnamed padding
+    and never read ``cursor.get_bitfield_width()``, so every bitfield reached the
+    IR as an ordinary field. Downstream that is not cosmetic: the ctypes writer
+    emits a 2-tuple instead of the ``("name", type, width)`` 3-tuple, and the
+    cffi, lua and prompt writers drop the ``: N`` suffix entirely.
+    """
+
+    @staticmethod
+    def _fields(code: str, struct_name: str) -> dict[str, Field]:
+        header = LibclangBackend().parse(code, "test.h")
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == struct_name)
+        return {f.name: f for f in struct.fields}
+
+    def test_plain_bitfield_carries_width(self) -> None:
+        """Each bitfield reports its own declared width, not a shared or default one."""
+        fields = self._fields("struct s { unsigned lo : 4; unsigned hi : 7; };", "s")
+
+        assert [(n, f.bit_width) for n, f in fields.items()] == [("lo", 4), ("hi", 7)]
+
+    def test_non_bitfield_members_have_no_width(self) -> None:
+        """A width must not leak onto ordinary members sharing the struct."""
+        fields = self._fields("struct m { int a; unsigned lo : 4; char c; };", "m")
+
+        assert [(n, f.bit_width) for n, f in fields.items()] == [("a", None), ("lo", 4), ("c", None)]
+
+    def test_width_one_is_not_confused_with_absent(self) -> None:
+        """``: 1`` is a real width; ``None`` means "not a bitfield" and the two differ."""
+        fields = self._fields("struct f { unsigned flag : 1; unsigned int whole; };", "f")
+
+        assert fields["flag"].bit_width == 1
+        assert fields["whole"].bit_width is None
+
+    def test_zero_width_unnamed_bitfield_is_carried_as_padding(self) -> None:
+        """``unsigned : 0`` is an alignment device with no member name.
+
+        It carries no name but it does displace the following member, so the IR
+        keeps it flagged ``is_padding``. Dropping it left the ctypes writer
+        placing ``b`` in the first storage unit instead of the second.
+        """
+        header = LibclangBackend().parse("struct z { unsigned a : 3; unsigned : 0; unsigned b : 5; };", "test.h")
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == "z")
+
+        assert [(f.name, f.bit_width, f.is_padding) for f in struct.fields] == [
+            ("a", 3, False),
+            ("", 0, True),
+            ("b", 5, False),
+        ]
+
+    def test_unnamed_nonzero_bitfield_is_carried_as_padding(self) -> None:
+        """``unsigned : 3`` is padding: unaddressable, but it does reserve bits."""
+        header = LibclangBackend().parse("struct u { unsigned a : 3; unsigned : 3; unsigned b : 2; };", "test.h")
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == "u")
+
+        assert [(f.name, f.bit_width, f.is_padding) for f in struct.fields] == [
+            ("a", 3, False),
+            ("", 3, True),
+            ("b", 2, False),
+        ]
+
+    def test_dropped_padding_bitfield_produces_no_note(self) -> None:
+        """Padding is skipped by design, so it must not be reported as an unsupported type.
+
+        The note previously read "Field '' skipped: unable to represent type
+        'unsigned int'", which named a cause that was not the real one and
+        surfaced verbatim as a comment in generated Cython.
+        """
+        header = LibclangBackend().parse("struct z { unsigned a : 3; unsigned : 0; };", "test.h")
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == "z")
+
+        assert struct.notes == []
+
+    def test_class_template_bitfield_is_handled_by_its_own_code_path(self) -> None:
+        """``_process_class_template`` carries a second, independent copy of the field loop.
+
+        A plain ``class`` is handled by ``_process_struct``; only a *template*
+        reaches this branch, so without a template here the width lookup and the
+        note suppression in ``_process_class_template`` are both unpinned.
+        """
+        header = LibclangBackend().parse(
+            "template <typename T> class W { unsigned a : 3; unsigned : 0; };",
+            "test.hpp",
+            extra_args=["-x", "c++"],
+        )
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == "W")
+
+        assert [(f.name, f.bit_width, f.is_padding) for f in struct.fields] == [("a", 3, False), ("", 0, True)]
+        assert struct.notes == []
+
+    def test_bitfield_inside_anonymous_member_carries_width(self) -> None:
+        """Widths must survive the separate anonymous-record conversion path."""
+        header = LibclangBackend().parse(
+            "struct t { int x; struct { unsigned lo : 4; unsigned hi : 4; }; };",
+            "test.h",
+        )
+        struct = next(d for d in header.declarations if isinstance(d, Struct) and d.name == "t")
+        anon = next(f.anonymous_struct for f in struct.fields if f.anonymous_struct is not None)
+
+        assert [(f.name, f.bit_width) for f in anon.fields] == [("lo", 4), ("hi", 4)]

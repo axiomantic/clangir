@@ -430,7 +430,7 @@ class LuaWriter(BaseWriter):
 
     def write(self, header: Header) -> str:
         """Convert header IR to a LuaJIT FFI binding file."""
-        return self._render(header)
+        return self._render(self._prepare(header))
 
     def _write_package_layout(
         self,

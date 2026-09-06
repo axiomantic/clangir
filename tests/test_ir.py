@@ -480,5 +480,6 @@ class TestParserBackendProtocol:
             "recursive_includes",
             "max_depth",
             "project_prefixes",
-            "whitelist",
+            "allowlist",
+            "denylist",
         ]

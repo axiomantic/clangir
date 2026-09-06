@@ -700,7 +700,7 @@ class DiffWriter(BaseWriter):
 
     def write(self, header: Header) -> str:
         """Compare header against baseline and produce a diff report."""
-        return self._render(header)
+        return self._render(self._prepare(header))
 
 
 # Uses bottom-of-module self-registration. See headerkit/writers/json.py

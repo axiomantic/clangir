@@ -38,6 +38,7 @@ Example
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import glob
 import os
 import re
@@ -118,10 +119,10 @@ def _resolve_path(path: str, search_dirs: Sequence[str] = ()) -> str:
     return normalize_path(os.path.realpath(os.path.abspath(path)))
 
 
-def _whitelist_search_dirs(filename: str, include_dirs: Sequence[str] | None) -> list[str]:
-    """Directories a relative whitelist entry is resolved against, in priority order.
+def _filter_search_dirs(filename: str, include_dirs: Sequence[str] | None) -> list[str]:
+    """Directories a relative allowlist/denylist entry is resolved against, in priority order.
 
-    The main file's own directory comes first, because a whitelist naming a bare
+    The main file's own directory comes first, because an entry naming a bare
     header basename (the common case) means "the header sitting next to the file
     being parsed".  The include search path follows, then the process cwd via the
     fallback in :func:`_resolve_path`.
@@ -130,6 +131,43 @@ def _whitelist_search_dirs(filename: str, include_dirs: Sequence[str] | None) ->
     if include_dirs:
         dirs.extend(include_dirs)
     return dirs
+
+
+_GLOB_METACHARACTERS = ("*", "?", "[")
+
+
+class _PathSet:
+    """A resolved set of allowlist/denylist entries, matched against resolved paths.
+
+    An entry containing a glob metacharacter (``*``, ``?``, ``[``) becomes an
+    :mod:`fnmatch` pattern; every other entry becomes one exact path.  Both are
+    resolved by the rule in :func:`_resolve_path` before any comparison, so a
+    match is always between two absolute, symlink-free, normalized paths and is
+    never a substring test: ``er.h`` does not match ``other.h``.
+
+    A glob entry's *directory* part is resolved the same way a plain entry is;
+    only its final component stays a pattern.  Resolving the directory rather
+    than pattern-matching it is what lets a pattern survive a symlinked parent
+    (``/tmp`` -> ``/private/tmp`` on macOS), where a pattern built from the
+    unresolved spelling would silently match nothing.
+    """
+
+    def __init__(self, entries: Sequence[str], search_dirs: Sequence[str]) -> None:
+        self.exact: set[str] = set()
+        self.patterns: list[str] = []
+        for entry in entries:
+            head, tail = os.path.split(entry)
+            if any(char in tail for char in _GLOB_METACHARACTERS):
+                bases = [_resolve_path(head, search_dirs)] if head else [_resolve_path(d) for d in search_dirs]
+                self.patterns.extend(normalize_path(os.path.join(base, tail)) for base in bases)
+            else:
+                self.exact.add(_resolve_path(entry, search_dirs))
+
+    def matches(self, resolved_path: str) -> bool:
+        """True if ``resolved_path`` (already run through :func:`_resolve_path`) is named."""
+        if resolved_path in self.exact:
+            return True
+        return any(fnmatch.fnmatchcase(resolved_path, pattern) for pattern in self.patterns)
 
 
 def _get_xcrun_libclang_paths() -> list[str]:
@@ -460,7 +498,7 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
     - Being in compiler-specific paths (clang/include, gcc/include)
     - Being in framework directories
 
-    Headers can be whitelisted as "project" headers using project_prefixes.
+    Headers can be allowlisted as "project" headers using project_prefixes.
     This is useful for umbrella headers where the library is installed in
     a system location but we want to recursively parse its sub-headers.
 
@@ -516,31 +554,6 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
             return True
 
     return False
-
-
-def _is_umbrella_header(
-    header: Header,
-    threshold: int = 3,
-    project_prefixes: tuple[str, ...] | None = None,
-) -> bool:
-    """Detect if a header is an umbrella header.
-
-    An umbrella header is characterized by:
-    - Having multiple included headers (>= threshold)
-    - Having few or no declarations of its own (< threshold)
-
-    :param header: The parsed Header IR
-    :param threshold: Minimum number of includes to consider umbrella header (default: 3)
-    :param project_prefixes: Optional tuple of path prefixes to treat as project (not system)
-    :returns: True if this appears to be an umbrella header
-    """
-    # Count non-system included headers
-    project_includes = [h for h in header.included_headers if not _is_system_header(h, project_prefixes)]
-
-    # Umbrella header criteria:
-    # 1. Multiple project includes (at least threshold)
-    # 2. Few or no declarations in the main file
-    return len(project_includes) >= threshold and len(header.declarations) < threshold
 
 
 def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declaration]:
@@ -643,6 +656,30 @@ def _mangle_specialization_name(cpp_name: str) -> str:
 _MACRO_PROBE_PREFIX = "__headerkit_macro_probe_"
 
 
+# Extensions clang's own driver maps to C++.  ``.h`` is deliberately absent: it
+# is ambiguous, and clang treats it as C unless a flag says otherwise.
+CPP_HEADER_EXTENSIONS = (".hpp", ".hh", ".hxx", ".h++", ".H", ".tcc", ".tpp")
+
+
+def _detect_cplus(filename: str, extra_args: Sequence[str] | None) -> bool:
+    """Return True when the translation unit is C++, as clang's driver decides it.
+
+    Flags win over the extension, in both directions: an explicit ``-x c``
+    forces C even for a ``.hpp``.  Otherwise the extension decides, because
+    clang infers C++ from it and the backend must agree with the compiler it is
+    driving.  Deriving this from the flags alone let a ``.hpp`` parse as C++
+    while the backend believed it held C, so every C++-only guard stayed shut on
+    a translation unit that clang had already read as C++.
+    """
+    if extra_args:
+        for i, arg in enumerate(extra_args):
+            if arg.startswith("-std=c++"):
+                return True
+            if arg == "-x" and i + 1 < len(extra_args):
+                return extra_args[i + 1] == "c++"
+    return filename.endswith(CPP_HEADER_EXTENSIONS)
+
+
 def _is_function_like_macro(tokens: list[Any]) -> bool:
     """Report whether a macro definition's tokens describe a function-like macro.
 
@@ -683,8 +720,12 @@ class ClangASTConverter:
         Declarations from these paths will be included in addition to the main file.
     :param is_cplus: True when the translation unit is C++.  C++ has no separate enum
         tag namespace, which changes how tag-less typedef'd enums are detected.
-    :param whitelist_paths: Already-resolved absolute paths (see :func:`_resolve_path`)
-        of included files whose declarations must be kept alongside the main file's.
+    :param allowlist_paths: Resolved entries (see :class:`_PathSet`) naming the
+        included files whose declarations are kept alongside the main file's.
+        ``None`` means "no allowlist was supplied" and admits nothing extra.
+    :param denylist_paths: Resolved entries whose declarations are dropped even
+        when an allowlist or a project prefix names them -- deny wins over allow.
+        The main file itself is never denied.
 
     Note
     ----
@@ -698,12 +739,14 @@ class ClangASTConverter:
         project_prefixes: tuple[str, ...] | None = None,
         *,
         is_cplus: bool = False,
-        whitelist_paths: frozenset[str] = frozenset(),
+        allowlist_paths: _PathSet | None = None,
+        denylist_paths: _PathSet | None = None,
     ) -> None:
         self.filename = filename
         self.project_prefixes = project_prefixes
         self.is_cplus = is_cplus
-        self.whitelist_paths = whitelist_paths
+        self.allowlist_paths = allowlist_paths
+        self.denylist_paths = denylist_paths
         self.declarations: list[Declaration] = []
         # Track seen declarations to avoid duplicates
         self._seen: set[str] = set()
@@ -725,6 +768,15 @@ class ClangASTConverter:
         """Get current namespace as '::'-joined string, or None if global."""
         return "::".join(self._namespace_stack) if self._namespace_stack else None
 
+    def _record_key(self, kind: str, name: str | None) -> str:
+        """Build the ``_seen`` identity for a record, qualified by namespace.
+
+        Mirrors the ``(type, name, namespace)`` identity that
+        :func:`_deduplicate_declarations` uses.  Without the namespace component
+        ``a::dup`` and ``b::dup`` collide and the second one is silently dropped.
+        """
+        return f"{kind}:{self._current_namespace or ''}:{name}"
+
     def _remove_forward_declaration(self, name: str | None, kind: str) -> None:
         """Remove a forward declaration from declarations list.
 
@@ -738,7 +790,7 @@ class ClangASTConverter:
         # Find and remove the forward declaration
         for i, decl in enumerate(self.declarations):
             if isinstance(decl, Struct):
-                if decl.name == name:
+                if decl.name == name and decl.namespace == self._current_namespace:
                     # Check if it's a forward declaration (no fields, no methods)
                     if not decl.fields and not decl.methods:
                         # Verify the kind matches
@@ -1086,12 +1138,17 @@ class ClangASTConverter:
             self._process_cursor(child)
 
     def _is_from_target_file(self, cursor: Any) -> bool:
-        """Check if cursor is from the target file or a whitelisted project path.
+        """Check if cursor is from the target file or an allowed project path.
 
         Returns True if cursor is from:
         1. The main target file (self.filename), OR
         2. A path under one of the project_prefixes (for umbrella headers), OR
-        3. One of the whitelisted files
+        3. One of the allowlisted files
+
+        and is not named by the denylist.  The main file is exempt from the
+        denylist: denying the file the caller asked to parse would return an
+        empty result with nothing to explain it, which is a silent failure
+        wearing the costume of a successful parse.
 
         Cases 2 and 3 compare absolute, symlink-resolved paths.  clang reports a
         location as the path it was included by -- typically relative, e.g.
@@ -1104,17 +1161,22 @@ class ClangASTConverter:
 
         file_path = str(loc.file.name)
 
-        # Check main file
+        # Check main file.  Deliberately ahead of the denylist: the main file
+        # cannot be denied out of existence.
         if normalize_path(file_path) == normalize_path(self.filename):
             return True
 
-        if not self.project_prefixes and not self.whitelist_paths:
+        if not self.project_prefixes and not self.allowlist_paths and not self.denylist_paths:
             return False
 
         resolved = _resolve_path(file_path)
 
-        # Check whitelisted files
-        if resolved in self.whitelist_paths:
+        # Deny wins over allow.
+        if self.denylist_paths is not None and self.denylist_paths.matches(resolved):
+            return False
+
+        # Check allowlisted files
+        if self.allowlist_paths is not None and self.allowlist_paths.matches(resolved):
             return True
 
         # Check project prefixes (for umbrella headers)
@@ -1712,8 +1774,16 @@ class ClangASTConverter:
         self._anon_names[key] = generated
         return generated
 
-    def _process_struct(self, cursor: Any, is_union: bool, is_cppclass: bool = False) -> None:
-        """Process a struct/union/class declaration."""
+    def _process_struct(
+        self, cursor: Any, is_union: bool, is_cppclass: bool = False, *, emit: bool = True
+    ) -> Struct | None:
+        """Process a struct/union/class declaration.
+
+        :param emit: When False the record is returned without being appended to
+            the translation unit's declarations. A C++ nested class uses this:
+            it belongs inside its parent's body, not at the top level.
+        :returns: The record, or None when the cursor yields no declaration.
+        """
         name = self._normalize_anon_name(cursor)
 
         # A C11 anonymous member -- ``struct { ... };`` with no declarator -- is
@@ -1730,7 +1800,7 @@ class ClangASTConverter:
                     and parent.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_DECL)
                     and self._is_anonymous_decl(cursor)
                 ):
-                    return
+                    return None
             except Exception:
                 pass
 
@@ -1765,9 +1835,9 @@ class ClangASTConverter:
 
         # For specializations, use display name for deduplication key
         if is_specialization:
-            key = f"{key_prefix}:{cursor.displayname}"
+            key = self._record_key(key_prefix, cursor.displayname)
         else:
-            key = f"{key_prefix}:{name}"
+            key = self._record_key(key_prefix, name)
 
         # Forward declarations have no definition - output as opaque type
         is_forward_decl = not cursor.is_definition()
@@ -1776,23 +1846,29 @@ class ClangASTConverter:
         # - If we've seen a definition, skip any subsequent declarations
         # - If we've only seen a forward declaration, a definition should replace it
         definition_key = f"{key}:definition"
-        if definition_key in self._seen:
-            # Already have a definition, skip this
-            return
+        # A nested record is keyed only by its own tag, which is not unique: a
+        # global `struct view` and a class member `struct view` collide. The
+        # nested one is scoped to its parent and never reaches the top level, so
+        # it neither consults nor updates the translation-unit dedup set.
+        # Sharing it silently dropped whichever of the two was seen second.
+        if emit:
+            if definition_key in self._seen:
+                # Already have a definition, skip this
+                return None
 
-        if is_forward_decl:
-            # Only emit forward declaration if we haven't seen this type at all
-            if key in self._seen:
-                return
-            self._seen.add(key)
-        else:
-            # This is a definition - mark it and remove any prior forward declaration
-            self._seen.add(definition_key)
-            if key in self._seen:
-                # We previously emitted a forward declaration - need to remove it
-                # and replace with the definition
-                self._remove_forward_declaration(name, key_prefix)
-            self._seen.add(key)
+            if is_forward_decl:
+                # Only emit forward declaration if we haven't seen this type at all
+                if key in self._seen:
+                    return None
+                self._seen.add(key)
+            else:
+                # This is a definition - mark it and remove any prior forward declaration
+                self._seen.add(definition_key)
+                if key in self._seen:
+                    # We previously emitted a forward declaration - need to remove it
+                    # and replace with the definition
+                    self._remove_forward_declaration(name, key_prefix)
+                self._seen.add(key)
 
         fields: list[Field] = []
         methods: list[Function] = []
@@ -1801,6 +1877,7 @@ class ClangASTConverter:
         destructor: Function | None = None
         conversions: list[Function] = []
         notes: list[str] = []
+        nested_records: list[Struct] = []
 
         is_abstract = False
         if not is_forward_decl and (is_cppclass or cursor.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL)):
@@ -1829,7 +1906,7 @@ class ClangASTConverter:
                     field = self._convert_field(child)
                     if field:
                         fields.append(field)
-                    else:
+                    elif not self._is_padding_bitfield(child):
                         notes.append(
                             f"Field '{child.spelling}' skipped: unable to represent type '{child.type.spelling}'"
                         )
@@ -1841,10 +1918,23 @@ class ClangASTConverter:
                         # Non-definitions are left alone: a bare ``struct x *p``
                         # member introduces the tag without a body, and the
                         # writer already emits those forward declarations.
-                        # C++ nested classes are excluded because they require
-                        # the scope qualification this path does not apply.
-                        if not is_cppclass and child.is_definition():
-                            self._process_struct(child, is_union=child.kind == CursorKind.UNION_DECL)
+                        # A C++ nested class is NOT lifted to the top level:
+                        # its name is only meaningful when qualified by the
+                        # enclosing class, and flattening it would violate
+                        # scope integrity. It is kept as a nested record, which
+                        # the writer renders inside the parent's body where the
+                        # qualification is implicit.
+                        if child.is_definition():
+                            if is_cppclass:
+                                nested = self._process_struct(
+                                    child,
+                                    is_union=child.kind == CursorKind.UNION_DECL,
+                                    emit=False,
+                                )
+                                if nested is not None:
+                                    nested_records.append(nested)
+                            else:
+                                self._process_struct(child, is_union=child.kind == CursorKind.UNION_DECL)
                     elif self._normalize_anon_name(child) is None:
                         nested = self._build_anonymous_record(child)
                         if nested is not None:
@@ -1927,8 +2017,11 @@ class ClangASTConverter:
             is_deprecated=is_deprecated,
             alignment=alignment,
             location=self._get_location(cursor),
+            nested_records=nested_records,
         )
-        self.declarations.append(struct)
+        if emit:
+            self.declarations.append(struct)
+        return struct
 
     def _process_class_template(self, cursor: Any) -> None:
         """Process a C++ class template declaration."""
@@ -1984,8 +2077,13 @@ class ClangASTConverter:
                     with contextlib.suppress(Exception):
                         is_virt = any(t.spelling == "virtual" for t in child.get_tokens())
                 bases.append(BaseSpecifier(name=base_name, access=access, is_virtual=is_virt))
-            elif child.kind == CursorKind.TYPEDEF_DECL:
-                # Extract inner typedefs (e.g., typedef Iterator<T, PT> iterator)
+            elif child.kind in (CursorKind.TYPEDEF_DECL, CursorKind.TYPE_ALIAS_DECL):
+                # Inner aliases, in both spellings C++ offers: the classic
+                # ``typedef Iterator<T, PT> iterator`` (TYPEDEF_DECL) and the
+                # C++11 ``using type = T;`` (TYPE_ALIAS_DECL).  They mean the
+                # same thing and both expose ``underlying_typedef_type``, but
+                # clang reports them as distinct cursor kinds, so matching only
+                # the first silently loses every ``using`` alias.
                 typedef_name = child.spelling
                 underlying = child.underlying_typedef_type.spelling
                 if typedef_name and underlying:
@@ -1994,7 +2092,7 @@ class ClangASTConverter:
                 field = self._convert_field(child)
                 if field:
                     fields.append(field)
-                else:
+                elif not self._is_padding_bitfield(child):
                     notes.append(f"Field '{child.spelling}' skipped: unable to represent type '{child.type.spelling}'")
             elif child.kind == CursorKind.VAR_DECL:
                 field = self._convert_field(child)
@@ -2124,18 +2222,58 @@ class ClangASTConverter:
             return False
         return not str(cursor.type.spelling).startswith("enum ")
 
+    def _enum_cpp_name(self, cursor: Any, name: str | None) -> str | None:
+        """Return the tag's full C++ spelling when a record encloses it, else None.
+
+        A member enum is hoisted to the top level, which drops the record from
+        its spelling: ``class C { enum M; }`` reaches the writer as a bare ``M``
+        that names no type.  ``namespace`` cannot carry the record, so the
+        qualification is recorded separately.  When no record encloses the tag,
+        ``namespace`` plus ``name`` is already the whole spelling and this
+        returns None so the existing output is unchanged.
+        """
+        if not name:
+            return None
+        record_kinds = (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_TEMPLATE)
+        records: list[str] = []
+        parent = cursor.semantic_parent
+        while parent is not None and parent.kind in record_kinds:
+            if not parent.spelling:
+                return None
+            records.append(parent.spelling)
+            parent = parent.semantic_parent
+        if not records:
+            return None
+        scopes = [*records[::-1], name]
+        if self._current_namespace:
+            scopes.insert(0, self._current_namespace)
+        return "::".join(scopes)
+
     def _process_enum(self, cursor: Any) -> None:
         """Process an enum declaration."""
         name = self._normalize_anon_name(cursor)
 
-        # Skip forward declarations
-        if not cursor.is_definition():
+        # A forward declaration is redundant when the tag is also defined in this
+        # translation unit -- the definition carries the values, so it alone is
+        # emitted and both source orderings collapse to one declaration.
+        #
+        # When the tag is never defined, the forward declaration is the *only*
+        # mention of the type, and dropping it loses the type entirely: a
+        # `void use(enum E *p);` alongside it renders as `void use(E* p)` with `E`
+        # undeclared, which Cython rejects with "'E' is not a type identifier".
+        # The opaque record path above already keeps such declarations, so
+        # dropping them here made enums inconsistent with structs and unions.
+        if not cursor.is_definition() and cursor.get_definition() is not None:
             return
 
         # Skip if already processed. Unnamed enums are keyed by declaration
         # identity so that a nested enum reached from both the record body and
         # the field that uses it is still emitted once.
-        key = f"enum:{name}" if name else f"enum:{self._anon_key(cursor)}"
+        # A member enum is keyed by its record-qualified spelling, so a
+        # ``C1::E`` beside a ``C2::E`` are two tags rather than one that
+        # silently discards the second class's enumerators.
+        cpp_name = self._enum_cpp_name(cursor, name) if self.is_cplus else None
+        key = self._record_key("enum", cpp_name or (name if name else self._anon_key(cursor)))
         if key in self._seen:
             return
         self._seen.add(key)
@@ -2149,7 +2287,10 @@ class ClangASTConverter:
             name=name,
             values=values,
             is_typedef=self._enum_is_typedef_only(cursor),
+            namespace=self._current_namespace,
             location=self._get_location(cursor),
+            is_scoped=bool(self.is_cplus and cursor.is_scoped_enum()),
+            cpp_name=cpp_name,
         )
         self.declarations.append(enum)
 
@@ -2324,7 +2465,7 @@ class ClangASTConverter:
             return
 
         # Skip if already processed
-        key = f"typedef:{name}"
+        key = self._record_key("typedef", name)
         if key in self._seen:
             return
         self._seen.add(key)
@@ -2353,7 +2494,7 @@ class ClangASTConverter:
                     struct_name = decl.spelling
                     # Only emit the struct if we haven't emitted a definition
                     key_prefix = "union" if decl.kind == CursorKind.UNION_DECL else "struct"
-                    struct_key = f"{key_prefix}:{struct_name}"
+                    struct_key = self._record_key(key_prefix, struct_name)
                     definition_key = f"{struct_key}:definition"
 
                     # Check if this is typedef struct Foo {...} Foo; pattern
@@ -2365,7 +2506,11 @@ class ClangASTConverter:
                         if is_typedef_pattern:
                             # Find and update the existing struct
                             for i, existing_decl in enumerate(self.declarations):
-                                if isinstance(existing_decl, Struct) and existing_decl.name == struct_name:
+                                if (
+                                    isinstance(existing_decl, Struct)
+                                    and existing_decl.name == struct_name
+                                    and existing_decl.namespace == self._current_namespace
+                                ):
                                     # Replace with typedef'd version
                                     self.declarations[i] = replace(existing_decl, is_typedef=True)
                                     break
@@ -2461,7 +2606,7 @@ class ClangASTConverter:
             return
 
         # Skip if already processed
-        key = f"var:{name}"
+        key = self._record_key("var", name)
         if key in self._seen:
             return
         self._seen.add(key)
@@ -2491,9 +2636,20 @@ class ClangASTConverter:
         name = cursor.spelling
         is_transparent = False
 
-        # Skip unnamed bitfields (padding-only, e.g., ``int : 4;``)
-        if not name and cursor.is_bitfield():
-            return None
+        # An unnamed bitfield (``int : 4;``) is padding, not a member. It is
+        # still carried in the IR: a consumer that reconstructs layout cannot
+        # place the following fields without it.
+        if self._is_padding_bitfield(cursor):
+            pad_type = self._convert_type(cursor.type)
+            if not pad_type:
+                return None
+            return Field(
+                name="",
+                type=pad_type,
+                bit_width=self._get_bitfield_width(cursor),
+                access=self._get_access_specifier(cursor),
+                is_padding=True,
+            )
 
         # Only a field with no name of its own is transparent. ``cursor.is_anonymous()``
         # is also True for a *named* field whose type happens to be an anonymous
@@ -2509,7 +2665,43 @@ class ClangASTConverter:
         self._apply_param_names(field_type, cursor)
 
         access = self._get_access_specifier(cursor)
-        return Field(name=name, type=field_type, is_anonymous_transparent=is_transparent, access=access)
+        return Field(
+            name=name,
+            type=field_type,
+            bit_width=self._get_bitfield_width(cursor),
+            is_anonymous_transparent=is_transparent,
+            access=access,
+        )
+
+    @staticmethod
+    def _is_padding_bitfield(cursor: Any) -> bool:
+        """True for an unnamed bitfield (``int : 3;``), which is padding, not a member.
+
+        C17 6.7.2.1p13 gives such a declarator no member name, so it is not
+        addressable. The Field carries ``is_padding=True`` so that writers
+        emitting C source skip it -- a nameless member in their output would
+        be wrong -- while the ctypes writer, which must reproduce the layout
+        itself, can name the bits it has to reserve.
+        """
+        if cursor.spelling:
+            return False
+        with contextlib.suppress(Exception):
+            return bool(cursor.is_bitfield())
+        return False
+
+    @staticmethod
+    def _get_bitfield_width(cursor: Any) -> int | None:
+        """Bit width of a bitfield member, or None when the field is not a bitfield.
+
+        ``clang_getFieldDeclBitWidth`` answers -1 for a non-bitfield cursor rather
+        than failing, so the sign is the discriminator. Pairing it with an
+        ``is_bitfield()`` pre-check would add a branch that can never decide the
+        outcome, hiding a regression in either one behind the other.
+        """
+        with contextlib.suppress(Exception):
+            width = int(cursor.get_bitfield_width())
+            return width if width >= 0 else None
+        return None
 
     def _apply_param_names(self, type_expr: TypeExpr | None, cursor: Any) -> None:
         """Recover function-pointer parameter names from a declarator's PARM_DECL children.
@@ -2598,6 +2790,57 @@ class ClangASTConverter:
             if qual not in existing:
                 existing.append(qual)
 
+    def _resolve_member_alias(self, clang_type: Any, decl: Any) -> TypeExpr | None:
+        """Resolve ``Owner<int>::type`` to the type it actually names.
+
+        A ``typedef`` or C++11 ``using`` alias declared *inside* a class is
+        reached from the outside through a qualified name, but libclang reports
+        its declaration cursor's spelling as the bare member name -- ``type``.
+        Emitting that bare name loses the owner entirely and produces a
+        dangling identifier that names nothing at the output's top level.
+
+        The qualified spelling is not usable either: ``types::remove_reference<int>::type``
+        has no valid spelling in a Cython declaration.  For a *concrete*
+        instantiation the canonical type is exact and fully resolved -- clang has
+        already done the substitution -- so it carries the same meaning with a
+        name the writer can emit.  That is what this returns.
+
+        Returns ``None`` (leaving the caller's bare-name behaviour intact) when
+        the alias is not a class member, or when the canonical type is still
+        dependent, which is the case inside an uninstantiated template where the
+        bare member name is the correct thing to emit.
+        """
+        # Cursor kinds whose members are reached through a qualified name
+        # (``Owner::member``) rather than by the bare member name.  Built here
+        # rather than at class scope because ``CursorKind`` is bound lazily,
+        # after the libclang shared library is located.
+        record_parent_kinds = (
+            CursorKind.STRUCT_DECL,
+            CursorKind.UNION_DECL,
+            CursorKind.CLASS_DECL,
+            CursorKind.CLASS_TEMPLATE,
+            CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION,
+        )
+        parent = decl.semantic_parent
+        if parent is None or parent.kind not in record_parent_kinds:
+            return None
+
+        canonical = clang_type.get_canonical()
+        # A canonical type that is still unexposed/dependent has not been
+        # substituted, so it carries no more information than the bare name.
+        if canonical.kind in (TypeKind.UNEXPOSED, TypeKind.INVALID, TypeKind.DEPENDENT):
+            return None
+        # Guard against a canonical type that loops straight back to this same
+        # typedef; converting it would recurse without making progress.
+        if canonical.kind == TypeKind.TYPEDEF:
+            return None
+
+        resolved = self._convert_type(canonical)
+        if resolved is None:
+            return None
+        self._merge_quals(resolved, self._extract_quals(clang_type))
+        return resolved
+
     def _convert_type(self, clang_type: Any) -> TypeExpr | None:
         """Convert a libclang Type to our IR type expression."""
         # Get canonical type for consistency
@@ -2680,6 +2923,9 @@ class ClangASTConverter:
         # Handle typedef types
         if kind == TypeKind.TYPEDEF:
             decl = clang_type.get_declaration()
+            member_alias = self._resolve_member_alias(clang_type, decl)
+            if member_alias is not None:
+                return member_alias
             return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type))
 
         # Handle C++ reference types
@@ -2898,6 +3144,8 @@ class LibclangBackend:
         max_depth: int,
         current_depth: int = 0,
         project_prefixes: tuple[str, ...] | None = None,
+        allowlist_paths: _PathSet | None = None,
+        denylist_paths: _PathSet | None = None,
     ) -> Header:
         """Recursively parse included headers and combine declarations.
 
@@ -2909,6 +3157,10 @@ class LibclangBackend:
         :param max_depth: Maximum recursion depth
         :param current_depth: Current recursion depth
         :param project_prefixes: Optional tuple of path prefixes to treat as project (not system)
+        :param allowlist_paths: Resolved allowlist entries, or None when the caller supplied
+            none. Included headers not named here are not descended into.
+        :param denylist_paths: Resolved denylist entries, or None. Named headers are not
+            descended into even when the allowlist names them -- deny wins over allow.
         :returns: Combined Header with declarations from all includes
         """
         if current_depth >= max_depth:
@@ -2919,7 +3171,7 @@ class LibclangBackend:
 
         # Process each included header
         for include_path in main_header.included_headers:
-            # Skip system headers (unless whitelisted via project_prefixes)
+            # Skip system headers (unless allowlisted via project_prefixes)
             if _is_system_header(include_path, project_prefixes):
                 continue
 
@@ -2936,6 +3188,16 @@ class LibclangBackend:
 
             # Check if already visited (circular include)
             if abs_path in self._visited:
+                continue
+
+            # The allowlist and denylist narrow the *merged* result, not only the
+            # main translation unit: an included header the caller did not allow,
+            # or explicitly denied, is never descended into and so contributes
+            # nothing to the merge.  Deny wins over allow.
+            resolved_include = _resolve_path(abs_path)
+            if denylist_paths is not None and denylist_paths.matches(resolved_include):
+                continue
+            if allowlist_paths is not None and not allowlist_paths.matches(resolved_include):
                 continue
 
             self._visited.add(abs_path)
@@ -2959,6 +3221,8 @@ class LibclangBackend:
                     max_depth,
                     current_depth + 1,
                     project_prefixes,
+                    allowlist_paths,
+                    denylist_paths,
                 )
 
                 # Add declarations from sub-header
@@ -2991,15 +3255,40 @@ class LibclangBackend:
         recursive_includes: bool = True,
         max_depth: int = 10,
         project_prefixes: tuple[str, ...] | None = None,
-        whitelist: list[str] | None = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
     ) -> Header:
         """Parse C/C++ code using libclang.
 
         Handles raw (unpreprocessed) code and performs preprocessing internally.
 
-        Umbrella header support: If the header has few/no declarations but many
-        includes (umbrella header pattern), this method can recursively parse the
-        included headers and combine their declarations.
+        Traversal and filtering
+        -----------------------
+        ``recursive_includes`` (True by default) governs *traversal*: it descends
+        into each non-system header named by an ``#include``, parses it as its own
+        translation unit, and merges what it declares.  ``project_prefixes``
+        (through :func:`_is_system_header`) decides which paths count as project
+        rather than system headers, ``max_depth`` bounds the descent, and an
+        internal visited set stops mutually including headers from recursing
+        forever.
+
+        ``allowlist`` and ``denylist`` govern *filtering*, and they narrow the
+        merged result in **both** modes.  A header the allowlist does not name is
+        neither descended into nor admitted out of ``filename``'s own translation
+        unit; a header the denylist names is excluded by both routes as well.
+
+        * ``recursive_includes=True`` with no ``allowlist`` emits the declarations
+          of every non-system included header.
+        * ``recursive_includes=True`` with ``allowlist=["other.h"]`` emits
+          ``filename``'s own declarations and ``other.h``'s, and nothing else.
+        * An allowlist naming nothing that is actually included yields
+          ``filename``'s declarations alone.  This is not an error.
+        * ``recursive_includes=False`` with no ``allowlist`` yields ``filename``'s
+          declarations alone.
+        * **Deny wins over allow.**  A file named by both lists is excluded.
+        * The main file is never denied.  ``filename`` always contributes its own
+          declarations, because returning an empty result for the file the caller
+          asked to parse is a silent failure with nothing to explain it.
 
         :param code: C/C++ source code to parse (raw, not preprocessed).
         :param filename: Source filename for error messages and location tracking.
@@ -3008,21 +3297,30 @@ class LibclangBackend:
         :param use_default_includes: If True (default), automatically detect and add
             system include directories by querying the system clang compiler.
             Set to False to disable this behavior.
-        :param recursive_includes: If True (default), detect umbrella headers and
-            recursively parse included project headers. System headers are always
-            skipped. Set to False to only parse the main file.
+        :param recursive_includes: If True (default), descend into every non-system
+            included header and merge its declarations into the result. System
+            headers are always skipped. Set to False to parse only the main file,
+            which is the only way to keep included declarations out entirely.
         :param max_depth: Maximum recursion depth for include processing (default 10).
             Prevents infinite recursion from circular includes.
         :param project_prefixes: Optional tuple of path prefixes to treat as project
             headers (not system). Use this for umbrella headers of libraries installed
             in system locations (e.g., ``("/opt/homebrew/include/sodium",)``).
-        :param whitelist: Files whose declarations are kept in addition to those of
-            ``filename``.  Without it, everything reaching the translation unit
-            through ``#include`` is discarded.  An absolute entry is used as-is; a
+        :param allowlist: Files whose declarations are kept, alongside ``filename``'s
+            own.  ``None`` keeps every non-system file reached by traversal; a list
+            narrows the result to exactly ``filename`` plus the files it names, in
+            both ``recursive_includes`` modes.  An absolute entry is used as-is; a
             relative entry (including a bare basename) is resolved against the
             directory of ``filename`` first, then each of ``include_dirs``, then the
-            current working directory.  Matching is on absolute, symlink-resolved
-            paths -- not substrings.
+            current working directory.  An entry containing ``*``, ``?`` or ``[`` is
+            an :mod:`fnmatch` pattern whose directory part is resolved the same way.
+            Matching is on whole absolute, symlink-resolved paths -- never on
+            substrings, so ``er.h`` does not match ``other.h``.
+        :param denylist: Files whose declarations are dropped, using the same
+            resolution and glob rules as ``allowlist``.  Deny wins over allow: a
+            file named by both lists is excluded.  A denylist with no allowlist
+            means "everything except these".  An entry matching nothing is not an
+            error.  ``filename`` itself cannot be denied.
         :returns: :class:`~headerkit.ir.Header` containing parsed declarations.
         :raises RuntimeError: If parsing fails with errors.
 
@@ -3038,12 +3336,29 @@ class LibclangBackend:
                 extra_args=["-std=c++17", "-DNDEBUG"]
             )
 
-            # Umbrella header (all-includes) pattern
+            # Umbrella header (all-includes) pattern: descend into the includes
+            # and keep everything they declare.  This is the default.
             header = backend.parse(
                 code,
                 "LibraryAll.h",
                 include_dirs=["./include"],
-                recursive_includes=True  # Auto-detect and expand includes
+                recursive_includes=True
+            )
+
+            # Keep only one included header's declarations: no descent, and
+            # exactly one file admitted from the main translation unit.
+            header = backend.parse(
+                code,
+                "main.h",
+                recursive_includes=False,
+                allowlist=["other.h"]
+            )
+
+            # Main file only -- nothing reached through #include survives
+            header = backend.parse(
+                code,
+                "main.h",
+                recursive_includes=False
             )
 
             # Umbrella header in system location
@@ -3051,7 +3366,7 @@ class LibclangBackend:
                 code,
                 "sodium.h",
                 include_dirs=["/opt/homebrew/include"],
-                project_prefixes=("/opt/homebrew/include/sodium",)  # Whitelist sodium/*
+                project_prefixes=("/opt/homebrew/include/sodium",)  # Allowlist sodium/*
             )
         """
         # Ensure libclang is configured before parsing.  This is a no-op
@@ -3065,16 +3380,7 @@ class LibclangBackend:
 
         args: list[str] = []
 
-        # Detect C++ mode from extra_args
-        is_cplus = False
-        if extra_args:
-            for i, arg in enumerate(extra_args):
-                if arg.startswith("-std=c++"):
-                    is_cplus = True
-                    break
-                if arg == "-x" and i + 1 < len(extra_args) and extra_args[i + 1] == "c++":
-                    is_cplus = True
-                    break
+        is_cplus = _detect_cplus(filename, extra_args)
 
         # Add user-specified include directories FIRST
         # This is important for C++ where user headers may need to come before system libc++
@@ -3114,14 +3420,15 @@ class LibclangBackend:
             included_headers.add(header_path)
 
         # Convert to IR
-        whitelist_paths = frozenset(
-            _resolve_path(entry, _whitelist_search_dirs(filename, include_dirs)) for entry in whitelist or ()
-        )
+        search_dirs = _filter_search_dirs(filename, include_dirs)
+        allowlist_paths = None if allowlist is None else _PathSet(allowlist, search_dirs)
+        denylist_paths = None if denylist is None else _PathSet(denylist, search_dirs)
         converter = ClangASTConverter(
             filename,
             project_prefixes=project_prefixes,
             is_cplus=is_cplus,
-            whitelist_paths=whitelist_paths,
+            allowlist_paths=allowlist_paths,
+            denylist_paths=denylist_paths,
         )
         header = converter.convert(tu)
 
@@ -3129,7 +3436,11 @@ class LibclangBackend:
         header.included_headers = included_headers
 
         # Check if we should do recursive include processing
-        if recursive_includes and _is_umbrella_header(header, project_prefixes=project_prefixes):
+        # ``recursive_includes`` is the caller's answer, so nothing here second-guesses
+        # it from the header's shape. Scope is bounded by _is_system_header /
+        # project_prefixes, allowlist, max_depth, and self._visited.
+        has_project_include = any(not _is_system_header(h, project_prefixes) for h in header.included_headers)
+        if recursive_includes and has_project_include:
             # Reset visited set for each top-level parse
             self._visited = set()
             # Add current file to visited
@@ -3149,6 +3460,8 @@ class LibclangBackend:
                 use_default_includes,
                 max_depth,
                 project_prefixes=project_prefixes,
+                allowlist_paths=allowlist_paths,
+                denylist_paths=denylist_paths,
             )
 
         # Included headers are parsed in isolation, so a macro that a *later*
@@ -3261,7 +3574,8 @@ def _libclang_parse_hook(
     recursive_includes: bool = True,
     max_depth: int = 10,
     project_prefixes: tuple[str, ...] | None = None,
-    whitelist: list[str] | None = None,
+    allowlist: list[str] | None = None,
+    denylist: list[str] | None = None,
     context: PipelineContext | None = None,
     **kwargs: Any,
 ) -> SourceUnit | None:
@@ -3276,7 +3590,8 @@ def _libclang_parse_hook(
         recursive_includes=recursive_includes,
         max_depth=max_depth,
         project_prefixes=project_prefixes,
-        whitelist=whitelist,
+        allowlist=allowlist,
+        denylist=denylist,
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from headerkit.ir import Header, SourceUnit
+from headerkit.ir import Header, SourceUnit, strip_padding_fields
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
 
 
@@ -88,12 +88,20 @@ class BaseWriter:
     supported_layouts: ClassVar[tuple[str, ...]] = ("file",)
     supported_options: ClassVar[tuple[WriterOption, ...]] = ()
 
+    #: Whether this writer reconstructs record layout itself and therefore needs
+    #: unnamed-bitfield padding. Only the ctypes writer does; a writer that emits
+    #: C source hands layout back to the C compiler and must not gain a spurious
+    #: nameless member. The safe default is to strip padding before rendering.
+    consumes_padding_fields: ClassVar[bool] = False
+
     def write_layout(
         self,
         unit: SourceUnit | Header,
         options: ScaffoldOptions | None = None,
     ) -> ProjectLayout:
         """Convert parsed unit IR into a complete ProjectLayout."""
+        unit = self._prepare(unit)
+
         opts = options or ScaffoldOptions(target_language=self.name, layout="file")
         if opts.layout not in self.supported_layouts:
             raise ValueError(
@@ -135,6 +143,17 @@ class BaseWriter:
     ) -> ProjectLayout:
         """Generate custom layout defined by subclass."""
         return self._write_package_layout(unit, options)
+
+    def _prepare(self, unit: SourceUnit | Header) -> SourceUnit | Header:
+        """Normalize IR before rendering.
+
+        Every entry point must route through this, including a ``write``
+        override, or unnamed-bitfield padding reaches a writer that cannot
+        represent it. ``test_no_padding_leaks_into_writers`` enforces that.
+        """
+        if not self.consumes_padding_fields:
+            return strip_padding_fields(unit)
+        return unit
 
     def _render(self, unit: SourceUnit | Header) -> str:
         """Render unit to string representation. Subclasses implement this."""

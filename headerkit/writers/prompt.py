@@ -497,7 +497,7 @@ class PromptWriter(BaseWriter):
 
     def write(self, header: Header | SourceUnit) -> str:
         """Convert header IR to token-optimized string."""
-        return self._render(header)
+        return self._render(self._prepare(header))
 
 
 # Uses bottom-of-module self-registration pattern.

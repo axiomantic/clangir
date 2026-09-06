@@ -408,8 +408,10 @@ class TestCppClassSemantics:
         field_names = [f.name for f in s.fields]
         assert "a" in field_names
         assert "b" in field_names
-        # There should NOT be an empty-named bitfield field
-        assert all(f.name != "" or f.is_anonymous_transparent for f in s.fields)
+        # The padding bitfield is carried, but flagged -- never as a bare
+        # nameless member that a writer might mistake for one.
+        assert [(f.name, f.bit_width) for f in s.fields if f.is_padding] == [("", 4)]
+        assert all(f.name != "" or f.is_anonymous_transparent or f.is_padding for f in s.fields)
         anon_fields = [f for f in s.fields if f.is_anonymous_transparent]
         assert len(anon_fields) == 1
         # The transparent placeholder carries the anonymous union's own members,
@@ -425,6 +427,10 @@ class TestCppClassSemantics:
         emitted = [line.strip() for line in struct_body.splitlines() if line.strip()]
         assert "int x" in emitted
         assert "float y" in emitted
+        # The C compiler lays this record out from the original header, so the
+        # padding must not reappear as a member in emitted C-facing source.
+        declared = [line.split("#")[0].strip() for line in emitted]
+        assert declared == ["int a", "int b", "int x", "float y"]
 
     def test_macro_evaluation_and_inline_function(self) -> None:
         """Test constant macro arithmetic/bitwise expression evaluation and inline functions."""

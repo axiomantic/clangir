@@ -10,6 +10,8 @@ The IR types come from ``headerkit.ir`` and represent parsed C headers.
 
 from __future__ import annotations
 
+import ctypes
+import math
 import textwrap
 from typing import ClassVar
 
@@ -169,30 +171,188 @@ def _field_to_ctypes_tuple(f: Field) -> str:
     return f'("{f.name}", {field_type})'
 
 
+def _ctypes_scalar_bits(expr: str) -> tuple[int, int] | None:
+    """Size and alignment, in bits, of the ctypes scalar named by ``expr``.
+
+    ``expr`` is a rendered writer expression such as ``"ctypes.c_uint"``. The
+    figures come from the ctypes runtime that will lay the generated class out,
+    so this reads the answer rather than assuming an ABI. Anything that is not a
+    plain ctypes scalar -- a user struct, an array, a function pointer -- yields
+    None, which makes the running bit offset unknown.
+    """
+    if not expr.startswith("ctypes."):
+        return None
+    obj = getattr(ctypes, expr[len("ctypes.") :], None)
+    if not isinstance(obj, type):
+        return None
+    try:
+        return ctypes.sizeof(obj) * 8, ctypes.alignment(obj) * 8
+    except TypeError:
+        return None
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
+
+
+class _StructBody:
+    """Accumulates the ctypes class body for one record.
+
+    Tracks the running bit offset so that a zero-width bitfield (``int : 0;``)
+    can be turned into the explicit padding that reaches the next storage-unit
+    boundary. ctypes rejects a zero-width entry outright, so the boundary has to
+    be reached by reserving the remaining bits of the current unit instead.
+    """
+
+    def __init__(self, is_union: bool) -> None:
+        self.is_union = is_union
+        self.nested: list[str] = []
+        self.anonymous: list[str] = []
+        self.entries: list[str] = []
+        self.bit_pos: int | None = 0
+        self.pad_index = 0
+        self.padding_bits = 0
+        self.has_member = False
+
+    def _next_pad(self) -> str:
+        name = f"_pad{self.pad_index}"
+        self.pad_index += 1
+        return name
+
+    def _advance_bitfield(self, expr: str, width: int) -> None:
+        if self.is_union:
+            return
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.bit_pos is None:
+            self.bit_pos = None
+            return
+        unit = info[0]
+        if self.bit_pos % unit + width > unit:
+            self.bit_pos = _round_up(self.bit_pos, unit)
+        self.bit_pos += width
+
+    def _advance_plain(self, expr: str) -> None:
+        if self.is_union:
+            return
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.bit_pos is None:
+            self.bit_pos = None
+            return
+        size, align = info
+        self.bit_pos = _round_up(self.bit_pos, align) + size
+
+    def add_padding(self, f: Field) -> bool:
+        """Reserve the bits of an unnamed bitfield. False if it cannot be placed."""
+        expr = type_to_ctypes(f.type)
+        width = f.bit_width or 0
+        if width == 0:
+            # ``int : 0`` reserves no bits; it moves the next member to a fresh
+            # storage unit. Reaching that boundary needs the current offset.
+            info = _ctypes_scalar_bits(expr)
+            if info is None or self.bit_pos is None:
+                return False
+            unit = info[0]
+            fill = (unit - self.bit_pos % unit) % unit
+            if fill == 0:
+                return True
+            width = fill
+        self.entries.append(f'("{self._next_pad()}", {expr}, {width})')
+        self._advance_bitfield(expr, width)
+        self.padding_bits += width
+        return True
+
+    def add_anonymous(self, f: Field, index: int) -> bool:
+        """Emit a C11 transparent member as a nested class plus an _anonymous_ entry."""
+        inner = f.anonymous_struct
+        if inner is None:
+            return False
+        cls_name = f"_Anon{index}"
+        field_name = f"_anon{index}"
+        body = _record_body(inner, cls_name)
+        if body is None:
+            return False
+        self.nested.extend(body)
+        self.anonymous.append(field_name)
+        self.entries.append(f'("{field_name}", {cls_name})')
+        self.has_member = True
+        # The nested record carries its own alignment, so the offset past it is
+        # not derivable from the scalar table.
+        self.bit_pos = None
+        return True
+
+    def add_member(self, f: Field) -> None:
+        expr = type_to_ctypes(f.type)
+        self.entries.append(_field_to_ctypes_tuple(f))
+        self.has_member = True
+        if f.bit_width is not None:
+            self._advance_bitfield(expr, f.bit_width)
+        else:
+            self._advance_plain(expr)
+
+
+def _record_body(decl: Struct, class_name: str) -> list[str] | None:
+    """Render a ctypes class for ``decl``, or None when it cannot be represented."""
+    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
+
+    if not decl.fields:
+        return [f"class {class_name}({base_class}):", "    pass"]
+
+    body = _StructBody(decl.is_union)
+    for index, f in enumerate(decl.fields):
+        if f.is_padding:
+            if not body.add_padding(f):
+                return None
+        elif f.anonymous_struct is not None and f.is_anonymous_transparent:
+            if not body.add_anonymous(f, index):
+                return None
+        elif not f.name:
+            return None
+        else:
+            body.add_member(f)
+
+    if not body.entries:
+        return [f"class {class_name}({base_class}):", "    pass"]
+
+    lines = [f"class {class_name}({base_class}):"]
+
+    if not body.has_member:
+        # A record whose every entry is padding has no member to impose an
+        # alignment, so C sizes it to just the bits declared and aligns it to 1.
+        # A bitfield carrier would instead drag in its own type's alignment, so
+        # the bits are reserved as a byte array.
+        nbytes = math.ceil(body.padding_bits / 8)
+        if nbytes == 0:
+            return [f"class {class_name}({base_class}):", "    pass"]
+        lines.append("    _fields_ = [")
+        lines.append(f'        ("_pad0", ctypes.c_ubyte * {nbytes}),')
+        lines.append("    ]")
+        return lines
+
+    if decl.is_packed:
+        lines.append("    _pack_ = 1")
+
+    for nested_line in body.nested:
+        lines.append(f"    {nested_line}" if nested_line else "")
+
+    if body.anonymous:
+        joined = ", ".join(f'"{n}"' for n in body.anonymous)
+        suffix = "," if len(body.anonymous) == 1 else ""
+        lines.append(f"    _anonymous_ = ({joined}{suffix})")
+
+    lines.append("    _fields_ = [")
+    lines.extend(f"        {entry}," for entry in body.entries)
+    lines.append("    ]")
+    return lines
+
+
 def _struct_to_ctypes(decl: Struct) -> str | None:
     """Convert a Struct/Union IR node to a ctypes class definition."""
     if decl.name is None or _is_anonymous_name(decl.name):
         return None
 
-    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
-
-    if not decl.fields:
-        # Opaque type
-        return f"class {decl.name}({base_class}):\n    pass"
-
-    lines = [f"class {decl.name}({base_class}):"]
-
-    if decl.is_packed:
-        lines.append("    _pack_ = 1")
-
-    field_lines = []
-    for f in decl.fields:
-        field_lines.append(f"        {_field_to_ctypes_tuple(f)},")
-
-    lines.append("    _fields_ = [")
-    lines.extend(field_lines)
-    lines.append("    ]")
-
+    lines = _record_body(decl, decl.name)
+    if lines is None:
+        return None
     return "\n".join(lines)
 
 
@@ -413,6 +573,9 @@ class CtypesWriter(BaseWriter):
     default_output_pattern: str = "{dir}/{stem}_ctypes.py"
     default_extension: str = ".py"
     supported_layouts: ClassVar[tuple[str, ...]] = ("file", "package", "project")
+    #: This writer reconstructs record layout rather than deferring to a C
+    #: compiler, so it is the one consumer that needs the padding entries.
+    consumes_padding_fields: ClassVar[bool] = True
     supported_options: ClassVar[tuple[WriterOption, ...]] = (
         WriterOption(
             name="test_type",

@@ -626,13 +626,12 @@ class TestComplexPatternRoundtrip:
     def test_bitfield_struct(self, backend):
         code = "struct Flags { unsigned int a : 3; unsigned int b : 5; };"
         cdef = parse_and_convert(backend, code)
-        # The libclang backend does not extract bitfield widths (Field.bit_width
-        # is never populated in _convert_field), so bitfield annotations are
-        # absent from the CFFI output.
+        # cffi needs the widths: without them it declares two full-width members
+        # and the layout it computes no longer matches the C compiler's.
         assert cdef == textwrap.dedent("""\
             struct Flags {
-                unsigned int a;
-                unsigned int b;
+                unsigned int a : 3;
+                unsigned int b : 5;
             };""")
 
     def test_array_in_struct_field(self, backend):

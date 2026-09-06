@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import warnings
@@ -43,8 +44,8 @@ def _normalize_path(path: str) -> str:
 def _resolve_path(path: str, search_dirs: Sequence[str] = ()) -> str:
     """Resolve a path to an absolute, symlink-free, comparison-ready form.
 
-    Mirrors the libclang backend's whitelist resolution rule so both backends
-    agree on what a whitelist entry names: an absolute entry is used as-is, a
+    Mirrors the libclang backend's allowlist and denylist resolution rule so both backends
+    agree on what an allowlist or denylist entry names: an absolute entry is used as-is, a
     relative entry (including a bare basename) is tried against each search
     directory in order, then against the process cwd.
     """
@@ -57,8 +58,8 @@ def _resolve_path(path: str, search_dirs: Sequence[str] = ()) -> str:
     return _normalize_path(os.path.realpath(os.path.abspath(path)))
 
 
-def _whitelist_names_other_file(whitelist: Sequence[str], filename: str, include_dirs: Sequence[str] | None) -> bool:
-    """True if any whitelist entry resolves to a file other than ``filename``."""
+def _names_other_file(entries: Sequence[str], filename: str, include_dirs: Sequence[str] | None) -> bool:
+    """True if any allowlist/denylist entry resolves to a file other than ``filename``."""
     parsed_dir = os.path.dirname(os.path.abspath(filename)) or os.getcwd()
     search_dirs = [parsed_dir]
     if include_dirs:
@@ -73,7 +74,7 @@ def _whitelist_names_other_file(whitelist: Sequence[str], filename: str, include
         # basename still names the parsed file in that case.
         return not os.path.isabs(entry) and _resolve_path(os.path.join(parsed_dir, entry)) == target
 
-    return any(not names_target(entry) for entry in whitelist)
+    return any(not names_target(entry) for entry in entries)
 
 
 _HAS_TREESITTER: bool = False
@@ -103,6 +104,7 @@ except ImportError:
 
 
 _FOLDABLE_TYPE_QUALIFIERS = frozenset({"const", "volatile"})
+_SIGNEDNESS_SPECIFIERS = frozenset({"unsigned", "signed"})
 
 
 def _node_text(node: Any) -> str:
@@ -163,7 +165,12 @@ class TreeSitterBackend:
 
     def __init__(self) -> None:
         self._defined_records: set[str] = set()
-        self._forward_records: set[str] = set()
+        self._forward_records: dict[str, Struct] = {}
+        self._defined_enums: set[str] = set()
+        self._forward_enums: dict[str, Enum] = {}
+        self._seen_typedefs: set[str] = set()
+        self._lifted_declarations: list[Declaration] = []
+        self._filled_forward: Struct | None = None
 
     def is_available(self) -> bool:
         return _HAS_TREESITTER and (_HAS_TREESITTER_C or _HAS_TREESITTER_CPP)
@@ -201,34 +208,43 @@ class TreeSitterBackend:
         recursive_includes: bool = True,
         max_depth: int = 10,
         project_prefixes: tuple[str, ...] | None = None,
-        whitelist: list[str] | None = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
     ) -> Header:
         """Parse C/C++ code with tree-sitter and return the IR representation.
 
         This backend parses exactly the ``code`` string it is given. It does not
         read the filesystem and does not follow ``#include`` directives, so
         ``include_dirs``, ``recursive_includes``, ``max_depth``,
-        ``project_prefixes`` and ``whitelist`` have nothing to act on.
+        ``project_prefixes``, ``allowlist`` and ``denylist`` have nothing to act
+        on.
 
-        :param whitelist: **Not honored by this backend.** A whitelist selects
+        :param allowlist: **Not honored by this backend.** An allowlist selects
             which included files keep their declarations; since no declaration
             here can originate from an ``#include``, there is nothing to select.
             An entry naming a file other than the one being parsed raises
             :class:`UserWarning` rather than being discarded silently, because
             such a caller is expecting symbols this backend will never produce.
             Entries that all resolve to the parsed file itself are already
-            satisfied and warn nothing. Use the libclang backend when whitelist
+            satisfied and warn nothing. Use the libclang backend when allowlist
             filtering is required.
+        :param denylist: **Not honored by this backend**, for the same reason and
+            with the same warning. An entry naming another file describes a
+            declaration this backend was never going to emit, so honoring it and
+            ignoring it are indistinguishable -- which is exactly the silence the
+            warning breaks. Entries resolving to the parsed file itself warn
+            nothing, because this backend does not deny the parsed file either.
         """
-        if whitelist and _whitelist_names_other_file(whitelist, filename, include_dirs):
-            warnings.warn(
-                f"The tree-sitter backend does not follow #include directives, so the "
-                f"whitelist {whitelist!r} cannot be honored and no declarations from "
-                f"those files will appear in the result. Use the libclang backend for "
-                f"whitelist support.",
-                UserWarning,
-                stacklevel=2,
-            )
+        for label, entries in (("allowlist", allowlist), ("denylist", denylist)):
+            if entries and _names_other_file(entries, filename, include_dirs):
+                warnings.warn(
+                    f"The tree-sitter backend does not follow #include directives, so the "
+                    f"{label} {entries!r} cannot be honored and no declarations from "
+                    f"those files will appear in the result. Use the libclang backend for "
+                    f"{label} support.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         if not self.is_available():
             msg = "tree-sitter is not installed. Install with: pip install 'headerkit[treesitter]'"
             raise RuntimeError(msg)
@@ -252,14 +268,44 @@ class TreeSitterBackend:
         tree = parser.parse(code.encode("utf-8"))
 
         self._defined_records = set()
-        self._forward_records = set()
+        self._forward_records = {}
+        self._defined_enums = set()
+        self._forward_enums = {}
+        self._seen_typedefs = set()
+        self._lifted_declarations = []
+        self._filled_forward = None
 
         declarations: list[Declaration] = []
         for child in tree.root_node.children:
             decls = self._convert_top_level(child, filename, is_cpp=is_cpp)
-            declarations.extend(decls)
+            # A record synthesized for a named member of an anonymous type must
+            # precede the record that refers to it, or the reference names a tag
+            # that has not been declared yet. An enum hoisted out of a class body
+            # rides the same list and lands ahead of its class, matching libclang.
+            declarations.extend(self._lifted_declarations)
+            self._lifted_declarations = []
+            declarations.extend(d for d in decls if self._keep_typedef(d))
 
         return Header(path=filename, declarations=declarations)
+
+    def _keep_typedef(self, decl: Declaration) -> bool:
+        """Report whether a top-level declaration is a typedef not already emitted.
+
+        C++ and C11 both permit a typedef name to be redeclared with the same
+        underlying type, so a translation unit can legitimately spell
+        ``typedef int T;`` more than once. Each spelling is one declaration in
+        the tree, and emitting all of them yields a Cython ``ctypedef`` that
+        Cython reports as redeclared. libclang collapses them on a
+        ``(kind, namespace, name)`` identity; this mirrors that identity so both
+        backends agree.
+        """
+        if not isinstance(decl, Typedef):
+            return True
+        key = f"typedef:{decl.namespace or ''}:{decl.name}"
+        if key in self._seen_typedefs:
+            return False
+        self._seen_typedefs.add(key)
+        return True
 
     def _convert_top_level(
         self,
@@ -461,15 +507,30 @@ class TreeSitterBackend:
         if struct_node and struct_node.type in ("struct_specifier", "class_specifier", "union_specifier"):
             body_node = struct_node.child_by_field_name("body")
             if body_node:
-                st = self._convert_class_or_struct(struct_node, filename, namespace=namespace)
+                # A `typedef struct { ... } T;` names no tag, so the typedef
+                # alias is the only qualifier available for tags synthesized
+                # inside it.  Without it two typedefs each holding a member
+                # named `pt` would both synthesize `_pt_s`.
+                tag_qualifier = None
+                if struct_node.child_by_field_name("name") is None and declarators:
+                    tag_qualifier = self._unwrap_declarator(declarators[0], CType(""))[0]
+                st = self._convert_class_or_struct(
+                    struct_node, filename, namespace=namespace, tag_qualifier=tag_qualifier
+                )
+                # The definition may have been folded into an earlier `struct S;`
+                # that is already in the output. The alias still applies to it,
+                # but it is emitted once, not twice.
+                folded = st is None and self._filled_forward is not None
+                if folded:
+                    st = self._filled_forward
                 if st:
                     if len(declarators) == 1:
                         alias_name, _, _ = self._unwrap_declarator(declarators[0], CType(st.name or ""))
                         if alias_name:
                             st.name = alias_name
                         st.is_typedef = True
-                        return [st]
-                    results: list[Declaration] = [st]
+                        return [] if folded else [st]
+                    results: list[Declaration] = [] if folded else [st]
                     for d in declarators:
                         alias_name, underlying_type, ident_node = self._unwrap_declarator(d, CType(st.name or ""))
                         loc_node = ident_node or d
@@ -856,7 +917,10 @@ class TreeSitterBackend:
         namespace: str | None = None,
         template_params: list[str] | None = None,
         is_cpp: bool = False,
+        nested: bool = False,
+        tag_qualifier: str | None = None,
     ) -> Struct | None:
+        self._filled_forward = None
         name_node = node.child_by_field_name("name")
         name = _node_text(name_node).strip() if name_node else None
         body_node = node.child_by_field_name("body")
@@ -864,17 +928,33 @@ class TreeSitterBackend:
         is_class_keyword = node.type == "class_specifier" or any(c.type == "class" for c in node.children)
         is_union = node.type == "union_specifier" or any(c.type == "union" for c in node.children)
 
-        if name:
+        # A nested record is keyed only by its own tag, which is not unique: a
+        # global `struct view` and a class member `struct view` collide. The
+        # nested one is scoped to its parent and never reaches the top level, so
+        # it neither consults nor updates the translation-unit dedup set.
+        # Sharing it silently dropped whichever of the two was seen second.
+        #
+        # An opaque `struct S;` and its later definition are one entity, so the
+        # definition fills the forward declaration already recorded rather than
+        # adding a second `cdef struct S` that Cython reports as redeclared. This
+        # is the same upgrade-in-place the opaque enum above uses, on the same
+        # namespace-qualified key, so either declaration order collapses. A
+        # forward declaration that is never defined keeps its empty form: it is
+        # the only declaration of that tag in the unit, and it is how an opaque
+        # handle type is spelled.
+        record_key: str | None = None
+        forward_target: Struct | None = None
+        if name and not nested:
             record_kind = "union" if is_union else ("class" if is_class_keyword else "struct")
-            key = f"{record_kind}:{namespace}::{name}" if namespace else f"{record_kind}:{name}"
+            record_key = f"{record_kind}:{namespace}::{name}" if namespace else f"{record_kind}:{name}"
             if body_node is None:
-                if key in self._defined_records or key in self._forward_records:
+                if record_key in self._defined_records or record_key in self._forward_records:
                     return None
-                self._forward_records.add(key)
             else:
-                if key in self._defined_records:
+                if record_key in self._defined_records:
                     return None
-                self._defined_records.add(key)
+                self._defined_records.add(record_key)
+                forward_target = self._forward_records.pop(record_key, None)
 
         bases: list[BaseSpecifier] = []
         base_clause = None
@@ -902,6 +982,7 @@ class TreeSitterBackend:
         constructors: list[Function] = []
         destructor: Function | None = None
         inner_typedefs: dict[str, str] = {}
+        nested_records: list[Struct] = []
 
         current_access = "private" if is_class_keyword else "public"
 
@@ -952,6 +1033,52 @@ class TreeSitterBackend:
                                 methods.append(fn)
                     else:
                         f_type_node = child.child_by_field_name("type")
+
+                        # A record *defined* in the class body is a nested type,
+                        # not merely the type of the member that follows it. It
+                        # is captured whether or not a declarator follows, so
+                        # that both `struct v { ... };` and `struct v { ... } m;`
+                        # declare `v` inside the parent.
+                        if (
+                            f_type_node is not None
+                            and f_type_node.type in ("struct_specifier", "class_specifier", "union_specifier")
+                            and f_type_node.child_by_field_name("body") is not None
+                            and f_type_node.child_by_field_name("name") is not None
+                        ):
+                            inner = self._convert_class_or_struct(f_type_node, filename, is_cpp=is_cpp, nested=True)
+                            if inner is not None:
+                                nested_records.append(inner)
+
+                        # An enum defined in a class body has nowhere to live in
+                        # the record IR, so leaving it there loses every
+                        # enumerator. libclang reports such an enum as a sibling
+                        # of the class, qualified by the enclosing *namespace* --
+                        # a class scope is not a namespace. Hoist it on the same
+                        # terms. A nested record is not hoisted, so an enum
+                        # inside one is not hoisted either.
+                        if (
+                            f_type_node is not None
+                            and f_type_node.type == "enum_specifier"
+                            and f_type_node.child_by_field_name("body") is not None
+                            and not nested
+                        ):
+                            hoisted = self._convert_enum(
+                                f_type_node, filename, namespace=namespace, enclosing_record=name if is_cpp else None
+                            )
+                            if hoisted is not None:
+                                self._lifted_declarations.append(hoisted)
+
+                        anon_spec = (
+                            f_type_node
+                            if (
+                                f_type_node is not None
+                                and f_type_node.type in ("struct_specifier", "class_specifier", "union_specifier")
+                                and f_type_node.child_by_field_name("body") is not None
+                                and f_type_node.child_by_field_name("name") is None
+                            )
+                            else None
+                        )
+
                         base_type = self._qualified_type(child, f_type_node, CType("int"))
                         is_static_field = any(
                             c.type == "storage_class_specifier" and _node_text(c).strip() == "static"
@@ -984,8 +1111,62 @@ class TreeSitterBackend:
                                 ):
                                     field_decls.append(sibling)
 
+                        if anon_spec is not None:
+                            inner = self._convert_class_or_struct(anon_spec, filename, is_cpp=is_cpp, nested=True)
+                            if inner is None:
+                                continue
+                            member_name = self._unwrap_declarator(field_decls[0], base_type)[0] if field_decls else None
+                            if not member_name:
+                                # C11 6.7.2.1p13: a member with no declarator is
+                                # transparent, so its members belong to this
+                                # record.  The nested Struct rides along for the
+                                # writer to flatten.
+                                fields.append(
+                                    Field(
+                                        name="",
+                                        type=CType("void"),
+                                        access=current_access,
+                                        anonymous_struct=inner,
+                                        is_anonymous_transparent=True,
+                                    )
+                                )
+                                continue
+                            # A declared member needs a tag to refer to, and the
+                            # source supplies none.  The synthesized tag is
+                            # qualified by the enclosing record so that two
+                            # parents declaring the same member name do not
+                            # collide at the top level.
+                            inner.name = self._anonymous_tag_name(
+                                name or tag_qualifier, member_name, is_union=inner.is_union
+                            )
+                            self._lifted_declarations.append(inner)
+                            base_type = CType(f"{'union' if inner.is_union else 'struct'} {inner.name}")
+
                         for f_decl in field_decls:
                             f_name, f_type, _ = self._unwrap_declarator(f_decl, base_type)
+                            # C11 6.7.2.1p12: a bitfield with no declarator is
+                            # padding, not a member -- `unsigned : 0` aligns the
+                            # next field to a fresh storage unit and `unsigned : 3`
+                            # reserves anonymous bits.  The grammar requires a
+                            # declarator, so tree-sitter inserts a MISSING
+                            # field_identifier node; that node is what
+                            # distinguishes padding from a real member.  The Field
+                            # is kept, flagged `is_padding`, because a consumer
+                            # that reconstructs layout cannot place the following
+                            # fields without knowing these bits are spoken for.
+                            if not f_name and f_decl.is_missing:
+                                if bit_width is None:
+                                    continue
+                                fields.append(
+                                    Field(
+                                        name="",
+                                        type=f_type,
+                                        bit_width=bit_width,
+                                        access=current_access,
+                                        is_padding=True,
+                                    )
+                                )
+                                continue
                             if f_name or bit_width is not None:
                                 fields.append(
                                     Field(
@@ -999,7 +1180,7 @@ class TreeSitterBackend:
 
         is_cppclass = is_class_keyword or bool(methods) or bool(bases) or bool(constructors) or (destructor is not None)
         loc = SourceLocation(file=filename, line=node.start_point[0] + 1, column=node.start_point[1] + 1)
-        return Struct(
+        record = Struct(
             name=name,
             fields=fields,
             methods=methods,
@@ -1011,8 +1192,28 @@ class TreeSitterBackend:
             namespace=namespace,
             template_params=template_params or [],
             inner_typedefs=inner_typedefs,
+            nested_records=nested_records,
             location=loc,
         )
+
+        if forward_target is not None:
+            for slot in dataclasses.fields(Struct):
+                setattr(forward_target, slot.name, getattr(record, slot.name))
+            # The caller may still need the record -- a `typedef struct S { ... } S;`
+            # following a `struct S;` has to stamp the alias onto it -- but must
+            # not emit it a second time, so it is handed over out of band.
+            self._filled_forward = forward_target
+            return None
+        if record_key is not None and body_node is None:
+            self._forward_records[record_key] = record
+        return record
+
+    @staticmethod
+    def _anonymous_tag_name(parent: str | None, declarator: str, *, is_union: bool) -> str:
+        """Build the tag for an anonymous record named by a member declarator."""
+        suffix = "_u" if is_union else "_s"
+        qualified = f"{parent}_{declarator}" if parent else declarator
+        return f"_{qualified}{suffix}"
 
     def _find_function_declarator(self, node: Node) -> tuple[Node | None, TypeExpr | None, bool, bool, bool]:
         is_virtual = any(c.type == "virtual" for c in node.children)
@@ -1217,10 +1418,18 @@ class TreeSitterBackend:
         filename: str,
         *,
         namespace: str | None = None,
+        enclosing_record: str | None = None,
     ) -> Enum | None:
         name_node = node.child_by_field_name("name")
         name = _node_text(name_node).strip() if name_node else None
         body_node = node.child_by_field_name("body")
+
+        # The C++ grammar spells the scoping keyword as a distinct child token of
+        # ``enum_specifier``: ``enum class E`` and ``enum struct E`` carry a
+        # ``class``/``struct`` node that a plain ``enum E`` does not. Reading the
+        # child node types keeps this structural -- the same distinction taken
+        # off the source text would misread ``enum E { classic }``.
+        is_scoped = any(child.type in ("class", "struct") for child in node.children)
 
         values: list[EnumValue] = []
         if body_node:
@@ -1247,7 +1456,42 @@ class TreeSitterBackend:
                         values.append(EnumValue(name=e_name, value=val))
 
         loc = SourceLocation(file=filename, line=node.start_point[0] + 1, column=node.start_point[1] + 1)
-        return Enum(name=name, values=values, location=loc)
+        # A member enum is hoisted to the top level, which strips the record from
+        # its spelling. ``namespace`` cannot carry a record, so the full C++ name
+        # is recorded separately; without it the hoisted tag names no type.
+        cpp_name = None
+        if name and enclosing_record:
+            cpp_name = "::".join(filter(None, (namespace, enclosing_record, name)))
+        enum = Enum(
+            name=name,
+            values=values,
+            namespace=namespace,
+            location=loc,
+            is_scoped=is_scoped,
+            cpp_name=cpp_name,
+        )
+
+        # An opaque `enum E : int;` and its later definition are one entity. Emitting
+        # both yields two `cdef enum E` blocks that Cython reports as redeclared, so
+        # the definition fills in the forward declaration already emitted rather than
+        # adding a second. A lone opaque enum keeps its valueless form: it is the only
+        # declaration of that type in the unit and dropping it would lose the tag.
+        if name is None:
+            return enum
+        key = f"enum:{cpp_name}" if cpp_name else (f"enum:{namespace}::{name}" if namespace else f"enum:{name}")
+        if body_node is None:
+            if key in self._defined_enums or key in self._forward_enums:
+                return None
+            self._forward_enums[key] = enum
+            return enum
+        if key in self._defined_enums:
+            return None
+        self._defined_enums.add(key)
+        forward = self._forward_enums.pop(key, None)
+        if forward is not None:
+            forward.values = values
+            return None
+        return enum
 
     def _parse_type_expr(self, node: Node | None) -> TypeExpr:
         if node is None:
@@ -1293,12 +1537,21 @@ class TreeSitterBackend:
         name_parts: list[str] = []
 
         for token in tokens:
-            if token in {"const", "volatile", "unsigned", "signed"}:
+            if token in _FOLDABLE_TYPE_QUALIFIERS or token in _SIGNEDNESS_SPECIFIERS:
                 quals.append(token)
             elif token not in ("struct", "enum", "class", "union"):
                 name_parts.append(token)
 
-        type_name = " ".join(name_parts) if name_parts else text
+        if name_parts:
+            type_name = " ".join(name_parts)
+        elif quals and quals[-1] in _SIGNEDNESS_SPECIFIERS:
+            # C11 6.7.2p2: `unsigned` and `signed` standing alone name the
+            # implicit `int` base type.  Reusing `text` here would repeat the
+            # specifier, which already appears in `quals`, and render as
+            # `unsigned unsigned`.
+            type_name = "int"
+        else:
+            type_name = text
         return CType(name=type_name, qualifiers=quals)
 
 

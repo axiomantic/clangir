@@ -452,7 +452,7 @@ class TestBitfield:
             cdef extern from "test.h":
 
                 cdef struct Flags:
-                    unsigned int active  # bitfield: 1 bits
+                    unsigned int active  # bitfield: 1 bit
                     unsigned int mode  # bitfield: 3 bits
                     int normal
             """)
@@ -1222,8 +1222,9 @@ class TestNamespaceStrippingTermination:
     def test_dependent_name_converges(self, monkeypatch) -> None:
         """A dependent name reaches a fixpoint in a bounded number of passes."""
         writer, calls = self._bounded_writer(monkeypatch)
+        writer._template_members["remove_reference"] = {"type"}
         result = writer._format_ctype(CType("typename types::remove_reference<T>::type"))
-        assert result == "typename remove_reference[T]::type"
+        assert result == "remove_reference[T].type"
         assert calls[0] <= self.MAX_PASSES
 
     def test_nested_dependent_name_converges(self, monkeypatch) -> None:
@@ -1247,9 +1248,10 @@ class TestNamespaceStrippingTermination:
     def test_dependent_name_in_full_header_write(self, monkeypatch) -> None:
         """A dependent name reached through a full write does not spin."""
         writer, calls = self._bounded_writer(monkeypatch)
+        writer._template_members["remove_reference"] = {"type"}
         writer.header = Header(
             "test.h",
             [Function("fn", CType("void"), [Parameter("v", CType("types::remove_reference<T>::type"))])],
         )
-        assert "remove_reference[T]::type v" in writer.write()
+        assert "remove_reference[T].type v" in writer.write()
         assert calls[0] <= self.MAX_PASSES

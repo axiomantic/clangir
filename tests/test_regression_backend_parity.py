@@ -11,11 +11,16 @@ R5  Tag-less ``typedef enum`` must reach Cython as ``ctypedef enum`` and reach t
     cffi writer without an invented tag.
 R6  A C tag colliding with a Cython keyword must carry its ``"cname"`` on
     *forward* declarations, not only on definitions.
-R7  ``LibclangBackend.parse(whitelist=...)`` retains declarations from included
-    files, by resolved-path match rather than substring match.
+R7  ``LibclangBackend.parse``'s filtering (``allowlist`` / ``denylist``) narrows
+    the merged result in *both* ``recursive_includes`` modes, deny wins over
+    allow, and matching is by whole resolved path rather than by substring.
+R10 A free function's ``Owner<int>::type`` must not decay to the bare member name
+    ``type``, and a C++11 ``using`` alias must be captured like a ``typedef``.
 R9  The tree-sitter backend must not drop ``const``/``volatile`` from any
     declaration position, and must not fold a *trailing* C++ qualifier into a
     return type.
+R12 libclang must keep an enum tag that is declared but never defined, matching
+    how it already keeps an undefined ``struct`` tag.
 
 Cross-backend parity is the last section and is the highest-value part: both
 backends feed the same Cython writer, so a divergence between them is a defect in
@@ -25,17 +30,21 @@ they stay visible instead of being silently tolerated.
 
 from __future__ import annotations
 
+import ctypes
 import os
 import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import textwrap
 from pathlib import Path
 
 import pytest
 
 from headerkit.backends import get_backend, is_backend_available
+from headerkit.ir import Enum
+from headerkit.writers import get_writer
 from headerkit.writers.cffi import header_to_cffi
 from headerkit.writers.cython import write_pxd
 
@@ -349,13 +358,13 @@ class TestR6KeywordEscapeOnForwardDeclarations:
 
 
 # ---------------------------------------------------------------------------
-# R7 -- whitelisted symbols from included headers
+# R7 -- allowlisted symbols from included headers
 # ---------------------------------------------------------------------------
 
 
 @libclang
-class TestR7IncludeWhitelist:
-    """``parse(whitelist=...)`` keeps declarations that arrive through ``#include``."""
+class TestR7IncludeAllowlist:
+    """``parse(allowlist=...)`` keeps declarations that arrive through ``#include``."""
 
     @staticmethod
     def _fixture(tmp_path: Path) -> tuple[Path, str]:
@@ -376,19 +385,33 @@ class TestR7IncludeWhitelist:
                 int widget_size(Widget* x)
         """)
 
-    def test_without_whitelist_included_declarations_are_dropped(self, tmp_path: Path) -> None:
-        """The negative direction, and the one that proves the fix stayed additive.
+    @staticmethod
+    def _empty(main: Path) -> str:
+        return f'cdef extern from "{main}":\n    pass\n'
 
-        Without this case a fix that simply disabled the include filter altogether
-        would pass every other test in this class.
+    def test_recursion_merges_includes_and_an_allowlist_narrows_that(self, tmp_path: Path) -> None:
+        """An allowlist narrows the merged result even with traversal on.
+
+        ``recursive_includes`` defaults to True and merges every non-system
+        included header.  The allowlist filters that merge, not only the main
+        translation unit, so naming ``other.h`` keeps it, naming something that
+        is not included keeps nothing, and naming nothing at all keeps
+        everything.
+
+        Asserting all three spellings together is what keeps this honest: a
+        filter that admitted everything, and a filter that admitted nothing,
+        each break exactly one of the three.
         """
         main, source = self._fixture(tmp_path)
-        result = write_pxd(get_backend("libclang").parse(source, str(main)))
-        assert result == f'cdef extern from "{main}":\n    pass\n'
+        parse = get_backend("libclang").parse
+
+        assert write_pxd(parse(source, str(main))) == self._expected(main)
+        assert write_pxd(parse(source, str(main), allowlist=["other.h"])) == self._expected(main)
+        assert write_pxd(parse(source, str(main), allowlist=["no_such_file.h"])) == self._empty(main)
 
     @pytest.mark.parametrize("style", ["basename", "absolute", "dotdot", "symlink"])
-    def test_whitelist_entry_resolution(self, tmp_path: Path, style: str) -> None:
-        """A whitelist entry is resolved to an absolute, symlink-free path before matching.
+    def test_allowlist_entry_resolution(self, tmp_path: Path, style: str) -> None:
+        """An allowlist entry is resolved to an absolute, symlink-free path before matching.
 
         A bare basename resolves against the parsed file's own directory, which is
         the common case; ``..`` segments and symlinks must normalize away rather
@@ -405,26 +428,137 @@ class TestR7IncludeWhitelist:
             os.symlink(tmp_path, link)
             entry = str(link / "other.h")
 
-        result = write_pxd(get_backend("libclang").parse(source, str(main), whitelist=[entry]))
+        # recursive_includes=False, so traversal cannot supply other.h behind a
+        # broken resolution and make this pass for the wrong reason.
+        result = write_pxd(
+            get_backend("libclang").parse(source, str(main), recursive_includes=False, allowlist=[entry])
+        )
         assert result == self._expected(main)
 
-    def test_whitelist_match_is_not_a_substring_test(self, tmp_path: Path) -> None:
-        """``oo.h`` must not match ``foo.h``.
+    def test_allowlist_match_is_not_a_substring_test(self, tmp_path: Path) -> None:
+        """``er.h`` must not match ``other.h``.
 
         The pre-fix filter compared unnormalized substrings, so any suffix of a real
-        path silently whitelisted it. Matching is a whole-path comparison.
+        path silently allowed it. Matching is a whole-path comparison.
+
+        Recursion is off so that neither direction can be satisfied by traversal.
+        Both directions are asserted in one test so that neither a filter that
+        matches nothing nor one that matches everything can satisfy it.
         """
         main, source = self._fixture(tmp_path)
-        result = write_pxd(get_backend("libclang").parse(source, str(main), whitelist=["er.h"]))
-        assert result == f'cdef extern from "{main}":\n    pass\n'
+        parse = get_backend("libclang").parse
 
-    def test_whitelisted_record_referenced_before_definition_is_forward_declared(self, tmp_path: Path) -> None:
+        no_match = write_pxd(parse(source, str(main), recursive_includes=False, allowlist=["er.h"]))
+        assert no_match == self._empty(main)
+
+        exact = write_pxd(parse(source, str(main), recursive_includes=False, allowlist=["other.h"]))
+        assert exact == self._expected(main)
+
+    @pytest.mark.parametrize(
+        ("recursive", "allowlist", "keeps_included"),
+        [
+            # An allowlist narrows in both traversal modes.  Before this was
+            # fixed, the three recursive rows all kept the include.
+            (True, None, True),
+            (True, ["other.h"], True),
+            (True, ["no_such_file.h"], False),
+            (False, None, False),
+            (False, ["other.h"], True),
+            (False, ["no_such_file.h"], False),
+        ],
+    )
+    def test_recursive_includes_x_allowlist_matrix(
+        self, tmp_path: Path, recursive: bool, allowlist: list[str] | None, keeps_included: bool
+    ) -> None:
+        """Pin the full ``recursive_includes`` x ``allowlist`` matrix.
+
+        The two arguments answer different questions -- whether to descend into an
+        included header, and which files may contribute declarations -- so every
+        cell has to be stated; no cell follows from another.  The ``None`` rows
+        are what distinguish "the allowlist narrows" from "traversal is off".
+        """
+        main, source = self._fixture(tmp_path)
+        result = write_pxd(
+            get_backend("libclang").parse(source, str(main), recursive_includes=recursive, allowlist=allowlist)
+        )
+        assert result == (self._expected(main) if keeps_included else self._empty(main))
+
+    def test_deny_wins_over_allow_when_both_name_the_same_file(self, tmp_path: Path) -> None:
+        """A file named by both lists is excluded.
+
+        Stated as its own test because the precedence is the part of this API most
+        likely to be inverted by a later change, and because neither single-list
+        test can observe it.  The allow-only spelling is asserted alongside so the
+        test cannot pass by a denylist that is simply ignored, nor by an allowlist
+        that never admits anything.
+        """
+        main, source = self._fixture(tmp_path)
+        parse = get_backend("libclang").parse
+
+        assert write_pxd(parse(source, str(main), allowlist=["other.h"])) == self._expected(main)
+        assert write_pxd(parse(source, str(main), allowlist=["other.h"], denylist=["other.h"])) == self._empty(main)
+
+    def test_denylist_without_an_allowlist_means_everything_except_these(self, tmp_path: Path) -> None:
+        """A denylist alone subtracts from the full merged result.
+
+        The unfiltered spelling is asserted first: without it, a denylist that
+        excluded everything would look identical to one that excluded the right
+        file.
+        """
+        main, source = self._fixture(tmp_path)
+        parse = get_backend("libclang").parse
+
+        assert write_pxd(parse(source, str(main))) == self._expected(main)
+        assert write_pxd(parse(source, str(main), denylist=["other.h"])) == self._empty(main)
+        assert write_pxd(parse(source, str(main), denylist=["no_such_file.h"])) == self._expected(main)
+
+    def test_the_main_file_cannot_be_denied(self, tmp_path: Path) -> None:
+        """Denying the parsed file itself does not empty the result.
+
+        A denylist governs included files.  Honoring it for the main file would
+        return an empty header for the file the caller explicitly asked to parse,
+        with nothing in the result to say why -- a silent failure indistinguishable
+        from a successful parse of an empty header.  The included header in the
+        same denylist *is* excluded, which proves the list is being read at all.
+        """
+        (tmp_path / "other.h").write_text("int widget_size(int x);\n")
+        main = tmp_path / "main.h"
+        main.write_text('#include "other.h"\nint main_fn(void);\n')
+
+        result = write_pxd(get_backend("libclang").parse(main.read_text(), str(main), denylist=[str(main), "other.h"]))
+        assert result == textwrap.dedent(f"""\
+            cdef extern from "{main}":
+
+                int main_fn()
+        """)
+
+    @pytest.mark.parametrize("key", ["allowlist", "denylist"])
+    def test_glob_entries_match_by_resolved_path(self, tmp_path: Path, key: str) -> None:
+        """A ``*`` entry is an fnmatch pattern over resolved paths, on both lists.
+
+        The non-matching pattern is asserted in the same test so a glob
+        implementation that matched everything -- or one that silently matched
+        nothing -- fails one of the two halves.  ``o*.h`` and ``z*.h`` differ only
+        in whether they can name ``other.h``.
+        """
+        main, source = self._fixture(tmp_path)
+        parse = get_backend("libclang").parse
+        on_match, on_miss = (self._expected(main), self._empty(main))
+        if key == "denylist":
+            on_match, on_miss = on_miss, on_match
+
+        assert write_pxd(parse(source, str(main), **{key: ["o*.h"]})) == on_match
+        assert write_pxd(parse(source, str(main), **{key: ["z*.h"]})) == on_miss
+
+    def test_allowlisted_record_referenced_before_definition_is_forward_declared(self, tmp_path: Path) -> None:
         """A record used above its own definition still needs a forward declaration."""
         (tmp_path / "other.h").write_text("int widget_size(struct Widget *x);\nstruct Widget { int w; };\n")
         main = tmp_path / "main.h"
         main.write_text('#include "other.h"\n')
 
-        result = write_pxd(get_backend("libclang").parse(main.read_text(), str(main), whitelist=["other.h"]))
+        result = write_pxd(
+            get_backend("libclang").parse(main.read_text(), str(main), recursive_includes=False, allowlist=["other.h"])
+        )
         assert result == textwrap.dedent(f"""\
             cdef extern from "{main}":
 
@@ -435,6 +569,140 @@ class TestR7IncludeWhitelist:
                 cdef struct Widget:
                     int w
         """)
+
+
+# ---------------------------------------------------------------------------
+# R10 -- dependent member aliases in free-function signatures
+# ---------------------------------------------------------------------------
+
+
+_DEPENDENT_HEADER = textwrap.dedent("""\
+    #pragma once
+    namespace types {
+    template <typename T> struct remove_reference { typedef T type; };
+    template <typename T> struct remove_reference<T&> { typedef T type; };
+    template <typename T> struct add_pointer { using type = T*; };
+    }
+
+    inline types::remove_reference<int>::type dep_result(int x) { return x * 3; }
+    inline int dep_param(types::remove_reference<int>::type x) { return x + 7; }
+    inline types::add_pointer<int>::type using_result(int* p) { return p; }
+""")
+
+
+@libclang
+class TestR10DependentMemberAliases:
+    """``Owner<int>::type`` in a free function's signature must not decay to ``type``.
+
+    libclang reports the declaration cursor of a nested alias with its *bare*
+    member spelling, so reading ``decl.spelling`` yields ``"type"`` -- an
+    identifier that names nothing at the output's top level.  Class-template
+    *methods* were fixed earlier and escape this because they arrive as a
+    different ``TypeKind`` carrying the full spelling; free functions did not.
+
+    For a concrete instantiation the canonical type is exact, so it is emitted
+    instead: ``types::remove_reference<int>::type`` is ``int``.
+    """
+
+    @staticmethod
+    def _parse(tmp_path: Path) -> str:
+        header = tmp_path / "dep.hpp"
+        header.write_text(_DEPENDENT_HEADER)
+        result = write_pxd(get_backend("libclang").parse(_DEPENDENT_HEADER, str(header), extra_args=["-std=c++17"]))
+        return result.replace(str(header), "dep.hpp")
+
+    def test_dependent_return_and_parameter_types_resolve(self, tmp_path: Path) -> None:
+        """Both signature positions lose the owner, so both are pinned.
+
+        The bare name ``type`` is what the defect emitted in each of the three
+        declarations below.
+        """
+        pxd = self._parse(tmp_path)
+        assert "    int dep_result(int x)" in pxd
+        assert "    int dep_param(int x)" in pxd
+        assert "    int* using_result(int* p)" in pxd
+        assert " type " not in pxd.split("namespace")[0]
+
+    def test_using_alias_is_captured_like_a_typedef(self, tmp_path: Path) -> None:
+        """C++11 ``using type = T*;`` is a ``TYPE_ALIAS_DECL``, not a ``TYPEDEF_DECL``.
+
+        Matching only the latter silently dropped every ``using`` alias from
+        ``inner_typedefs``, which is why ``add_pointer`` emitted an empty body.
+        """
+        header = tmp_path / "dep.hpp"
+        header.write_text(_DEPENDENT_HEADER)
+        parsed = get_backend("libclang").parse(_DEPENDENT_HEADER, str(header), extra_args=["-std=c++17"])
+        by_name = {d.name: d for d in parsed.declarations}
+        assert by_name["add_pointer"].inner_typedefs == {"type": "T *"}
+        assert by_name["remove_reference"].inner_typedefs == {"type": "T"}
+
+    def test_generated_declarations_compile_link_and_execute(self, tmp_path: Path) -> None:
+        """The end-to-end proof, because a cythonize-only check gives false passes here.
+
+        Cython elides an unused ``cdef`` variable, so a translation unit that never
+        calls the declarations can compile while the declarations themselves are
+        unusable.  This one links a real extension module and calls all three
+        functions, asserting the values C++ actually computed.
+        """
+        pytest.importorskip("Cython", reason="Cython is required to verify generated C++")
+        compiler = shutil.which("clang++") or shutil.which("g++")
+        if compiler is None:
+            pytest.skip("no C++ compiler (clang++/g++) on PATH")
+
+        (tmp_path / "dep.hpp").write_text(_DEPENDENT_HEADER)
+        (tmp_path / "defs.pxd").write_text(self._parse(tmp_path))
+        (tmp_path / "mod.pyx").write_text(
+            textwrap.dedent("""\
+            # distutils: language = c++
+            from defs cimport dep_result, dep_param, using_result
+
+            def call_all():
+                cdef int cell = 41
+                cdef int r = dep_result(5)
+                cdef int p = dep_param(10)
+                cdef int* q = using_result(&cell)
+                return (r, p, q[0])
+        """)
+        )
+
+        cython = subprocess.run(
+            [sys.executable, "-m", "cython", "-3", "--cplus", "mod.pyx", "-o", "mod.cpp"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cython.returncode == 0, f"cython failed:\n{cython.stdout}\n{cython.stderr}"
+
+        build = subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-shared",
+                "-undefined",
+                "dynamic_lookup",
+                f"-I{sysconfig.get_paths()['include']}",
+                f"-I{tmp_path}",
+                "mod.cpp",
+                "-o",
+                "mod.so",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert build.returncode == 0, f"compile/link failed:\n{build.stdout}\n{build.stderr}"
+
+        run = subprocess.run(
+            [sys.executable, "-c", "import mod; print(mod.call_all())"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert run.returncode == 0, f"import/call failed:\n{run.stdout}\n{run.stderr}"
+        assert run.stdout.strip() == "(15, 17, 41)"
 
 
 # ---------------------------------------------------------------------------
@@ -610,15 +878,52 @@ PARITY_CASES = [
             "spelling. Both are valid Cython; cosmetic only."
         ),
     ),
-    pytest.param(
-        "struct F { unsigned a : 3; unsigned b : 5; };",
-        id="bitfield",
-        marks=_xfail(
-            "DEFECT (libclang): bit widths are lost, so the bitfield comment the tree-sitter "
-            "path emits is absent and the fields render as plain 'unsigned int'."
-        ),
-    ),
+    pytest.param("struct F { unsigned a : 3; unsigned b : 5; };", id="bitfield"),
+    pytest.param("struct M { int a; unsigned lo : 4; char c; };", id="bitfield_mixed"),
+    pytest.param("struct T { int x; struct { unsigned lo : 4; unsigned hi : 4; }; };", id="bitfield_anon_member"),
+    # An unnamed bitfield is pure padding with no name to bind, so neither
+    # backend may emit a field for it -- and a zero-width one, which only forces
+    # the next field to a fresh storage unit, must not become a field either.
+    pytest.param("struct P { unsigned a : 3; unsigned : 0; unsigned b : 5; };", id="bitfield_zero_width_reset"),
+    pytest.param("struct Q { unsigned a : 3; unsigned : 3; unsigned b : 5; };", id="bitfield_unnamed_padding"),
+    pytest.param("struct R { unsigned : 0; unsigned : 3; };", id="bitfield_only_unnamed"),
+    # -- redundant re-declarations must collapse to exactly one declaration ----
+    pytest.param("typedef int T; typedef int T;", id="duplicate_typedef_collapse"),
+    pytest.param("struct S;\nstruct S { int a; };", id="struct_forward_then_definition"),
+    pytest.param("union U;\nunion U { int i; float f; };", id="union_forward_then_definition"),
+    # -- a tag declared but never defined is the only mention of that type ----
+    pytest.param("enum E;", id="lone_opaque_enum"),
+    pytest.param("enum E;\nvoid use(enum E *p);", id="lone_opaque_enum_used"),
+    pytest.param("enum E;\nenum E { A, B };", id="enum_forward_then_definition"),
+    pytest.param("enum E { A, B };\nenum E;", id="enum_definition_then_forward"),
+    # -- member and anonymous aggregates -------------------------------------
+    pytest.param("struct S { enum E { A }; };", id="struct_member_enum_hoisting"),
+    pytest.param("struct s { int tag; union { int a; float b; }; };", id="anonymous_union_member"),
+    pytest.param("struct s { struct { int x; int y; } p; };", id="anonymous_struct_member"),
+    pytest.param("extern unsigned u;", id="extern_unsigned"),
 ]
+
+
+# These rows pass ``-std=c++17`` explicitly. A bare ``.hpp`` now also selects C++
+# in the libclang backend, which is what clang's own driver does; the flag keeps
+# the rows independent of that inference and exercises the supported entry point.
+CPP_PARITY_CASES = [
+    pytest.param("class C { public: enum E { A, B }; };", id="class_member_enum_hoisting"),
+    pytest.param("struct S { enum E { A }; };", id="cpp_struct_member_enum_hoisting"),
+    # C++ requires a fixed underlying type before an enum tag may be forward-declared.
+    pytest.param("enum E : int;", id="cpp_lone_opaque_enum"),
+]
+
+
+@pytest.mark.skipif(
+    not (is_backend_available("libclang") and is_backend_available("tree-sitter")),
+    reason="cross-backend parity needs both the libclang and tree-sitter backends",
+)
+@pytest.mark.parametrize("source", CPP_PARITY_CASES)
+def test_backends_agree_on_cpp_cython_output(source: str) -> None:
+    """C++ sources must reach identical Cython output from both backends."""
+    args = ["-std=c++17"]
+    assert _pxd("libclang", source, "test.hpp", args) == _pxd("tree-sitter", source, "test.hpp", args)
 
 
 @pytest.mark.skipif(
@@ -635,3 +940,401 @@ def test_backends_agree_on_cython_output(source: str) -> None:
     asymmetry introduced on either side surfaces here.
     """
     assert _pxd("libclang", source) == _pxd("tree-sitter", source)
+
+
+# ---------------------------------------------------------------------------
+# R11 -- libclang must carry bitfield widths into the IR
+# ---------------------------------------------------------------------------
+
+
+@libclang
+class TestR11BitfieldWidthEndToEnd:
+    """A width dropped by the backend silently changes what generated bindings do.
+
+    The Cython path cannot show this: ``cdef extern`` re-uses the real C header,
+    so the width never reaches the compiler and a compile check would pass either
+    way. The ctypes path is where the loss becomes executable behaviour -- the
+    writer emits ``("name", type)`` instead of ``("name", type, width)`` -- so the
+    proof below builds the generated bindings and runs them against layout ground
+    truth taken from a real C compiler.
+    """
+
+    SOURCE = "struct bits { unsigned int lo : 4; unsigned int hi : 4; int plain; };"
+
+    @staticmethod
+    def _ctypes_namespace(source: str) -> dict[str, object]:
+        """Generate ctypes bindings with the libclang backend and execute them."""
+        unit = get_backend("libclang").parse(source, "test.h")
+        code = get_writer("ctypes").write(unit)
+        namespace: dict[str, object] = {}
+        exec(compile(code, "generated_ctypes.py", "exec"), namespace)  # noqa: S102
+        return namespace
+
+    def test_generated_ctypes_struct_packs_bitfields(self) -> None:
+        """Reading back an over-wide value proves the field is bound at width 4.
+
+        ``lo = 0x15`` is 21. A 4-bit field keeps only the low nibble and yields 5;
+        a full ``c_uint`` -- what the missing width produced -- yields 21. The
+        neighbouring ``hi`` is checked in the same instance so that a width applied
+        to the wrong member cannot pass.
+        """
+        namespace = self._ctypes_namespace(self.SOURCE)
+        bits = namespace["bits"]
+
+        instance = bits()  # type: ignore[operator]
+        instance.lo = 0x15
+        instance.hi = 9
+        instance.plain = -77
+
+        assert (instance.lo, instance.hi, instance.plain) == (5, 9, -77)
+
+    def test_generated_ctypes_layout_matches_the_c_compiler(self) -> None:
+        """``sizeof`` distinguishes packed bitfields from separate ``unsigned int`` members.
+
+        Without the widths the struct is three 4-byte members (12 bytes); with them
+        ``lo`` and ``hi`` share one storage unit (8 bytes). The expected value is
+        not hard-coded -- it is measured by compiling and running the equivalent C.
+        """
+        compiler = _require_c_toolchain()
+        namespace = self._ctypes_namespace(self.SOURCE)
+        generated_size = ctypes.sizeof(namespace["bits"])  # type: ignore[arg-type]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+            (workdir / "probe.c").write_text(
+                textwrap.dedent(f"""\
+                #include <stdio.h>
+                {self.SOURCE}
+                int main(void) {{ printf("%zu", sizeof(struct bits)); return 0; }}
+                """)
+            )
+            build = subprocess.run(
+                [compiler, "probe.c", "-o", "probe"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert build.returncode == 0, f"probe failed to build:\n{build.stderr}"
+            run = subprocess.run([str(workdir / "probe")], capture_output=True, text=True, check=False)
+            assert run.returncode == 0, f"probe failed to run:\n{run.stderr}"
+            c_size = int(run.stdout.strip())
+
+        assert generated_size == c_size
+
+    def test_padding_bitfield_reaches_the_ctypes_writer_as_reserved_bits(self) -> None:
+        """Padding must survive into ctypes, because ctypes rebuilds the layout itself.
+
+        Dropping it was not a cosmetic simplification: without the ``: 0`` the
+        writer placed ``b`` in the first storage unit, so the generated class had
+        a different ``sizeof`` and a different bit position than C, and nothing
+        raised. The reserved bits appear under a generated ``_pad`` name -- never
+        as a nameless entry, which ctypes does reject.
+        """
+        namespace = self._ctypes_namespace("struct z { unsigned a : 3; unsigned : 0; unsigned b : 5; };")
+        z = namespace["z"]
+
+        names = [entry[0] for entry in z._fields_]  # type: ignore[union-attr]
+        assert names == ["a", "_pad0", "b"]
+        assert ctypes.sizeof(z) == 2 * ctypes.sizeof(ctypes.c_uint)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# R12 -- libclang must keep an enum tag that is never defined
+# ---------------------------------------------------------------------------
+
+
+@libclang
+class TestR12LoneOpaqueEnum:
+    """A forward-declared enum that is never defined is the only mention of that type.
+
+    libclang returned early on every non-definition enum cursor, so an
+    ``enum E;`` with no matching definition vanished. The type did not merely
+    lose its values -- it lost its declaration, and any function using
+    ``enum E *`` rendered as ``E* p`` against an undeclared ``E``. Cython rejects
+    that outright, so the defect is a hard failure rather than a cosmetic one.
+
+    The opaque *record* path never had this bug: ``struct S;`` already survived as
+    ``cdef struct S``. Enums were the inconsistent case.
+    """
+
+    OPAQUE = "enum E;\nvoid use(enum E *p);"
+
+    @staticmethod
+    def _enums(source: str) -> list[Enum]:
+        unit = get_backend("libclang").parse(source, "test.h")
+        return [d for d in unit.declarations if isinstance(d, Enum)]
+
+    def test_undefined_enum_tag_survives_into_the_ir(self) -> None:
+        """The declaration reaches the IR with no values, where other writers can use it."""
+        enums = self._enums(self.OPAQUE)
+
+        assert [(e.name, e.values, e.is_typedef) for e in enums] == [("E", [], False)]
+
+    def test_undefined_enum_tag_is_declared_in_the_pxd(self) -> None:
+        """Without the declaration the emitted ``E*`` references an undeclared type."""
+        output = _pxd("libclang", self.OPAQUE)
+
+        assert "cdef enum E:" in output
+        assert "void use(E* p)" in output
+
+    def test_forward_then_definition_still_collapses_to_one_declaration(self) -> None:
+        """Negative control: the pre-existing collapse must not regress.
+
+        A definition anywhere in the translation unit makes the forward
+        declaration redundant, so exactly one ``Enum`` carrying the values is
+        emitted -- not a valueless declaration followed by a populated one.
+        """
+        enums = self._enums("enum E;\nenum E { A, B };")
+
+        assert [(e.name, [v.name for v in e.values]) for e in enums] == [("E", ["A", "B"])]
+
+    def test_definition_then_forward_still_collapses_to_one_declaration(self) -> None:
+        """Negative control, reversed order: a trailing re-declaration adds nothing."""
+        enums = self._enums("enum E { A, B };\nenum E;")
+
+        assert [(e.name, [v.name for v in e.values]) for e in enums] == [("E", ["A", "B"])]
+
+    def test_repeated_opaque_declaration_is_emitted_once(self) -> None:
+        """Two identical forward declarations must not produce two ``cdef enum`` blocks."""
+        enums = self._enums("enum E;\nenum E;")
+
+        assert [e.name for e in enums] == ["E"]
+
+    def test_opaque_enum_handle_compiles_links_and_executes(self) -> None:
+        """The end-to-end proof, because cythonize-only gives a false pass here.
+
+        An opaque enum is usable only through a pointer, so the probe obtains one
+        from C and reads it back. The expected value is derived from the C
+        definition -- ``B`` is 9 and ``use`` adds 100 -- so a binding that resolved
+        to the wrong symbol, or that read the wrong storage, yields something other
+        than 109 rather than merely failing to build.
+        """
+        compiler = _require_c_toolchain()
+        header = textwrap.dedent("""\
+            #ifndef T_H
+            #define T_H
+            enum E;
+            enum E *make(void);
+            int use(enum E *p);
+            #endif
+            """)
+        pxd = _pxd("libclang", header)
+        assert "cdef enum E:" in pxd, f"backend dropped the opaque tag:\n{pxd}"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+            (workdir / "impl.c").write_text(
+                textwrap.dedent("""\
+                #include "test.h"
+                enum E { A = 7, B = 9 };
+                static enum E storage = B;
+                enum E *make(void) { return &storage; }
+                int use(enum E *p) { return (int)(*p) + 100; }
+                """)
+            )
+            pyx = textwrap.dedent("""\
+                cimport defs
+                def call_it():
+                    cdef defs.E* p = defs.make()
+                    return defs.use(p)
+                """)
+            _cythonize(workdir, header, pxd, pyx)
+
+            assert _compile_c(workdir, compiler).returncode == 0
+            impl = subprocess.run(
+                [compiler, "-fPIC", "-c", "impl.c", f"-I{workdir}", "-o", "impl.o"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert impl.returncode == 0, f"impl.c failed to build:\n{impl.stderr}"
+
+            link_flags = ["-shared"] if sys.platform != "darwin" else ["-bundle", "-undefined", "dynamic_lookup"]
+            link = subprocess.run(
+                [compiler, *link_flags, "mod.o", "impl.o", "-o", "mod.so"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert link.returncode == 0, f"link failed:\n{link.stderr}"
+
+            run = subprocess.run(
+                [sys.executable, "-c", "import mod; print(mod.call_it())"],
+                cwd=workdir,
+                env={**os.environ, "PYTHONPATH": str(workdir)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert run.returncode == 0, f"import/call failed:\n{run.stdout}\n{run.stderr}"
+
+        assert run.stdout.strip() == "109"
+
+
+# ---------------------------------------------------------------------------
+# R13 -- unnamed bitfield padding must reach the ctypes writer
+# ---------------------------------------------------------------------------
+
+
+#: Padding-bearing records, each paired with the members whose position is
+#: observable. Every expected figure below is measured from a compiled C probe;
+#: nothing here pins what the current writer happens to emit.
+_PADDING_CORPUS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("c1_zw", "struct c1_zw { unsigned int a : 3; unsigned int : 0; unsigned int b : 5; };", ("a", "b")),
+    ("c2_anon", "struct c2_anon { unsigned int a : 3; unsigned int : 3; unsigned int b : 5; };", ("a", "b")),
+    ("c3_start", "struct c3_start { unsigned int : 4; unsigned int a : 3; };", ("a",)),
+    ("c4_end", "struct c4_end { unsigned int a : 3; unsigned int : 4; };", ("a",)),
+    (
+        "c5_consec",
+        "struct c5_consec { unsigned int a : 3; unsigned int : 2; unsigned int : 3; unsigned int b : 5; };",
+        ("a", "b"),
+    ),
+    ("c6_onlypad", "struct c6_onlypad { unsigned int : 8; };", ()),
+    (
+        "c7_zwboundary",
+        "struct c7_zwboundary { unsigned int a : 32; unsigned int : 0; unsigned int b : 5; };",
+        ("a", "b"),
+    ),
+    ("c8_nopad", "struct c8_nopad { unsigned int a : 3; unsigned int b : 5; };", ("a", "b")),
+    (
+        "c9_mixed",
+        "struct c9_mixed { unsigned int a : 3; unsigned int : 5; unsigned int b : 8; unsigned int c; };",
+        ("a", "b", "c"),
+    ),
+    (
+        "c10_wide",
+        "struct c10_wide { unsigned int a : 1; unsigned int : 20; unsigned int b : 11; unsigned int d : 4; };",
+        ("a", "b", "d"),
+    ),
+    (
+        "c11_anonmem",
+        "struct c11_anonmem { unsigned int top : 2; "
+        "struct { unsigned int x : 3; unsigned int : 4; unsigned int y : 5; }; };",
+        ("top", "x", "y"),
+    ),
+)
+
+_PADDING_SOURCE = "\n".join(source for _, source, _ in _PADDING_CORPUS)
+
+
+def _bit_extent(buffer: bytes) -> tuple[int, int]:
+    """Index of the lowest and highest set bit in ``buffer``, or (-1, -1) if none."""
+    bits = [i for i in range(len(buffer) * 8) if buffer[i // 8] >> (i % 8) & 1]
+    return (bits[0], bits[-1]) if bits else (-1, -1)
+
+
+@pytest.fixture(scope="module")
+def c_layout() -> dict[str, tuple[int, int]]:
+    """Ground truth measured by compiling and running the corpus in C.
+
+    Writing a member as all-ones and scanning the byte image locates it exactly,
+    which ``offsetof`` cannot do for a bitfield. Every assertion in this section
+    is compared against this dict rather than against a literal, so a platform
+    where ``unsigned int`` is not 32 bits still tests the real invariant.
+    """
+    compiler = _require_c_toolchain()
+    probes = []
+    for name, _, members in _PADDING_CORPUS:
+        probes.append(f'    printf("{name} %zu %zu\\n", sizeof(struct {name}), _Alignof(struct {name}));')
+        for member in members:
+            probes.append(
+                f"    {{ struct {name} v; memset(&v, 0, sizeof v); v.{member} = ~0u; "
+                f'report("{name}.{member}", (unsigned char *)&v, sizeof v); }}'
+            )
+    program = textwrap.dedent("""\
+        #include <stdio.h>
+        #include <string.h>
+        {source}
+        static void report(const char *label, unsigned char *p, size_t n) {{
+            int lo = -1, hi = -1;
+            for (size_t i = 0; i < n * 8; i++)
+                if (p[i / 8] >> (i % 8) & 1) {{ if (lo < 0) lo = (int)i; hi = (int)i; }}
+            printf("%s %d %d\\n", label, lo, hi);
+        }}
+        int main(void) {{
+        {probes}
+            return 0;
+        }}
+        """).format(source=_PADDING_SOURCE, probes="\n".join(probes))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        (workdir / "probe.c").write_text(program)
+        build = subprocess.run(
+            [compiler, "probe.c", "-o", "probe"], cwd=workdir, capture_output=True, text=True, check=False
+        )
+        assert build.returncode == 0, f"layout probe failed to build:\n{build.stderr}"
+        run = subprocess.run([str(workdir / "probe")], capture_output=True, text=True, check=False)
+        assert run.returncode == 0, f"layout probe failed to run:\n{run.stderr}"
+
+    measured = {}
+    for line in run.stdout.splitlines():
+        label, first, second = line.split()
+        measured[label] = (int(first), int(second))
+    expected_keys = {name for name, _, _ in _PADDING_CORPUS} | {
+        f"{name}.{member}" for name, _, members in _PADDING_CORPUS for member in members
+    }
+    assert set(measured) == expected_keys, "probe did not report every corpus entry"
+    return measured
+
+
+@pytest.mark.parametrize("backend_name", ["libclang", "tree-sitter"])
+@pytest.mark.parametrize(("struct_name", "source", "members"), _PADDING_CORPUS, ids=[c[0] for c in _PADDING_CORPUS])
+class TestR13PaddingLayoutMatchesC:
+    """Generated ctypes classes must lay out exactly as the C compiler does.
+
+    Both backends dropped unnamed bitfield padding, so they agreed with each
+    other and disagreed with C. Backend parity therefore proves nothing here and
+    is deliberately not asserted -- every expectation comes from the C probe.
+    """
+
+    @staticmethod
+    def _generated(backend_name: str, source: str, struct_name: str) -> type:
+        if not is_backend_available(backend_name):
+            pytest.skip(f"{backend_name} backend unavailable")
+        unit = get_backend(backend_name).parse(source, "layout.h")
+        code = get_writer("ctypes").write(unit)
+        namespace: dict[str, object] = {}
+        exec(compile(code, "generated_ctypes.py", "exec"), namespace)  # noqa: S102
+        assert struct_name in namespace, f"writer emitted no class for {struct_name}"
+        return namespace[struct_name]  # type: ignore[return-value]
+
+    def test_sizeof_and_alignment_match_c(
+        self,
+        backend_name: str,
+        struct_name: str,
+        source: str,
+        members: tuple[str, ...],
+        c_layout: dict[str, tuple[int, int]],
+    ) -> None:
+        """A dropped padding entry shrinks the record or moves its alignment."""
+        record = self._generated(backend_name, source, struct_name)
+
+        assert (ctypes.sizeof(record), ctypes.alignment(record)) == c_layout[struct_name]
+
+    def test_every_member_occupies_the_same_bits_as_in_c(
+        self,
+        backend_name: str,
+        struct_name: str,
+        source: str,
+        members: tuple[str, ...],
+        c_layout: dict[str, tuple[int, int]],
+    ) -> None:
+        """``sizeof`` alone would miss padding that only shifts a member's position.
+
+        ``c2_anon`` is exactly that case: dropping its ``: 3`` leaves the record
+        4 bytes either way and moves ``b`` from bit 6 to bit 3.
+        """
+        if not members:
+            pytest.skip("record has no addressable member to locate")
+        record = self._generated(backend_name, source, struct_name)
+
+        for member in members:
+            instance = record()
+            setattr(instance, member, 0xFFFFFFFF)
+            assert _bit_extent(bytes(instance)) == c_layout[f"{struct_name}.{member}"], (
+                f"{struct_name}.{member} is not where the C compiler puts it"
+            )
