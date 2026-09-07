@@ -39,6 +39,7 @@ from headerkit.backends import get_backend
 from headerkit.backends.libclang import _detect_cplus
 from headerkit.ir import CType, Enum, Struct, Typedef, Variable
 from headerkit.writers.cython import PxdWriter, _unsupported_operator_reason, write_pxd
+from tests.native_build import PYTHON_INCLUDE_DIR, link_extension_command
 
 pytestmark = pytest.mark.libclang
 
@@ -1048,25 +1049,14 @@ def build_and_run_cpp(tmp_path: Path, header: str, pxd: str, pyx: str) -> Any:
         raise ToolchainError(f"cython failed:\n{cython.stdout}\n{cython.stderr}")
 
     assert _CXX is not None
-    # -fPIC is the default on Darwin but not on Linux, where ld rejects the
-    # non-PIC relocations in a -shared object.
-    link_args = ["-shared", "-fPIC"]
-    if sys.platform == "darwin":
-        link_args.append("-undefined")
-        link_args.append("dynamic_lookup")
     build = subprocess.run(  # noqa: S603
-        [
+        link_extension_command(
             _CXX,
-            "-std=c++17",
-            *link_args,
-            "-I",
-            sysconfig.get_paths()["include"],
-            "-I",
-            str(tmp_path),
-            "use.cpp",
-            "-o",
-            "use.so",
-        ],
+            ["use.cpp"],
+            "use",
+            includes=[PYTHON_INCLUDE_DIR, tmp_path],
+            extra=["-std=c++17"],
+        ),
         cwd=tmp_path,
         capture_output=True,
         text=True,

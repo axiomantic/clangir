@@ -36,7 +36,6 @@ import re
 import shutil
 import subprocess
 import sys
-import sysconfig
 import tempfile
 import textwrap
 from pathlib import Path
@@ -48,6 +47,7 @@ from headerkit.ir import Enum
 from headerkit.writers import get_writer
 from headerkit.writers.cffi import header_to_cffi
 from headerkit.writers.cython import write_pxd
+from tests.native_build import PYTHON_INCLUDE_DIR, compile_object_command, link_extension_command
 
 libclang = pytest.mark.libclang
 treesitter = pytest.mark.treesitter
@@ -102,16 +102,12 @@ def _cythonize(workdir: Path, header: str, pxd: str, pyx: str, stem: str = "mod"
 def _compile_c(workdir: Path, compiler: str, stem: str = "mod") -> subprocess.CompletedProcess[str]:
     """Compile a generated C file to an object file, without linking."""
     return subprocess.run(
-        [
+        compile_object_command(
             compiler,
-            "-c",
-            "-fPIC",
             f"{stem}.c",
-            f"-I{sysconfig.get_paths()['include']}",
-            f"-I{workdir}",
-            "-o",
             f"{stem}.o",
-        ],
+            includes=[PYTHON_INCLUDE_DIR, workdir],
+        ),
         cwd=workdir,
         capture_output=True,
         text=True,
@@ -716,20 +712,14 @@ class TestR10DependentMemberAliases:
         )
         assert cython.returncode == 0, f"cython failed:\n{cython.stdout}\n{cython.stderr}"
 
-        link_flags = ["-shared", "-fPIC"]
-        if sys.platform == "darwin":
-            link_flags += ["-undefined", "dynamic_lookup"]
         build = subprocess.run(
-            [
+            link_extension_command(
                 compiler,
-                "-std=c++17",
-                *link_flags,
-                f"-I{sysconfig.get_paths()['include']}",
-                f"-I{tmp_path}",
-                "mod.cpp",
-                "-o",
-                "mod.so",
-            ],
+                ["mod.cpp"],
+                "mod",
+                includes=[PYTHON_INCLUDE_DIR, tmp_path],
+                extra=["-std=c++17"],
+            ),
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -1186,7 +1176,7 @@ class TestR12LoneOpaqueEnum:
 
             assert _compile_c(workdir, compiler).returncode == 0
             impl = subprocess.run(
-                [compiler, "-fPIC", "-c", "impl.c", f"-I{workdir}", "-o", "impl.o"],
+                compile_object_command(compiler, "impl.c", "impl.o", includes=[workdir]),
                 cwd=workdir,
                 capture_output=True,
                 text=True,
@@ -1194,11 +1184,8 @@ class TestR12LoneOpaqueEnum:
             )
             assert impl.returncode == 0, f"impl.c failed to build:\n{impl.stderr}"
 
-            link_flags = (
-                ["-shared", "-fPIC"] if sys.platform != "darwin" else ["-bundle", "-undefined", "dynamic_lookup"]
-            )
             link = subprocess.run(
-                [compiler, *link_flags, "mod.o", "impl.o", "-o", "mod.so"],
+                link_extension_command(compiler, ["mod.o", "impl.o"], "mod"),
                 cwd=workdir,
                 capture_output=True,
                 text=True,
