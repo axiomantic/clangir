@@ -8,7 +8,6 @@ on:
       - 'tests/test_install_libclang.py'
       - '.github/workflows/test-install-libclang.yml'
   pull_request:
-    branches: [main]
     paths:
       - 'headerkit/install_libclang.py'
       - 'tests/test_install_libclang.py'
