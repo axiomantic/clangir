@@ -267,6 +267,33 @@ class PxdWriter:
     # Topological sorting
     # -----------------------------------------------------------------
 
+    def _drop_redundant_record_forwards(self, decls: list[Declaration]) -> list[Declaration]:
+        """Drop a body-less record that the same block also defines with a body.
+
+        Whether libclang surfaces the elaborated ``struct X`` of
+        ``typedef struct X X_t;`` as a declaration of its own depends on the LLVM
+        version -- LLVM 22 stopped doing so, LLVM 19 and Apple clang 21 still do.
+        A forward declaration standing next to the definition it forwards adds
+        nothing either way, so dropping it here keeps generated output identical
+        across the versions instead of leaking the parser's choice into the file.
+        """
+        defined: set[tuple[str, bool]] = {
+            (decl.name, decl.is_union)
+            for decl in decls
+            if isinstance(decl, Struct) and decl.name and (decl.fields or decl.methods)
+        }
+        return [
+            decl
+            for decl in decls
+            if not (
+                isinstance(decl, Struct)
+                and decl.name
+                and not decl.fields
+                and not decl.methods
+                and (decl.name, decl.is_union) in defined
+            )
+        ]
+
     def _sort_declarations(self, decls: list[Declaration]) -> tuple[list[Declaration], set[int]]:
         """Sort declarations topologically to resolve forward references.
 
@@ -519,7 +546,8 @@ class PxdWriter:
         cycle_indices_by_namespace: dict[str | None, set[int]] = {}
 
         for ns in by_namespace:
-            sorted_decls, cycle_indices = self._sort_declarations(by_namespace[ns])
+            block_decls = self._drop_redundant_record_forwards(by_namespace[ns])
+            sorted_decls, cycle_indices = self._sort_declarations(block_decls)
             sorted_by_namespace[ns] = sorted_decls
             cycle_indices_by_namespace[ns] = cycle_indices
 

@@ -329,9 +329,6 @@ class TestR6KeywordEscapeOnForwardDeclarations:
                 ctypedef class_ class_t
 
 
-                cdef struct class_ "class"
-
-
                 cdef struct node:
                     class_* c
 
