@@ -196,6 +196,24 @@ CPP_OPERATOR_MAP: dict[str, str] = {
 }
 
 
+def _c_type_spelling(name: str, is_typedef: bool, tag_keyword: str) -> str:
+    """Return the C spelling ``importc`` must use to name this tag.
+
+    ``typedef enum { ... } Flags;`` declares no ``enum Flags`` tag, so an
+    ``importc: "enum Flags"`` emits C that names an incomplete type and the
+    build fails with ``cast to incomplete type 'enum Flags'``. The same is true
+    of a tag-less ``typedef struct { ... } Rec;``.
+
+    ``is_typedef`` is the discriminator the other writers already use for this
+    -- ``headerkit.writers.cffi._find_typedef_enum_pairs`` documents it. It is
+    set exactly when a typedef of the same name exists, which makes the bare
+    name a valid C type spelling whether or not the tag also exists. Without it
+    the tag keyword is required, since a plain ``struct Rec { ... };`` declares
+    no bare ``Rec``.
+    """
+    return name if is_typedef else f"{tag_keyword} {name}"
+
+
 def _escape_ident(name: str) -> str:
     """Escape Nim keywords, operators, and invalid identifier characters."""
     if not name:
@@ -485,8 +503,9 @@ class NimWriter(BaseWriter):
             pragma_parts.append(f'importcpp: "{cpp_pattern}", header: "{header_file}"')
             pragma_parts.append("bycopy")
         else:
-            tag_prefix = "union " if s.is_union else "struct "
-            pragma_parts.append(f'importc: "{tag_prefix}{name}", header: "{header_file}"')
+            pragma_parts.append(
+                f'importc: "{_c_type_spelling(name, s.is_typedef, "union" if s.is_union else "struct")}", header: "{header_file}"'
+            )
             if s.is_union:
                 pragma_parts.append("union")
             else:
@@ -663,7 +682,8 @@ class NimWriter(BaseWriter):
         nim_name = f"{name}_enum" if func_names and name in func_names else name
         e_name = _escape_ident(nim_name)
 
-        lines = [f'{e_name}* {{.size: sizeof(cint), importc: "enum {name}", header: "{header_file}".}} = enum']
+        spelling = _c_type_spelling(name, e.is_typedef, "enum")
+        lines = [f'{e_name}* {{.size: sizeof(cint), importc: "{spelling}", header: "{header_file}".}} = enum']
         for v in e.values:
             v_name = _escape_ident(v.name)
             if v.value is not None:

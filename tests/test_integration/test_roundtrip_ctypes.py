@@ -253,6 +253,14 @@ class TestCtypesEnumRoundtrip:
         """)
 
     def test_typedef_enum(self, backend):
+        """The alias must name a type rather than itself.
+
+        This assertion previously pinned ``Switch = Switch``, which raises
+        ``NameError`` on the first import of the generated module: an enum
+        reaches this writer as loose integer constants and never binds its tag.
+        Nothing executed the output, so the pin held the defect in place.
+        ``tests/test_scaffold_runs.py`` imports the generated package.
+        """
         output = parse_and_ctypes(backend, "typedef enum { OFF=0, ON=1 } Switch;")
         assert output == _PREAMBLE + textwrap.dedent("""\
 
@@ -268,7 +276,7 @@ class TestCtypesEnumRoundtrip:
             # Typedefs
             # ============================================================
 
-            Switch = Switch
+            Switch = ctypes.c_int
         """)
 
 
