@@ -78,9 +78,9 @@ A generated stub calls `pytest.fail(...)` in Python, and `checkpoint(...)` follo
 forbids is scaffolding that *looks finished and is not* -- a hollow file that reports
 success while testing nothing. A work-order stub is the exact opposite: it is red from
 the moment it is generated, it names the specific work outstanding in its failure
-message, and it carries the signature under test plus a definition of done. It cannot
-produce a green mirage, because it cannot be green until a human or an LLM writes the
-assertion it asks for. Red-to-green is the intended progress meter.
+message, and it carries the signature under test plus a definition of done. Red-to-green
+is the intended progress meter, and the transition is meant to be earned: the sentence
+above is what governs a stub that goes green without earning it.
 
 The carve-out does not license:
 - a stub that passes, or that asserts a tautology, in place of failing;

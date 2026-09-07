@@ -27,16 +27,14 @@ why the exclusions are exclusions.
 
 ::: headerkit.workorder.build_work_order_files
 
-::: headerkit.workorder.render_python_tests
+---
 
-::: headerkit.workorder.render_nim_tests
+## Constants
 
-::: headerkit.workorder.render_nim_dsl
+`WORK_ORDER_MARKER` opens every stub failure message, in both languages, so a reader
+can tell an unwritten stub from a genuine regression at a glance.
+`DEFINITION_OF_DONE` is repeated on every stub: call it and assert on the result;
+asserting that it does not raise is insufficient.
 
-::: headerkit.workorder.render_signature
-
-::: headerkit.workorder.render_work_order_md
-
-::: headerkit.workorder.render_suggestions_md
-
-::: headerkit.workorder.render_agents_md
+The rendering functions behind `build_work_order_files` are internal. Their output is
+described in the [Test work orders guide](../guides/work-orders.md).

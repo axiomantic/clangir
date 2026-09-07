@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import textwrap
+from dataclasses import replace
 
 import pytest
 
@@ -21,6 +23,8 @@ from headerkit.ir import (
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from headerkit.workorder import (
     WORK_ORDER_MARKER,
+    Stub,
+    WorkOrder,
     analyze_work_order,
     build_work_order_files,
     render_agents_md,
@@ -224,12 +228,110 @@ def test_the_raw_symbol_survives_sanitisation_in_the_failure_message() -> None:
     assert "`operator==`" in stub.instruction
 
 
-def test_a_subject_no_target_language_can_spell_is_skipped_not_pasted() -> None:
+def _nim_code_only(source: str) -> str:
+    """Nim source with doc comments and string literals removed.
+
+    A verbatim C signature in a `##` doc comment, or a symbol quoted inside a
+    `checkpoint` message, is documentation and may spell the name any way the header
+    does. Only what the compiler reads as an identifier matters.
+    """
+    lines = [line for line in source.splitlines() if not line.lstrip().startswith("##")]
+    return re.sub(r'"[^"]*"', '""', "\n".join(lines))
+
+
+#: Every route by which a name the target language cannot spell reaches generated
+#: source. A guard on one of them is not a defence: `AGENTS.md` section 4 states
+#: qualified IR names are the intended direction, so the untouched routes become live
+#: the moment a backend starts qualifying.
+UNSPELLABLE_UNITS: dict[str, tuple[object, ...]] = {
+    # The Tier 1 subject: `obj = _bindings.ns::E` / `var obj: ns::E`.
+    "enum_subject": (Enum(name="ns::E", values=[EnumValue("A", 0), EnumValue("B", 1)]),),
+    "struct_subject": (Struct(name="ns::Rec", fields=[Field(name="a", type=CType("int"))]),),
+    # The Tier 2 enum type: `parametrizedTest("use", ns::E)`, reached through the
+    # `enums` map rather than through the Tier 1 loop.
+    "enum_type": (
+        Enum(name="ns::E", values=[EnumValue("A", 0), EnumValue("B", 1)]),
+        Function(name="use", return_type=CType("void"), parameters=[Parameter("m", CType("ns::E"))]),
+    ),
+    # Member names, which no subject guard reaches.
+    "enumerator_name": (Enum(name="E", values=[EnumValue("E::A", 0), EnumValue("E::B", 1)]),),
+    "field_name": (Struct(name="Rec", fields=[Field(name="a::b", type=CType("int"))]),),
+    "bitfield_name": (Struct(name="Rec", fields=[Field(name="a::b", type=CType("unsigned int"), bit_width=3)]),),
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNSPELLABLE_UNITS))
+def test_a_name_no_target_language_can_spell_is_skipped_not_pasted(case: str) -> None:
     """`_bindings.ns::E` is a SyntaxError; there is no reference to emit, so emit none."""
-    qualified = Enum(name="ns::E", values=[EnumValue("A", 0), EnumValue("B", 1)])
-    order = analyze_work_order(_unit(qualified))
+    order = analyze_work_order(_unit(*UNSPELLABLE_UNITS[case]))
     assert order.tier1 == []
     compile(render_python_tests(order, "pkg"), "test_workorder.py", "exec")
+    nim = render_nim_tests(order, "pkg")
+    assert nim is None or "::" not in _nim_code_only(nim), nim
+
+
+def test_a_tier2_stub_never_names_an_enum_type_it_cannot_spell() -> None:
+    """The `enums` map feeds `parametrizedTest` directly, bypassing the Tier 1 guard."""
+    order = analyze_work_order(_unit(*UNSPELLABLE_UNITS["enum_type"]))
+    stub = order.stubs[0]
+    assert stub.enum_type is None, "a qualified enum type would be emitted verbatim into Nim"
+    assert stub.cases == ()
+
+
+def test_colliding_sanitised_names_are_disambiguated_not_silently_shadowed() -> None:
+    """`_identifier` is not injective, and Python accepts a duplicate `def` silently."""
+    # `Foo::bar`, `Foo__bar` and `Foo:_bar` all sanitise to `Foo__bar`: a three-way
+    # collision, which a scheme that appends only `_2` cannot resolve either.
+    collide = [
+        Function(name=name, return_type=CType("int"), parameters=[])
+        for name in ("operator==", "operator_eq_eq", "Foo::bar", "Foo__bar", "Foo:_bar")
+    ]
+    order = analyze_work_order(_unit(*collide))
+    names = [s.name for s in order.stubs]
+    assert len(set(names)) == len(names), names
+
+    out = render_python_tests(order, "pkg")
+    defs = [line for line in out.splitlines() if line.startswith("def ")]
+    assert len(set(defs)) == len(defs), defs
+    assert len(defs) == len(collide), defs
+    # The raw symbol survives, so a reader can still tell the two apart.
+    assert "`operator==`" in out
+    assert "`operator_eq_eq`" in out
+
+
+def test_the_emitters_disambiguate_a_hand_built_work_order() -> None:
+    """`analyze_work_order` is not the only way in; a renderer must defend itself."""
+    stub = Stub(name="test_dup", symbol="a", signature="int a(void)", instruction="WORK ORDER: x")
+    hand_built = WorkOrder(stubs=[stub, replace(stub, symbol="b")])
+    assert [s.name for s in hand_built.stubs] == ["test_dup", "test_dup"]
+
+    out = render_python_tests(hand_built, "pkg")
+    defs = [line for line in out.splitlines() if line.startswith("def ")]
+    assert len(set(defs)) == len(defs) == 2, defs
+
+    nim = render_nim_tests(hand_built, "pkg")
+    assert nim is not None
+    md = render_work_order_md(hand_built, "pkg")
+    for name in (d.removeprefix("def ").split("(")[0] for d in defs):
+        assert f"`{name}`" in md, md
+
+
+def test_disambiguation_is_idempotent_and_reaches_every_artifact() -> None:
+    """Renderers re-apply it, so a hand-built order is safe and suffixes never compound."""
+    collide = [
+        Function(name=name, return_type=CType("int"), parameters=[]) for name in ("operator==", "operator_eq_eq")
+    ]
+    order = analyze_work_order(_unit(*collide))
+    names = [s.name for s in order.stubs]
+    assert names == [s.name for s in analyze_work_order(_unit(*collide)).stubs]
+    assert "_3" not in render_python_tests(order, "pkg")
+
+    # Every name the work order advertises must exist in the generated module.
+    md = render_work_order_md(order, "pkg")
+    out = render_python_tests(order, "pkg")
+    for name in names:
+        assert f"`{name}`" in md, md
+        assert f"def {name}(" in out, out
 
 
 def test_roundtrip_values_fit_the_declared_field_width() -> None:

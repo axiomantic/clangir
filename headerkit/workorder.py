@@ -16,7 +16,7 @@ test run is the progress meter: a stub that has been written turns from red to g
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from headerkit.ir import (
@@ -151,6 +151,36 @@ class WorkOrder:
         return not self.tier1 and not self.stubs
 
 
+def _disambiguated(order: WorkOrder) -> WorkOrder:
+    """Return ``order`` with every generated test name made unique.
+
+    ``_identifier`` is not injective: ``operator==`` and a literal symbol spelled
+    ``operator_eq_eq`` both map to ``operator_eq_eq``. Python accepts a duplicate ``def``
+    silently, so a collision would shadow one test out of existence with nothing
+    reporting it -- the exact failure the punctuation mapping exists to avoid, reached
+    through a narrower door. Renaming keeps both tests; each stub's failure message
+    still carries the raw symbol, so the reader can tell them apart.
+
+    Idempotent, so applying it at ``analyze_work_order`` and again in each emitter
+    cannot compound suffixes.
+    """
+    seen: set[str] = set()
+
+    def unique(name: str) -> str:
+        candidate = name
+        n = 1
+        while candidate in seen:
+            n += 1
+            candidate = f"{name}_{n}"
+        seen.add(candidate)
+        return candidate
+
+    return WorkOrder(
+        tier1=[replace(t, name=unique(t.name)) for t in order.tier1],
+        stubs=[replace(s, name=unique(s.name)) for s in order.stubs],
+    )
+
+
 def _declarations(unit: SourceUnit | Header) -> list[Declaration]:
     decls: list[Declaration] = getattr(unit, "declarations", [])
     return decls
@@ -255,6 +285,10 @@ def _roundtrip_fields(struct: Struct) -> list[tuple[str, int]]:
     for i, f in enumerate(struct.fields):
         if f.is_padding or not f.name or f.is_static:
             continue
+        # ``obj.a::b = 1`` is a SyntaxError in Python and invalid Nim. A field the
+        # target language cannot spell has no assignment to emit.
+        if not f.name.isidentifier():
+            continue
         if f.bit_width is not None:
             continue
         if not _is_plain_integer(f.type):
@@ -272,6 +306,8 @@ def _bitfield_bounds(struct: Struct) -> list[tuple[str, int]]:
     out: list[tuple[str, int]] = []
     for f in struct.fields:
         if f.is_padding or not f.name or f.bit_width is None:
+            continue
+        if not f.name.isidentifier():
             continue
         if f.bit_width < 1 or f.bit_width > 31:
             continue
@@ -306,9 +342,13 @@ def analyze_work_order(unit: SourceUnit | Header) -> WorkOrder:
     decls = _declarations(unit)
     order = WorkOrder()
 
+    # An enum whose name a target language cannot spell is excluded here as well as
+    # from Tier 1: `_enum_param` hands this map's values to a Tier 2 stub, which emits
+    # the type name verbatim as `parametrizedTest("use", ns::E)`. The Tier 1 guard
+    # below does not reach that path.
     enums: dict[str, Enum] = {}
     for d in decls:
-        if isinstance(d, Enum) and d.name:
+        if isinstance(d, Enum) and d.name and d.name.isidentifier():
             enums[d.name] = d
 
     for d in decls:
@@ -320,6 +360,11 @@ def analyze_work_order(unit: SourceUnit | Header) -> WorkOrder:
             continue
         if isinstance(d, Enum) and d.name:
             pairs = _enum_int_values(d)
+            # `observed = {"E::A": _bindings.E::A}` is a SyntaxError. The test claims
+            # *every* enumerator holds its declared value, so dropping the unspellable
+            # ones would make its own description false: the whole test is skipped.
+            if any(not name.isidentifier() for name, _ in pairs):
+                pairs = []
             if len(pairs) >= 2:
                 order.tier1.append(
                     Tier1Test(
@@ -431,7 +476,7 @@ def analyze_work_order(unit: SourceUnit | Header) -> WorkOrder:
             )
         )
 
-    return order
+    return _disambiguated(order)
 
 
 # =============================================================================
@@ -505,6 +550,7 @@ def _py_docstring(stub: Stub, indent: str = "    ") -> str:
 
 def render_python_tests(order: WorkOrder, package_name: str) -> str:
     """Render the generated pytest module for a scaffolded Python project."""
+    order = _disambiguated(order)
     parts = [_PY_HEADER.format(pkg=package_name)]
 
     for t in order.tier1:
@@ -579,6 +625,7 @@ def render_nim_tests(order: WorkOrder, package_name: str) -> str | None:
     unsigned bit-fields produces exactly that, and since the file is written with
     ``preserve_existing``, regeneration would never repair it.
     """
+    order = _disambiguated(order)
     tier1 = _nim_tier1(order)
     if not tier1 and not order.stubs:
         return None
@@ -685,6 +732,7 @@ _TEST_COMMANDS = {
 
 def render_work_order_md(order: WorkOrder, package_name: str, language: str = "python") -> str:
     """Render the human- and LLM-readable list of what still needs writing."""
+    order = _disambiguated(order)
     command = _TEST_COMMANDS.get(language, _TEST_COMMANDS["python"])
     lines = [
         f"# Work order: {package_name}",
