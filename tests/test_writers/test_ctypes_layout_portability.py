@@ -160,3 +160,30 @@ def test_narrowing_preserves_a_signed_bitfield_s_signedness(backend_name: str) -
     instance.a = -1
 
     assert instance.a == -1
+
+
+@pytest.mark.parametrize("backend_name", ["libclang", "tree-sitter"])
+@pytest.mark.parametrize(("struct_name", "source"), _MIXED_CARRIER_SOURCES, ids=[c[0] for c in _MIXED_CARRIER_SOURCES])
+def test_windows_keeps_the_declared_types(backend_name: str, struct_name: str, source: str) -> None:
+    """Windows is a third layout rule, and ctypes already implements it there.
+
+    MSVC opens a fresh storage unit whenever a bit-field's declared type
+    differs from the unit in play, so ``struct { unsigned char a; unsigned int
+    : 8; }`` is 8 bytes on Windows against 4 under AAPCS64 and 2 under System
+    V -- measured on the CI runner with MinGW ``cc``, ``gcc``, ``clang`` and
+    ``clang`` targeting MSVC, which all agreed. ctypes on Windows uses that
+    same algorithm, so the declared types reproduce the C compiler there on
+    their own; respelling them for another ABI's rule is what would break it.
+
+    Only the spelling is asserted, not the resulting numbers: reproducing them
+    needs the MSVC engine, which exists only on a Windows host.
+    """
+    record = _exec_as(_generate(backend_name, source), system="win32", machine="AMD64")[struct_name]
+
+    assert not _zero_length_arrays(record), (  # type: ignore[arg-type]
+        f"{struct_name} carries an alignment field on Windows, where the declared types already align it"
+    )
+    carriers = _bitfield_carriers(record)  # type: ignore[arg-type]
+    assert any(ctypes.sizeof(c) > 1 for c in carriers), (
+        f"{struct_name} narrowed a carrier on Windows, which changes where MSVC puts the field"
+    )

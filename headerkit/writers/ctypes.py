@@ -78,6 +78,10 @@ _ABI_FLAG = "_HK_UNNAMED_BITFIELD_ALIGNS"
 _ALIGN_FIELD = "_hk_align"
 _PAD_ALIGN_FIELD = "_hk_pad_align"
 
+#: Name of the flag saying this host's ctypes already reproduces this host's C
+#: compiler for bit-fields, so the declared types can be emitted as written.
+_NATIVE_FLAG = "_HK_CTYPES_MATCHES_C_NATIVELY"
+
 #: Definition emitted into a generated module that contains an all-padding
 #: record. ``platform.machine`` is consulted at import time on purpose: ctypes
 #: lays a record out for the ABI of the host running Python, which need not be
@@ -96,7 +100,17 @@ ABI_ALIGNMENT_NOTE = """\
 _HK_UNNAMED_BITFIELD_ALIGNS = sys.platform.startswith("win") or (
     not sys.platform.startswith(("darwin", "ios"))
     and platform.machine().lower().startswith(("aarch64", "arm"))
-)"""
+)
+
+# Windows is a third layout rule, not a second: MSVC opens a fresh storage
+# unit whenever a bit-field's declared type differs from the unit in play, so
+# `struct { unsigned char a; unsigned int : 8; }` is 8 bytes there against 4
+# under AAPCS64 and 2 under System V. ctypes implements that same MSVC
+# algorithm on Windows, so there the declared types can be written out as they
+# stand and ctypes reproduces the C compiler on its own. Everywhere else its
+# engine changed in 3.14, so the spellings below are chosen for position and
+# the alignment is supplied separately.
+_HK_CTYPES_MATCHES_C_NATIVELY = sys.platform.startswith("win")"""
 
 
 def _is_anonymous_name(name: str | None) -> bool:
@@ -589,7 +603,11 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         aligned_entries = body.aligned_padding_entries()
         if nbytes == 0 or not aligned_entries:
             return [f"class {class_name}({base_class}):", "    pass"]
-        lines.append(f"    if {_ABI_FLAG}:")
+        lines.append(f"    if {_NATIVE_FLAG}:")
+        lines.append("        _fields_ = [")
+        lines.extend(f"            {entry}," for entry in body.entries)
+        lines.append("        ]")
+        lines.append(f"    elif {_ABI_FLAG}:")
         lines.append("        _fields_ = [")
         lines.extend(f"            {entry}," for entry in aligned_entries)
         lines.append("        ]")
@@ -640,7 +658,11 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
     # separation is required, not stylistic: before 3.14 ctypes derives a
     # record's alignment only from bit-fields that open a storage unit, so a
     # wide carrier that lands mid-unit raises nothing.
-    lines.append(f"    if {_ABI_FLAG}:")
+    lines.append(f"    if {_NATIVE_FLAG}:")
+    lines.append("        _fields_ = [")
+    lines.extend(f"            {entry}," for entry in body.entries)
+    lines.append("        ]")
+    lines.append(f"    elif {_ABI_FLAG}:")
     lines.append("        _fields_ = [")
     lines.extend(f"            {entry}," for entry in _alignment_entries(body, include_padding=True))
     lines.extend(f"            {entry}," for entry in body.flat_entries)
