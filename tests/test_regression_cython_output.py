@@ -2388,7 +2388,11 @@ _OPERATOR_HEADER = textwrap.dedent("""\
         Ops& operator+=(const Ops& o) { v += o.v; return *this; }
         bool operator&&(const Ops& o) const { return v && o.v; }
         Ops& operator<<=(int n) { v <<= n; return *this; }
-        void* operator new(unsigned long n) { return ::operator new(n); }
+        // ``decltype(sizeof(0))`` is ``size_t`` on every target and needs no header.
+        // Spelling it ``unsigned long`` is a hard error on LLP64 Windows, where
+        // ``size_t`` is ``unsigned long long``: C++ requires this parameter to be
+        // exactly ``size_t``, so the whole translation unit fails to parse.
+        void* operator new(decltype(sizeof(0)) n) { return ::operator new(n); }
         operator int() const { return v; }
     };
 """)
