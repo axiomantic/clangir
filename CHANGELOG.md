@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-07
+
+### Added
+
+- Tiered test generation for scaffolded projects, in a new `headerkit.workorder` module. Generated tests split three ways by how much the IR actually determines. **Tier 1** emits real, passing tests where the IR fixes both the call and the expected result: struct field round-trip, unsigned bit-field bounds derived from the declared width (a `:3` field holds 7 and truncates 8), and enum value coverage. **Tier 2** emits one deliberately failing case per known value where the cases are known but the expectation is not -- one per enumerator for a function taking an enum, one per overload for a C++ overload set, and a NULL case for a pointer parameter -- via `@pytest.mark.parametrize` in Python and a generated compile-time macro in Nim. **Tier 3** emits a single failing stub per remaining function, for behaviour no header records. Four cases are deliberately excluded from Tier 1 because the IR does not in fact determine them: signed bit-fields (sign extension makes the truncated value ABI-dependent), non-integer struct fields, enums whose values a backend left as unevaluated expressions, and bit-field bounds in Nim (Nim bindings carry no width). A function reached by Tier 2 never also receives a Tier 3 stub, and records and enums never receive stubs at all, since Tier 1 covers them completely.
+- Stub failure messages carry their instruction at the point of failure rather than in a banner at the top of the file, and each stub's docstring carries the signature verbatim plus a definition of done ("call it and assert on the result; asserting that it does not raise is insufficient"). The test run is the progress meter: a stub turns from red to green when written. There is no manifest, ID scheme or completion tracker, which would only be a second source of truth that drifts from the first.
+- Scaffolded projects gain `WORK_ORDER.md` (the outstanding list in prose), `SUGGESTIONS.md` (static, header-independent wrapper design ideas), and an `AGENTS.md` that points the next session at the work order and instructs it to **ask the user** before working through it. `AGENTS.md` states no count, so it cannot go stale.
+- Nim projects gain `tests/workorder_dsl.nim`, a dependency-free `parametrizedTest` / `parametrizedTestOver` macro pair (`std/unittest` and `std/macros` only) expanding at compile time to one discrete `test` per enumerator. A runtime `for` loop cannot serve: every iteration collapses into a single reported result, and iterating a holey enum -- which C headers produce almost universally -- does not compile. `require` is never emitted, since it sets `abortOnError` and would kill the whole run; `checkpoint` always precedes `fail()`, or the message is lost.
+- `OutputFile.preserve_existing`, honored by `ProjectLayout.write_to_disk`. Every work-order artifact sets it, so re-running the scaffolder regenerates the bindings module but never clobbers a test that has been written, an edited work order, or the project's `AGENTS.md`. A generator that eats the work it asked for is worse than no generator.
+
+### Changed
+
+- `AGENTS.md`: sections 1 and 2 (no vacuous assertions, no hollow scaffolding) gain a narrow carve-out for work-order stubs. The distinguishing property is that these stubs fail loudly and say why, whereas section 2's target is scaffolding that looks finished and is not. The carve-out does not license a stub that passes, a stub duplicating Tier 1 coverage, or deleting a stub to get a green run.
+
 ## [0.38.0] - 2026-09-05
 
 ### Changed

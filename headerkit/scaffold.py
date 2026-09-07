@@ -18,6 +18,10 @@ class OutputFile:
     path: str
     content: str
     is_executable: bool = False
+    #: Never clobber this file if it already exists on disk. Set on artifacts a human
+    #: is expected to edit -- work-order test stubs, the work order itself -- because a
+    #: generator that eats the work it asked for is worse than no generator.
+    preserve_existing: bool = False
 
 
 @dataclass
@@ -42,7 +46,7 @@ class ProjectLayout:
             if not p.is_relative_to(base):
                 raise ValueError(f"Path traversal detected: {f.path}")
             p.parent.mkdir(parents=True, exist_ok=True)
-            if not overwrite and p.exists():
+            if p.exists() and (f.preserve_existing or not overwrite):
                 continue
             p.write_text(f.content, encoding="utf-8")
             if f.is_executable:

@@ -87,6 +87,7 @@ nav:
     - Writing Custom Writers: guides/custom-writers.md
     - Nim to Python Packaging: guides/nim-python-packaging.md
     - Project Scaffolding: guides/scaffolding.md
+    - Test Work Orders: guides/work-orders.md
   - Tutorials:
     - PXD Writer (Cython): tutorials/pxd-writer.md
     - ctypes Writer: tutorials/ctypes-writer.md

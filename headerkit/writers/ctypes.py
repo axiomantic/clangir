@@ -32,6 +32,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
+from headerkit.workorder import build_work_order_files
 from headerkit.writers.base import BaseWriter, WriterOption
 
 # Maps C type names to their ctypes equivalents.
@@ -1037,6 +1038,9 @@ class CtypesWriter(BaseWriter):
                 {unit_fn_checks}
             """)
             files.append(OutputFile(path="tests/test_bindings.py", content=unit_test))
+
+        if test_type in ("both", "unit"):
+            files.extend(build_work_order_files(unit, pkg, "python"))
 
         return ProjectLayout(files=files)
 
