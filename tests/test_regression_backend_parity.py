@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -1370,3 +1371,123 @@ class TestR13PaddingLayoutMatchesC:
             assert _bit_extent(bytes(instance)) == c_layout[f"{struct_name}.{member}"], (
                 f"{struct_name}.{member} is not where the C compiler puts it"
             )
+
+
+# ---------------------------------------------------------------------------
+# R14 -- an all-padding record's layout is an ABI choice resolved on import
+# ---------------------------------------------------------------------------
+
+
+#: Whether a C unnamed bit-field contributes its declared type's alignment to
+#: the enclosing record, measured with compiled C probes:
+#:
+#: =========================  =================  ==========================
+#: ABI                        toolchains         imposes alignment?
+#: =========================  =================  ==========================
+#: AAPCS64 (Linux aarch64)    gcc 14.2, clang 19.1  yes
+#: x86-64 System V (Linux)    gcc 14.2, clang 19.1  no
+#: Darwin arm64               Apple clang 21        no
+#: =========================  =================  ==========================
+#:
+#: ``c6_onlypad`` in the corpus above therefore measures 4/4 on one host and
+#: 1/1 on another. The end-to-end tests compare against whichever host runs
+#: them; these pin *both* answers so the rule stays covered on either.
+#:
+#: Each entry: source, the (sizeof, alignment) when the ABI imposes alignment,
+#: and the same when it does not. Only ``unsigned int``/``unsigned char``
+#: carriers appear because the tree-sitter backend drops an unnamed bit-field
+#: whose declared type is spelled with more than two words.
+_ABI_LAYOUT_CASES: tuple[tuple[str, str, tuple[int, int], tuple[int, int]], ...] = (
+    ("a1", "struct a1 { unsigned int : 8; };", (4, 4), (1, 1)),
+    ("a2", "struct a2 { unsigned int : 1; };", (4, 4), (1, 1)),
+    ("a3", "struct a3 { unsigned int : 9; };", (4, 4), (2, 1)),
+    ("a4", "struct a4 { unsigned int : 32; };", (4, 4), (4, 1)),
+    ("a5", "struct a5 { unsigned int : 32; unsigned int : 32; };", (8, 4), (8, 1)),
+    ("a6", "struct a6 { unsigned char : 4; };", (1, 1), (1, 1)),
+    ("a7", "struct a7 { unsigned char : 4; unsigned int : 4; };", (4, 4), (1, 1)),
+    ("a8", "struct a8 { unsigned int : 8; unsigned int : 0; };", (4, 4), (4, 1)),
+)
+
+#: Host identifications and the flag each must produce. The first three rows are
+#: measured; the rest pin the documented fallback for ABIs not measured.
+_ABI_HOSTS: tuple[tuple[str, str, bool], ...] = (
+    ("linux", "aarch64", True),
+    ("linux", "x86_64", False),
+    ("darwin", "arm64", False),
+    ("darwin", "x86_64", False),
+    ("linux", "armv7l", True),
+    ("win32", "AMD64", False),
+)
+
+
+def _exec_generated(code: str, *, system: str, machine: str) -> dict[str, object]:
+    """Execute generated source as though imported on the named host."""
+    namespace: dict[str, object] = {}
+    original_platform, original_machine = sys.platform, platform.machine
+    sys.platform = system  # type: ignore[assignment]
+    platform.machine = lambda: machine  # type: ignore[assignment]
+    try:
+        exec(compile(code, "generated_ctypes.py", "exec"), namespace)  # noqa: S102
+    finally:
+        sys.platform = original_platform  # type: ignore[assignment]
+        platform.machine = original_machine  # type: ignore[assignment]
+    return namespace
+
+
+@pytest.mark.parametrize("backend_name", ["libclang", "tree-sitter"])
+class TestR14AllPaddingLayoutIsResolvedOnImport:
+    """The all-padding carrier must follow the *importing* host's ABI.
+
+    ctypes lays a record out for the host running Python, which need not be the
+    host that generated the module, so a byte count chosen when the file was
+    written is wrong by construction for a module carried across platforms.
+    The writer previously baked in the Darwin/System V answer and so measured
+    1/1 for ``struct { unsigned int : 8; }`` on AAPCS64, where C says 4/4.
+    """
+
+    @staticmethod
+    def _generate(backend_name: str, source: str) -> str:
+        if not is_backend_available(backend_name):
+            pytest.skip(f"{backend_name} backend unavailable")
+        return get_writer("ctypes").write(get_backend(backend_name).parse(source, "layout.h"))
+
+    @pytest.mark.parametrize(
+        ("struct_name", "source", "aligned", "unaligned"),
+        _ABI_LAYOUT_CASES,
+        ids=[c[0] for c in _ABI_LAYOUT_CASES],
+    )
+    def test_each_abi_gets_its_own_measured_layout(
+        self, backend_name: str, struct_name: str, source: str, aligned: tuple[int, int], unaligned: tuple[int, int]
+    ) -> None:
+        """One generated module must satisfy both ABIs, chosen at import."""
+        code = self._generate(backend_name, source)
+
+        on_aapcs64 = _exec_generated(code, system="linux", machine="aarch64")[struct_name]
+        on_sysv = _exec_generated(code, system="linux", machine="x86_64")[struct_name]
+
+        assert (ctypes.sizeof(on_aapcs64), ctypes.alignment(on_aapcs64)) == aligned  # type: ignore[arg-type]
+        assert (ctypes.sizeof(on_sysv), ctypes.alignment(on_sysv)) == unaligned  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(("system", "machine", "expected"), _ABI_HOSTS)
+    def test_flag_identifies_the_host_abi(self, backend_name: str, system: str, machine: str, expected: bool) -> None:
+        """A wrong predicate silently picks the other ABI's layout."""
+        code = self._generate(backend_name, "struct only_pad { unsigned int : 8; };")
+
+        namespace = _exec_generated(code, system=system, machine=machine)
+
+        assert namespace["_HK_UNNAMED_BITFIELD_ALIGNS"] is expected
+
+    def test_both_carriers_are_emitted(self, backend_name: str) -> None:
+        """Emitting one branch only would hardcode the generating host's ABI."""
+        code = self._generate(backend_name, "struct only_pad { unsigned int : 8; };")
+
+        assert '("_pad0", ctypes.c_uint, 8)' in code
+        assert '("_pad0", ctypes.c_ubyte * 1)' in code
+        assert "import platform" in code
+
+    def test_no_abi_flag_when_no_record_needs_one(self, backend_name: str) -> None:
+        """The flag and its import must not appear in modules that cannot use them."""
+        code = self._generate(backend_name, "struct plain { unsigned int a; unsigned int b : 3; };")
+
+        assert "_HK_UNNAMED_BITFIELD_ALIGNS" not in code
+        assert "import platform" not in code

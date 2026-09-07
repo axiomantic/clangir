@@ -1,4 +1,5 @@
 import ctypes
+import sys
 import textwrap
 
 import pytest
@@ -1384,6 +1385,83 @@ class TestUnnamedBitfieldPadding:
             ("", "unsigned int", 4, True),
             ("b", "unsigned int", 2, False),
         ]
+
+    # Every spelling C allows for the padding's declared type. tree-sitter-c
+    # recovers `unsigned int : 8` with a MISSING declarator, but a spelling that
+    # ends in a size keyword takes an ERROR-node path instead, and that path
+    # used to drop the field. libclang carries all of them.
+    _SPELLINGS = [
+        "unsigned char",
+        "unsigned short",
+        "unsigned int",
+        "unsigned long",
+        "unsigned long long",
+        "signed char",
+        "long long",
+        "short int",
+        "long int",
+        "int",
+        "mytype",
+    ]
+
+    @pytest.mark.parametrize("spelling", _SPELLINGS)
+    def test_an_unnamed_bitfield_is_padding_for_every_type_spelling(self, spelling: str) -> None:
+        """A multi-word type must not make the padding disappear."""
+        code = f"typedef int mytype;\nstruct s {{ {spelling} : 8; }};"
+        assert self._fields(code) == [("", spelling, 8, True)]
+
+    @pytest.mark.parametrize("spelling", _SPELLINGS)
+    def test_a_named_bitfield_is_unaffected_for_every_type_spelling(self, spelling: str) -> None:
+        """NEGATIVE CONTROL. A named bitfield takes the declarator path."""
+        code = f"typedef int mytype;\nstruct s {{ {spelling} x : 8; }};"
+        assert self._fields(code) == [("x", spelling, 8, False)]
+
+    def test_a_size_keyword_spelling_does_not_swallow_its_neighbours(self) -> None:
+        """The ERROR-recovered declaration must not consume the members around it."""
+        code = "struct s { unsigned long long a : 3; unsigned long long : 8; unsigned long long b : 5; };"
+        assert self._fields(code) == [
+            ("a", "unsigned long long", 3, False),
+            ("", "unsigned long long", 8, True),
+            ("b", "unsigned long long", 5, False),
+        ]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "unsigned long long 8;",
+            "unsigned long long : 8 9;",
+        ],
+    )
+    def test_a_malformed_member_does_not_become_invented_padding(self, body: str) -> None:
+        """NEGATIVE CONTROL. Not every ERROR node under a field is a bitfield.
+
+        Invalid C also produces an ERROR child with a number inside it. Reading
+        a width out of one and reserving bits for it would fabricate layout the
+        source never asked for, so the recovery is keyed on the clause's node
+        structure -- `:` followed by one expression -- and nothing else.
+        """
+        assert self._fields(f"struct s {{ {body} }};") == []
+
+    def test_the_ctypes_layout_of_multi_word_padding_matches_c(self) -> None:
+        """The consequence: a dropped padding field silently relocates `b`.
+
+        The expected image is the one a compiled C probe over the same header
+        produces: with 8 bits of padding, `b` begins at bit 11, not bit 3.
+        Dropping the padding kept `sizeof` at 8 and still read `b` back as 1, so
+        only the byte image distinguishes the wrong layout from the right one.
+        """
+        code = "struct s { unsigned long long a : 3; unsigned long long : 8; unsigned long long b : 5; };"
+        header = TreeSitterBackend().parse(code, "bits.h")
+        output = CtypesWriter().write(header)
+
+        namespace: dict[str, object] = {}
+        exec(compile(output, "generated.py", "exec"), namespace)  # noqa: S102
+        record = namespace["s"]
+
+        instance = record()
+        instance.a = 5
+        instance.b = 1
+        assert bytes(instance) == (5 | (1 << 11)).to_bytes(ctypes.sizeof(record), sys.byteorder)
 
     def test_the_ctypes_writer_reserves_the_padded_bits(self) -> None:
         """The writer the defect actually broke.

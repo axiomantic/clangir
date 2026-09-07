@@ -137,6 +137,33 @@ def _pointer_qualifiers(node: Node) -> list[str]:
     ]
 
 
+def _recovered_bitfield_clause(field_decl: Node) -> Node | None:
+    """The ``ERROR`` node tree-sitter-c emits in place of an unnamed bitfield.
+
+    ``field_declaration`` requires a declarator, so for ``unsigned int : 8`` the
+    parser inserts a MISSING ``field_identifier`` and the ``bitfield_clause``
+    parses normally. That recovery is unavailable when the type ends in a size
+    keyword -- ``unsigned short``, ``unsigned long``, ``unsigned long long``,
+    ``long long`` -- because the parser can still accept a further
+    ``primitive_type`` at that point and so cannot commit to the missing
+    declarator. It emits an ``ERROR`` wrapping the ``:`` and the width instead.
+    Both shapes denote the same C11 6.7.2.1p12 padding, and the ``ERROR`` one is
+    recognized by its children rather than by its text.
+
+    Returns the ``ERROR`` node when it is shaped exactly like a bitfield clause
+    -- ``:`` followed by one expression -- otherwise ``None``. Invalid C also
+    yields an ``ERROR`` child holding a number, and reading a width out of one
+    would fabricate padding the source never declared.
+    """
+    for child in field_decl.children:
+        if child.type != "ERROR":
+            continue
+        parts = list(child.children)
+        if len(parts) == 2 and parts[0].type == ":" and parts[1].is_named:
+            return child
+    return None
+
+
 class TreeSitterBackend:
     """Parser backend using tree-sitter-c and tree-sitter-cpp."""
 
@@ -1085,8 +1112,9 @@ class TreeSitterBackend:
                             for c in child.children
                         )
                         bit_width: int | None = None
+                        recovered_padding = _recovered_bitfield_clause(child)
                         for c in child.children:
-                            if c.type == "bitfield_clause":
+                            if c.type == "bitfield_clause" or c is recovered_padding:
                                 num_child = c.child_by_field_name("length") or c.child_by_field_name("width")
                                 if not num_child:
                                     for sub in c.children:
@@ -1141,6 +1169,20 @@ class TreeSitterBackend:
                             )
                             self._lifted_declarations.append(inner)
                             base_type = CType(f"{'union' if inner.is_union else 'struct'} {inner.name}")
+
+                        if not field_decls and recovered_padding is not None and bit_width is not None:
+                            # The ERROR-recovered shape carries no declarator at
+                            # all, so the MISSING-node path below never sees it.
+                            fields.append(
+                                Field(
+                                    name="",
+                                    type=base_type,
+                                    bit_width=bit_width,
+                                    access=current_access,
+                                    is_padding=True,
+                                )
+                            )
+                            continue
 
                         for f_decl in field_decls:
                             f_name, f_type, _ = self._unwrap_declarator(f_decl, base_type)
