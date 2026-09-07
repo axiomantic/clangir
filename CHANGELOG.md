@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-07
+
+### Added
+
+- Both parser backends now populate `Struct.is_packed`. The field has existed on the IR since it was introduced and is read by eight writers (`ctypes`, `cython`, `cffi`, `lua`, `nim`, `json`, `prompt`, `diff`), but no backend ever set it, so every one of those code paths was reachable only from hand-built or JSON-loaded IR. Parsing a packed record now produces a packed record.
+
+  `LibclangBackend` consults two independent signals, because clang exposes the two spellings differently. `__attribute__((packed))` -- in the prefix position (`struct __attribute__((packed)) S { ... };`) or the suffix position (`struct S { ... } __attribute__((packed));`) -- arrives as a `PACKED_ATTR` child cursor. `#pragma pack(1)` arrives as no cursor at all: the pragma is consumed by the preprocessor and survives only in the recorded layout, so it is recovered by comparing the record's actual alignment against the natural alignment of its members.
+
+  `TreeSitterBackend` has no layout engine, so it reads both from the parse tree: attribute names come from the grammar's own `identifier` and `call_expression` nodes beneath an `attribute_specifier`, and `#pragma pack` scope is tracked by a pre-pass over `preproc_call` nodes that maintains the `push`/`pop` stack and matches each record to the alignment in force at its own byte offset. `#pragma pack()` and `#pragma pack(pop)` correctly end the scope, so a record declared after the pop is not packed.
+
+  Anonymous bit-fields are excluded from the natural-alignment comparison. They do not contribute alignment under the Itanium ABI, so including them would have reported `struct { char a; unsigned int : 8; char b; }` as packed when no packing was requested -- confirmed against a compiled C probe, which lays that record out at size 3 alignment 1 whether or not `packed` is applied.
+
+  `__attribute__((aligned(N)))` is deliberately *not* reported as packed. It raises a record's alignment rather than removing its inter-member padding: a compiled C probe puts `struct __attribute__((aligned(16))) { unsigned char a; unsigned int b; unsigned char c; }` at size 16 alignment 16 with `b` still at byte 4, byte-for-byte the unpacked layout. It continues to be captured by the separate `Struct.alignment` field. A record carrying both attributes is packed *and* over-aligned, and both are recorded.
+
+  An intermediate `#pragma pack(N)` for `1 < N < natural` has no faithful boolean representation -- `pack(2)` leaves a record squeezed but not flattened, and re-emitting `__attribute__((packed))` would understate its offsets. Rather than report it wrongly or drop it silently, `LibclangBackend` leaves `is_packed` false and records the discrepancy in `Struct.notes`.
+
+### Known limitations
+
+- `TreeSitterBackend` does not recognise a *union* carrying a prefix attribute (`union __attribute__((packed)) U { ... };`). The upstream tree-sitter-c grammar admits an attribute between `struct` and the tag name but not between `union` and the tag name, and misparses the whole declaration into a `function_definition` containing an `ERROR` node, so the union never reaches the record converter and is dropped entirely. This is pre-existing and not specific to packing. The suffix form (`union U { ... } __attribute__((packed));`) and `#pragma pack` both work correctly for unions, and `LibclangBackend` handles all three.
+
 ## [0.38.1] - 2026-09-07
 
 ### Fixed

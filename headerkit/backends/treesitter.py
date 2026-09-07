@@ -118,6 +118,123 @@ def _node_text(node: Any) -> str:
     return str(raw)
 
 
+_PACKED_SPELLINGS = frozenset({"packed", "__packed__"})
+
+
+def _attribute_names(spec: Any) -> set[str]:
+    """Collect the attribute names inside one ``attribute_specifier``.
+
+    The names are read from the grammar's own nodes, never from the spelling of
+    the specifier as a whole. ``__attribute__((packed))`` puts a bare
+    ``identifier`` under the ``argument_list``; ``__attribute__((aligned(16)))``
+    puts a ``call_expression`` whose first child is the identifier. Reading the
+    specifier's text instead would match ``aligned`` inside a name such as
+    ``packed_size`` and would not survive a macro-spelled attribute.
+    """
+    names: set[str] = set()
+    for arglist in (c for c in spec.children if c.type == "argument_list"):
+        for item in arglist.children:
+            if item.type == "identifier":
+                names.add(_node_text(item))
+            elif item.type == "call_expression":
+                fn = item.child_by_field_name("function")
+                target = fn if fn is not None else (item.children[0] if item.children else None)
+                if target is not None and target.type == "identifier":
+                    names.add(_node_text(target))
+    return names
+
+
+def _record_has_packed_attribute(node: Any) -> bool:
+    """Report whether a record carries ``__attribute__((packed))``.
+
+    Both spellings are covered by scanning every ``attribute_specifier`` child:
+    the prefix form sits between the ``struct`` keyword and the tag name, the
+    suffix form after the field list, and both are children of the same
+    ``struct_specifier``.
+    """
+    return any(
+        _PACKED_SPELLINGS & _attribute_names(child)
+        for child in node.children
+        if child.type == "attribute_specifier"
+    )
+
+
+def _split_pragma_arg(text: str) -> list[str]:
+    """Split a ``preproc_arg`` payload into words, numbers, and punctuation.
+
+    tree-sitter-c does not descend into a pragma's argument: it hands back one
+    opaque ``preproc_arg`` leaf. Only that already-isolated leaf is tokenized
+    here, and its contents (``pack(push, 1)``) are a flat token list, not a
+    context-free construct. No declaration, type, or scope is recovered from
+    source text -- those all still come from the parse tree.
+    """
+    tokens: list[str] = []
+    current = ""
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            current += ch
+            continue
+        if current:
+            tokens.append(current)
+            current = ""
+        if not ch.isspace():
+            tokens.append(ch)
+    if current:
+        tokens.append(current)
+    return tokens
+
+
+def _pack_regions(root: Any) -> list[tuple[int, int | None]]:
+    """Map source positions to the ``#pragma pack`` alignment in force there.
+
+    Returns ``(start_byte, alignment)`` pairs in ascending order, where
+    ``alignment`` is ``None`` for the compiler default. A record is matched to a
+    region by its own start offset, which is what gives the pragma its scope:
+    ``#pragma pack(1)`` applies to records that carry no attribute of their own,
+    and ``#pragma pack()`` or ``pop`` ends that scope.
+    """
+    regions: list[tuple[int, int | None]] = []
+    stack: list[int | None] = []
+    current: int | None = None
+
+    def visit(node: Any) -> None:
+        nonlocal current
+        if node.type == "preproc_call":
+            directive = node.child_by_field_name("directive")
+            if directive is not None and _node_text(directive).strip() == "#pragma":
+                arg = node.child_by_field_name("argument")
+                tokens = _split_pragma_arg(_node_text(arg)) if arg is not None else []
+                if tokens and tokens[0] == "pack":
+                    words = [t for t in tokens[1:] if t not in "(),"]
+                    if not words:  # pragma pack() -- reset to default
+                        current = None
+                    elif words[0] == "push":
+                        stack.append(current)
+                        if len(words) > 1 and words[1].isdigit():
+                            current = int(words[1])
+                    elif words[0] == "pop":
+                        current = stack.pop() if stack else None
+                    elif words[0].isdigit():
+                        current = int(words[0])
+                    regions.append((node.end_byte, current))
+        for child in node.children:
+            visit(child)
+
+    visit(root)
+    regions.sort(key=lambda r: r[0])
+    return regions
+
+
+def _pack_at(regions: list[tuple[int, int | None]], offset: int) -> int | None:
+    """Return the ``#pragma pack`` alignment in force at a byte offset."""
+    value: int | None = None
+    for start, alignment in regions:
+        if start > offset:
+            break
+        value = alignment
+    return value
+
+
 def _pointer_qualifiers(node: Node) -> list[str]:
     """Qualifiers borne by the pointer itself, read off a ``pointer_declarator``.
 
@@ -198,6 +315,7 @@ class TreeSitterBackend:
         self._seen_typedefs: set[str] = set()
         self._lifted_declarations: list[Declaration] = []
         self._filled_forward: Struct | None = None
+        self._pack_regions: list[tuple[int, int | None]] = []
 
     def is_available(self) -> bool:
         return _HAS_TREESITTER and (_HAS_TREESITTER_C or _HAS_TREESITTER_CPP)
@@ -301,6 +419,7 @@ class TreeSitterBackend:
         self._seen_typedefs = set()
         self._lifted_declarations = []
         self._filled_forward = None
+        self._pack_regions = _pack_regions(tree.root_node)
 
         declarations: list[Declaration] = []
         for child in tree.root_node.children:
@@ -1221,6 +1340,13 @@ class TreeSitterBackend:
                                 )
 
         is_cppclass = is_class_keyword or bool(methods) or bool(bases) or bool(constructors) or (destructor is not None)
+        # An attribute on the record wins outright. Failing that the record
+        # inherits any ``#pragma pack(1)`` in force at its own position, which
+        # is how a record carrying no attribute of its own becomes packed.
+        # Only an alignment of exactly 1 is reported: an intermediate
+        # ``#pragma pack(2)`` squeezes the record without flattening it, and a
+        # boolean cannot say so without overstating the result.
+        is_packed = _record_has_packed_attribute(node) or _pack_at(self._pack_regions, node.start_byte) == 1
         loc = SourceLocation(file=filename, line=node.start_point[0] + 1, column=node.start_point[1] + 1)
         record = Struct(
             name=name,
@@ -1231,6 +1357,7 @@ class TreeSitterBackend:
             bases=bases,
             is_union=is_union,
             is_cppclass=is_cppclass,
+            is_packed=is_packed,
             namespace=namespace,
             template_params=template_params or [],
             inner_typedefs=inner_typedefs,

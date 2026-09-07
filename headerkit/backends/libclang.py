@@ -1745,6 +1745,82 @@ class ClangASTConverter:
 
         return attrs, is_deprecated
 
+    def _is_packed(self, cursor: Any) -> bool:
+        """Return True when a record's layout drops natural field padding.
+
+        Two independent signals are consulted because clang exposes the two
+        spellings differently. ``__attribute__((packed))`` -- in either the
+        prefix or the suffix position -- arrives as a ``PACKED_ATTR`` child
+        cursor. ``#pragma pack(1)`` arrives as no cursor at all: the pragma is
+        consumed by the preprocessor and survives only in the recorded layout.
+
+        The layout signal is deliberately narrow. It fires only when the record
+        ends up byte-aligned while a member wanted more, which is exactly the
+        condition under which re-emitting ``__attribute__((packed))``
+        reproduces the original layout. An intermediate ``#pragma pack(2)``
+        leaves alignment at 2, is not expressible as a boolean, and is
+        therefore not reported here -- see ``_pack_note``.
+
+        Anonymous bit-fields are excluded from the natural alignment because
+        they do not contribute alignment under the Itanium ABI. Including them
+        would report ``struct { char a; unsigned int : 8; char b; }`` as packed
+        when no packing was requested.
+        """
+        with contextlib.suppress(Exception):
+            if any("PACKED" in child.kind.name for child in cursor.get_children()):
+                return True
+
+        natural, actual = self._layout_alignments(cursor)
+        if natural is None or actual is None:
+            return False
+        return actual == 1 and natural > 1
+
+    def _pack_note(self, cursor: Any) -> str | None:
+        """Describe an intermediate ``#pragma pack(N)`` the IR cannot express.
+
+        ``is_packed`` is a boolean, so a record squeezed to an alignment
+        between 1 and its natural alignment has no faithful representation.
+        Reporting it as packed would understate the offsets; reporting nothing
+        would lose the fact silently. A note keeps it visible.
+        """
+        with contextlib.suppress(Exception):
+            if any("PACKED" in child.kind.name for child in cursor.get_children()):
+                return None
+        natural, actual = self._layout_alignments(cursor)
+        if natural is None or actual is None:
+            return None
+        if 1 < actual < natural:
+            return (
+                f"Record is laid out with alignment {actual} but its members "
+                f"require {natural}; this is an intermediate '#pragma pack({actual})' "
+                "that is_packed cannot express."
+            )
+        return None
+
+    def _layout_alignments(self, cursor: Any) -> tuple[int | None, int | None]:
+        """Return (natural alignment of the members, recorded alignment)."""
+        natural: int | None = None
+        actual: int | None = None
+        with contextlib.suppress(Exception):
+            align = cursor.type.get_align()
+            if align > 0:
+                actual = int(align)
+        with contextlib.suppress(Exception):
+            best = 1
+            saw_member = False
+            for f in cursor.type.get_fields():
+                # An anonymous bit-field reserves bits without imposing its
+                # type's alignment, so it must not raise the natural figure.
+                if f.is_bitfield() and not f.spelling:
+                    continue
+                fa = f.type.get_align()
+                if fa > 0:
+                    saw_member = True
+                    best = max(best, int(fa))
+            if saw_member:
+                natural = best
+        return natural, actual
+
     def _get_alignment(self, cursor: Any) -> int | None:
         """Extract explicit byte alignment from a cursor or type if specified."""
         has_explicit = False
@@ -2150,6 +2226,10 @@ class ClangASTConverter:
 
         attrs, is_deprecated = self._get_attributes(cursor)
         alignment = self._get_alignment(cursor)
+        is_packed = self._is_packed(cursor)
+        pack_note = self._pack_note(cursor)
+        if pack_note is not None:
+            notes.append(pack_note)
         vtable_entries = [m for m in methods if m.is_virtual or m.is_pure_virtual]
 
         struct = Struct(
@@ -2158,6 +2238,7 @@ class ClangASTConverter:
             methods=methods,
             is_union=is_union,
             is_cppclass=is_cppclass,
+            is_packed=is_packed,
             namespace=self._current_namespace,
             cpp_name=cpp_name,
             notes=notes,
