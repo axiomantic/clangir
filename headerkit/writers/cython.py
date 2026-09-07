@@ -791,7 +791,7 @@ class PxdWriter:
         """
         namespaces_by_name: dict[str, set[str | None]] = defaultdict(set)
         for decl in self.header.declarations:
-            if isinstance(decl, (Struct, Enum, Typedef, Variable)) and decl.name:
+            if isinstance(decl, Struct | Enum | Typedef | Variable) and decl.name:
                 namespaces_by_name[decl.name].add(self._decl_scope(decl))
             # An enumerator of an unscoped enum is a namespace-scope name in
             # C++, not a member of the tag, so it collides independently of it.

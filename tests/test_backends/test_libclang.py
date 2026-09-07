@@ -192,6 +192,104 @@ class TestNormalizePath:
         assert normalize_path("") == ""
 
 
+class TestIsSystemHeaderLinux:
+    """Linux toolchain layouts, pinned so a macOS-only run cannot hide a leak.
+
+    ``stddef.h`` and friends live in clang's *versioned* resource directory on
+    Linux (``lib/clang/19/include``), not in a literal ``clang/include``, and gcc
+    interposes a target triple and a version. A fixed fragment matched neither, so
+    every generated binding on Linux absorbed ``size_t``, ``NULL``, ``ptrdiff_t``,
+    ``wchar_t`` and ``max_align_t``.
+    """
+
+    def test_clang_versioned_resource_dir(self):
+        assert _is_system_header("/usr/lib/llvm-19/lib/clang/19/include/stddef.h") is True
+
+    def test_clang_resource_dir_under_usr_lib(self):
+        assert _is_system_header("/usr/lib/clang/18/include/stddef.h") is True
+
+    def test_clang_resource_dir_in_arbitrary_prefix(self):
+        """A relocatable LLVM install has no /usr prefix to key off."""
+        assert _is_system_header("/opt/llvm-20/lib/clang/20/include/__stddef_size_t.h") is True
+
+    def test_gcc_triple_versioned_include(self):
+        assert _is_system_header("/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h") is True
+
+    def test_gcc_include_fixed(self):
+        assert _is_system_header("/usr/lib/gcc/x86_64-linux-gnu/13/include-fixed/limits.h") is True
+
+    def test_gcc_lib64_layout(self):
+        assert _is_system_header("/usr/lib64/gcc/x86_64-suse-linux/13/include/stddef.h") is True
+
+    def test_usr_include(self):
+        assert _is_system_header("/usr/include/x86_64-linux-gnu/sys/types.h") is True
+
+    def test_usr_local_include(self):
+        assert _is_system_header("/usr/local/include/foo.h") is True
+
+    def test_project_include_is_not_system(self):
+        assert _is_system_header("/home/user/project/include/mylib.h") is False
+
+    def test_marker_must_be_a_whole_component(self):
+        """A project directory merely *named* like a compiler is still a project."""
+        assert _is_system_header("/home/user/clang-tools/include/tool.h") is False
+        assert _is_system_header("/home/user/gcc-shim/include/shim.h") is False
+
+    def test_project_prefix_overrides_resource_dir(self):
+        path = "/usr/lib/llvm-19/lib/clang/19/include/vendored/mylib.h"
+        assert _is_system_header(path) is True
+        assert _is_system_header(path, project_prefixes=("/usr/lib/llvm-19/lib/clang/19/include/vendored",)) is False
+
+
+class TestClangAuthoritativeSystemClassification:
+    """``_is_system_include`` prefers clang's own answer to the path heuristic.
+
+    A path heuristic is always one toolchain layout behind. clang knows which
+    search paths it treated as system, so ``clang_Location_isInSystemHeader`` is
+    recorded during parsing and consulted first.
+    """
+
+    def test_clang_answer_overrides_a_negative_heuristic(self):
+        backend = LibclangBackend()
+        path = "/somewhere/unheard/of/include/weird.h"
+        assert _is_system_header(path) is False
+
+        backend._clang_system_headers.add(normalize_path(path))
+
+        assert backend._is_system_include(path, None) is True
+
+    def test_project_prefixes_override_the_clang_answer(self):
+        """An umbrella header installed system-side must still be descended into."""
+        backend = LibclangBackend()
+        path = "/opt/homebrew/include/sodium/crypto_auth.h"
+        backend._clang_system_headers.add(normalize_path(path))
+
+        assert backend._is_system_include(path, None) is True
+        assert backend._is_system_include(path, ("/opt/homebrew/include/sodium",)) is False
+
+    def test_unrecorded_path_falls_back_to_the_heuristic(self):
+        backend = LibclangBackend()
+
+        assert backend._is_system_include("/usr/include/stdio.h", None) is True
+        assert backend._is_system_include("/home/user/project/include/mylib.h", None) is False
+
+
+@libclang
+class TestClangSystemHeaderRecording:
+    """Parsing records clang's classification for the headers it pulled in."""
+
+    def test_libc_headers_are_recorded_as_system(self, tmp_path: Path) -> None:
+        top = tmp_path / "top.h"
+        top.write_text("#include <stddef.h>\nvoid decl_1(int x);\n")
+        backend = LibclangBackend()
+
+        backend.parse(top.read_text(), str(top), [str(tmp_path)])
+
+        recorded = backend._clang_system_headers
+        assert any(p.endswith("/stddef.h") for p in recorded), f"stddef.h not classified: {sorted(recorded)}"
+        assert normalize_path(str(top)) not in recorded
+
+
 class TestIsSystemHeaderWindows:
     """Tests for Windows-specific system header classification."""
 

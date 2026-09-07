@@ -489,14 +489,89 @@ def get_system_include_dirs(cplus: bool = False) -> list[str]:
     return result_cache
 
 
+def _location_is_in_system_header(tu: Any, file_obj: Any) -> bool:
+    """Ask clang whether it treated ``file_obj`` as a system header.
+
+    Backed by ``clang_Location_isInSystemHeader``, which reports how clang itself
+    classified the include search path the file was found on. The vendored bindings
+    expose ``is_in_system_header`` on every supported LLVM version; a binding that
+    does not answers False and leaves the decision to the path heuristic.
+
+    :param tu: Translation unit the file belongs to.
+    :param file_obj: A cindex ``File`` from the translation unit.
+    :returns: True if clang classified the file as a system header.
+    """
+    try:
+        location = _cindex.SourceLocation.from_offset(tu, file_obj, 0)
+        return bool(location.is_in_system_header)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _matches_project_prefix(header_path: str, project_prefixes: tuple[str, ...] | None) -> bool:
+    """Check whether a header was explicitly allowlisted as a project header.
+
+    An allowlisted path overrides every system classification, including
+    clang's own, so that an umbrella header installed under a system
+    location can still be descended into.
+
+    :param header_path: Path to the header file.
+    :param project_prefixes: Path prefixes to treat as project, or None.
+    :returns: True if the path is under one of the prefixes.
+    """
+    if not project_prefixes:
+        return False
+
+    path_str = normalize_path(str(header_path))
+    for prefix in project_prefixes:
+        normalized_prefix = normalize_path(prefix)
+        if path_str == normalized_prefix or path_str.startswith(normalized_prefix.rstrip("/") + "/"):
+            return True
+    return False
+
+
+# Directory names that mark a compiler's own bundled include tree. The resource
+# directory is versioned (``lib/clang/19/include``, ``gcc/x86_64-linux-gnu/13/include``),
+# so the marker and the ``include`` component are not adjacent and a fixed
+# ``clang/include`` fragment never matches on Linux.
+_COMPILER_RESOURCE_MARKERS = frozenset({"clang", "gcc", "g++", "c++"})
+
+# How many components may separate the marker from the ``include`` component.
+# ``gcc/<triple>/<version>/include`` is the longest real form.
+_COMPILER_RESOURCE_WINDOW = 3
+
+_COMPILER_INCLUDE_DIRS = frozenset({"include", "include-fixed"})
+
+
+def _is_compiler_resource_dir(path_str: str) -> bool:
+    """Check whether a normalized path lies inside a compiler's bundled include tree.
+
+    :param path_str: Path already passed through :func:`normalize_path`.
+    :returns: True if a compiler marker directory precedes an include directory.
+    """
+    parts = path_str.split("/")
+    for index, part in enumerate(parts):
+        if part not in _COMPILER_INCLUDE_DIRS:
+            continue
+        window_start = max(0, index - _COMPILER_RESOURCE_WINDOW)
+        if _COMPILER_RESOURCE_MARKERS & set(parts[window_start:index]):
+            return True
+    return False
+
+
 def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None = None) -> bool:
     """Check if a header path is a system header.
 
     System headers are identified by:
     - Being in /usr/include, /usr/local/include
     - Being in SDK paths (MacOSX.sdk, etc.)
-    - Being in compiler-specific paths (clang/include, gcc/include)
+    - Being in a compiler's own versioned resource directory
+      (``lib/clang/19/include``, ``lib/gcc/<triple>/13/include``)
     - Being in framework directories
+
+    This is a path heuristic and therefore always one platform behind. When a
+    translation unit is available, :meth:`LibclangBackend._is_system_include`
+    consults clang's own classification first and falls back to this function.
 
     Headers can be allowlisted as "project" headers using project_prefixes.
     This is useful for umbrella headers where the library is installed in
@@ -509,11 +584,8 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
     path_str = normalize_path(str(header_path))
 
     # Check project prefixes first - if path matches, it's NOT a system header
-    if project_prefixes:
-        for prefix in project_prefixes:
-            normalized = normalize_path(prefix).rstrip("/") + "/"
-            if path_str.startswith(normalized) or path_str == normalize_path(prefix):
-                return False
+    if _matches_project_prefix(header_path, project_prefixes):
+        return False
 
     # System header locations that are absolute path prefixes
     system_path_prefixes = (
@@ -523,15 +595,16 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
         "/opt/local/",
         "/system/library/frameworks",
         "/library/developer/commandlinetools",
+        # Linux distribution toolchains ship their resource dirs here.
+        "/usr/lib/gcc/",
+        "/usr/lib64/gcc/",
+        "/usr/lib/clang/",
+        "/usr/lib64/clang/",
     )
 
     # System header path fragments that can appear anywhere in the path
     system_path_fragments = (
         ".sdk/",
-        "clang/include",
-        "gcc/include",
-        "g++/include",
-        "c++/include",
         # Windows: LLVM and Windows SDK paths
         "program files/llvm/",
         "program files (x86)/llvm/",
@@ -553,7 +626,7 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
         if fragment in path_str:
             return True
 
-    return False
+    return _is_compiler_resource_dir(path_str)
 
 
 def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declaration]:
@@ -3039,6 +3112,28 @@ class LibclangBackend:
         self._parse_cache: dict[str, Header] = {}
         # Visited set to prevent circular includes
         self._visited: set[str] = set()
+        # Normalized paths clang itself classified as system headers, accumulated
+        # across every translation unit this backend has parsed.
+        self._clang_system_headers: set[str] = set()
+
+    def _is_system_include(self, header_path: str, project_prefixes: tuple[str, ...] | None) -> bool:
+        """Decide whether an included header is a system header.
+
+        clang's answer is authoritative: it knows which search paths it treated
+        as system (``-isystem``, its resource directory, the platform defaults),
+        which no path heuristic can track across platforms. The heuristic in
+        :func:`_is_system_header` remains as the fallback for paths clang has
+        not classified in this process.
+
+        :param header_path: Path to the included header.
+        :param project_prefixes: Path prefixes that override every system classification.
+        :returns: True if the header must not be descended into.
+        """
+        if _matches_project_prefix(header_path, project_prefixes):
+            return False
+        if normalize_path(str(header_path)) in self._clang_system_headers:
+            return True
+        return _is_system_header(header_path, project_prefixes)
 
     @property
     def name(self) -> str:
@@ -3172,7 +3267,7 @@ class LibclangBackend:
         # Process each included header
         for include_path in main_header.included_headers:
             # Skip system headers (unless allowlisted via project_prefixes)
-            if _is_system_header(include_path, project_prefixes):
+            if self._is_system_include(include_path, project_prefixes):
                 continue
 
             # Get absolute path
@@ -3418,6 +3513,12 @@ class LibclangBackend:
             header_path = str(inclusion.include.name)
             # Store full path - caller can extract basename if needed
             included_headers.add(header_path)
+            # Ask clang whether it treated this file as a system header. This is the
+            # authoritative answer -- clang knows its own resource directory and
+            # -isystem search paths, which vary per platform and per toolchain
+            # version, so the path heuristic alone leaks libc internals on Linux.
+            if _location_is_in_system_header(tu, inclusion.include):
+                self._clang_system_headers.add(normalize_path(header_path))
 
         # Convert to IR
         search_dirs = _filter_search_dirs(filename, include_dirs)
@@ -3439,7 +3540,7 @@ class LibclangBackend:
         # ``recursive_includes`` is the caller's answer, so nothing here second-guesses
         # it from the header's shape. Scope is bounded by _is_system_header /
         # project_prefixes, allowlist, max_depth, and self._visited.
-        has_project_include = any(not _is_system_header(h, project_prefixes) for h in header.included_headers)
+        has_project_include = any(not self._is_system_include(h, project_prefixes) for h in header.included_headers)
         if recursive_includes and has_project_include:
             # Reset visited set for each top-level parse
             self._visited = set()
