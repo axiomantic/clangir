@@ -866,16 +866,7 @@ PARITY_CASES = [
             "libclang normalizes to 'const volatile int'. Semantically identical; cosmetic only."
         ),
     ),
-    pytest.param(
-        "typedef enum Switch { OFF, ON } Switch;",
-        id="tagged_typedef_enum",
-        marks=_xfail(
-            "DEFECT (tree-sitter): a TAGGED 'typedef enum Switch {...} Switch;' is marked "
-            "is_typedef=True, so the writer emits 'ctypedef enum Switch' where libclang "
-            "correctly emits 'cdef enum Switch'. This is the R5 defect class, still unfixed "
-            "in the tree-sitter backend."
-        ),
-    ),
+    pytest.param("typedef enum Switch { OFF, ON } Switch;", id="tagged_typedef_enum"),
     pytest.param(
         "typedef enum { OFF, ON } Switch;",
         id="tagless_typedef_enum_layout",

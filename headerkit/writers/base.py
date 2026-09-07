@@ -2,11 +2,40 @@
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from headerkit.ir import Header, SourceUnit, strip_padding_fields
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
+
+#: One-line stand-in for a generated multi-line block inside a dedented
+#: template. See :func:`render_block_template` for why the substitution cannot
+#: be an ordinary f-string interpolation.
+DEDENT_BLOCK = "_HK_BLOCK_"
+
+
+def render_block_template(template: str, *blocks: str) -> str:
+    """Dedent ``template``, then substitute ``blocks`` for its placeholders.
+
+    ``textwrap.dedent`` measures the string *after* interpolation, so dropping a
+    multi-line block straight into an indented template makes the block's own
+    indentation the common prefix and strips the template down to it -- the
+    emitted file then begins with the template's leftover indent and does not
+    parse. It only misbehaves once the block has a second line, which is why the
+    single-item case looks correct and the defect survives review. Dedenting
+    against a one-line token and substituting afterwards keeps the template's
+    indentation and the block's independent of each other.
+
+    :param template: An f-string carrying one :data:`DEDENT_BLOCK` token per
+        block, each written at the template's own indentation.
+    :param blocks: Replacement text, substituted into the tokens left to right.
+        A block may be empty, which leaves the token's line blank.
+    """
+    rendered = textwrap.dedent(template)
+    for block in blocks:
+        rendered = rendered.replace(DEDENT_BLOCK, block, 1)
+    return rendered
 
 
 @dataclass(frozen=True)

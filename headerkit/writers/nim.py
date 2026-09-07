@@ -34,7 +34,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 NIM_KEYWORDS: set[str] = {
     "addr",
@@ -814,7 +814,8 @@ class NimWriter(BaseWriter):
                 )
             stubs = "\n".join(stub_lines) if stub_lines else f"    checkpoint \"Verified native library '{pkg}' loads\""
 
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 import std/[unittest, dynlib]
                 import {pkg}
 
@@ -824,8 +825,10 @@ class NimWriter(BaseWriter):
                     if lib == nil:
                       checkpoint "Native dynamic library '{pkg}' not found in system library path"
                       fail()
-                {stubs}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                stubs,
+            )
             files.append(OutputFile(path="tests/test_tripwire.nim", content=tripwire))
 
         if test_type in ("unit", "both"):
@@ -834,14 +837,17 @@ class NimWriter(BaseWriter):
                 if fn_names
                 else f"    check declared({pkg})"
             )
-            unit_test = textwrap.dedent(f"""\
+            unit_test = render_block_template(
+                f"""\
                 import std/unittest
                 import {pkg}
 
                 suite "{pkg} Unit Tests":
                   test "module exports expected declarations":
-                {decl_checks}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                decl_checks,
+            )
             files.append(OutputFile(path=f"tests/test_{pkg}.nim", content=unit_test))
 
         return ProjectLayout(files=files)

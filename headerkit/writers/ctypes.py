@@ -33,7 +33,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 # Maps C type names to their ctypes equivalents.
 CTYPES_TYPE_MAP: dict[str, str] = {
@@ -114,17 +114,6 @@ _HK_UNNAMED_BITFIELD_ALIGNS = sys.platform.startswith("win") or (
 _HK_CTYPES_MATCHES_C_NATIVELY = sys.platform.startswith("win")"""
 
 
-#: One-line stand-in for a generated multi-line assertion block.
-#:
-#: ``textwrap.dedent`` measures the string *after* interpolation, so dropping a
-#: multi-line block straight into an indented template makes the block's own
-#: indentation the common prefix and strips the template down to it -- the
-#: emitted test then starts with the template's leftover indent and does not
-#: parse. It only misbehaves once the block has a second line, which is why the
-#: single-function case looked correct. Dedenting against a one-line token and
-#: substituting afterwards keeps the two indentations independent.
-_CHECKS = "_HK_CHECKS_"
-
 #: The ctypes spelling a C enum carries at the ABI boundary. C leaves the
 #: underlying type implementation-defined but requires it to represent every
 #: enumerator; every ABI headerkit targets uses ``int`` for an enum whose
@@ -148,7 +137,7 @@ def _library_loader(library: str, lib_name: str) -> str:
     env_var = f"{re.sub(r'[^A-Za-z0-9]', '_', library).upper()}_LIBRARY"
     return textwrap.dedent(f'''\
         #: Base name of the native library these bindings resolve symbols from.
-        _LIBRARY_NAME = "{library}"
+        _LIBRARY_NAME = {library!r}
 
         #: Environment variable naming an explicit path to that library, for a
         #: build tree or a wheel that ships the binary alongside this module.
@@ -772,7 +761,21 @@ def _struct_to_ctypes(decl: Struct) -> str | None:
     return "\n".join(lines)
 
 
-def _enum_to_ctypes(decl: Enum) -> str | None:
+def _enum_needs_alias(decl: Enum, typedef_names: frozenset[str]) -> bool:
+    """Does this enum have to bind its own name, because no Typedef will?
+
+    ``typedef enum { ... } Flags;`` gives the C program a type named ``Flags``,
+    but an enum reaches this writer as loose integer constants and binds no name
+    of its own. libclang follows the definition with a ``Typedef`` that supplies
+    the alias; tree-sitter folds the alias into the ``Enum`` and emits no
+    ``Typedef``, so under that backend the generated module had no ``Flags`` at
+    all. Emitting the alias here, and only when no ``Typedef`` already carries
+    it, makes the two backends produce the same module.
+    """
+    return bool(decl.is_typedef and decl.name and not _is_anonymous_name(decl.name) and decl.name not in typedef_names)
+
+
+def _enum_to_ctypes(decl: Enum, typedef_names: frozenset[str] = frozenset()) -> str | None:
     """Convert an Enum IR node to module-level integer constants."""
     if not decl.values:
         return None
@@ -786,6 +789,9 @@ def _enum_to_ctypes(decl: Enum) -> str | None:
             lines.append(f"{v.name} = {v.value}")
         else:
             lines.append(f"# {v.name} = <auto>")
+
+    if _enum_needs_alias(decl, typedef_names):
+        lines.append(f"{decl.name} = {ENUM_CTYPE}")
 
     return "\n".join(lines)
 
@@ -885,6 +891,78 @@ def _variable_to_ctypes(decl: Variable, lib_name: str) -> str | None:
     return f"# {lib_name}.{decl.name}: {var_type}"
 
 
+#: Section each declaration kind renders into, in emission order.
+_SECTION_ORDER: tuple[str, ...] = ("constants", "enums", "structs", "typedefs", "functions", "variables")
+
+
+def _render_declaration(decl: object, lib_name: str, typedef_names: frozenset[str]) -> tuple[str | None, str]:
+    """Render one declaration and name the section it belongs in.
+
+    :returns: The rendered source (``None`` when the declaration emits nothing)
+        and the section key, or ``""`` for a declaration kind this writer skips.
+    """
+    if isinstance(decl, Constant):
+        return _constant_to_ctypes(decl), "constants"
+    if isinstance(decl, Enum):
+        return _enum_to_ctypes(decl, typedef_names), "enums"
+    if isinstance(decl, Struct):
+        return _struct_to_ctypes(decl), "structs"
+    if isinstance(decl, Typedef):
+        return _typedef_to_ctypes(decl), "typedefs"
+    if isinstance(decl, Function):
+        return _function_to_ctypes(decl, lib_name), "functions"
+    if isinstance(decl, Variable):
+        return _variable_to_ctypes(decl, lib_name), "variables"
+    return None, ""
+
+
+def _bound_names(decl: object, rendered: str, typedef_names: frozenset[str]) -> list[str]:
+    """Return the module-level names ``rendered`` assigns for ``decl``.
+
+    Only the sections that precede the exported-symbol block are described. A
+    function renders as ``_lib.f.argtypes = ...``, which binds nothing at module
+    level, and a variable renders as a comment.
+    """
+    if isinstance(decl, Constant):
+        return [decl.name]
+    if isinstance(decl, Enum):
+        # An enumerator with no value renders as a comment and binds nothing.
+        names = [v.name for v in decl.values if v.value is not None]
+        if _enum_needs_alias(decl, typedef_names) and decl.name:
+            names.append(decl.name)
+        return names
+    if isinstance(decl, Struct):
+        return [decl.name] if decl.name else []
+    if isinstance(decl, Typedef):
+        # An unrepresentable or redundant typedef renders as a bare comment.
+        return [] if rendered.lstrip().startswith("#") else [decl.name]
+    return []
+
+
+def _typedef_names(header: Header) -> frozenset[str]:
+    """Names an explicit ``Typedef`` declaration in this header already binds."""
+    return frozenset(d.name for d in header.declarations if isinstance(d, Typedef) and d.name)
+
+
+def declared_binding_names(header: Header, lib_name: str = "_lib") -> list[str]:
+    """Return the non-function module-level names ``header_to_ctypes`` binds.
+
+    A header that declares no function still declares *something* worth
+    asserting on, and ``AGENTS.md`` §1 forbids falling back to a module
+    existence check. This is what a generated test asserts on instead.
+    """
+    names: list[str] = []
+    typedef_names = _typedef_names(header)
+    for decl in header.declarations:
+        rendered, section = _render_declaration(decl, lib_name, typedef_names)
+        if rendered is None or section in ("", "functions", "variables"):
+            continue
+        for name in _bound_names(decl, rendered, typedef_names):
+            if name not in names:
+                names.append(name)
+    return names
+
+
 def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | None = None) -> str:
     """Convert all declarations in a Header to a Python ctypes module string.
 
@@ -909,34 +987,24 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     #: Functions to re-export as module-level callables. Only populated when a
     #: library is being loaded, since without one there is nothing to bind to.
     bound_symbols: list[str] = []
+    #: Module-level names an earlier section already assigns. C keeps tags and
+    #: ordinary identifiers in separate namespaces, so ``struct Rec { ... };``
+    #: and ``int Rec(void);`` are both legal in one translation unit and both
+    #: reach Python as ``Rec``. Re-exporting the function last would replace the
+    #: struct class with a function pointer, silently, after import.
+    taken_names: set[str] = set()
+    typedef_names = _typedef_names(header)
 
     for decl in header.declarations:
-        result: str | None = None
-        section: str = ""
-
-        if isinstance(decl, Constant):
-            result = _constant_to_ctypes(decl)
-            section = "constants"
-        elif isinstance(decl, Enum):
-            result = _enum_to_ctypes(decl)
-            section = "enums"
-        elif isinstance(decl, Struct):
-            result = _struct_to_ctypes(decl)
-            section = "structs"
-        elif isinstance(decl, Typedef):
-            result = _typedef_to_ctypes(decl)
-            section = "typedefs"
-        elif isinstance(decl, Function):
-            result = _function_to_ctypes(decl, lib_name)
-            section = "functions"
-            if library is not None and decl.name and decl.name not in bound_symbols:
-                bound_symbols.append(decl.name)
-        elif isinstance(decl, Variable):
-            result = _variable_to_ctypes(decl, lib_name)
-            section = "variables"
+        result, section = _render_declaration(decl, lib_name, typedef_names)
 
         if result is not None and section:
             sections[section].append(result)
+            taken_names.update(_bound_names(decl, result, typedef_names))
+            if section == "functions" and library is not None:
+                name = getattr(decl, "name", None)
+                if name and name not in bound_symbols:
+                    bound_symbols.append(name)
 
     # Build output
     output_lines: list[str] = []
@@ -969,7 +1037,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
         output_lines.append("")
 
     # Sections
-    section_order = ["constants", "enums", "structs", "typedefs", "functions", "variables"]
+    section_order = list(_SECTION_ORDER)
     section_headers = {
         "constants": "Constants",
         "enums": "Enums",
@@ -998,7 +1066,13 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
         # Bound after the argtypes/restype annotations above, so each name is a
         # fully configured callable rather than an unconverted raw _FuncPtr.
         for symbol in bound_symbols:
-            output_lines.append(f"{symbol} = {lib_name}.{symbol}")
+            if symbol in taken_names:
+                output_lines.append(
+                    f"# {symbol!r} is not re-exported: a declaration above already binds that "
+                    f"name. Call it as {lib_name}.{symbol}."
+                )
+            else:
+                output_lines.append(f"{symbol} = {lib_name}.{symbol}")
         output_lines.append("")
 
     return "\n".join(output_lines)
@@ -1013,6 +1087,13 @@ class CtypesWriter(BaseWriter):
         Variable name for the loaded library object. Defaults to ``"_lib"``.
         Controls the variable name used in function prototype annotations
         (e.g., ``_lib.func.argtypes = [...]``).
+    library : str
+        Base name of the *native* library a scaffolded package loads, without a
+        ``lib`` prefix or a platform suffix -- what ``ctypes.util.find_library``
+        is given. This is not ``lib_name``, which names a Python variable.
+        Defaults to the package name, which is right only when the two happen to
+        coincide: scaffolding ``probe_bindings`` around ``libprobe`` needs
+        ``library="probe"`` or the generated module cannot find its binary.
 
     Example
     -------
@@ -1050,6 +1131,15 @@ class CtypesWriter(BaseWriter):
             default="_lib",
             type=str,
         ),
+        WriterOption(
+            name="library",
+            description=(
+                "Base name of the native library a scaffolded package loads, without a 'lib' "
+                "prefix or platform suffix. Defaults to the package name."
+            ),
+            default=None,
+            type=str,
+        ),
     )
 
     def __init__(self, lib_name: str = "_lib") -> None:
@@ -1070,10 +1160,19 @@ class CtypesWriter(BaseWriter):
     ) -> ProjectLayout:
         pkg = options.package_name
         test_type = options.get_option("test_type", "both")
+        # The native library rarely shares the Python package's name -- a
+        # ``probe_bindings`` package around ``libprobe`` is the ordinary case --
+        # so the package name is the last resort, not the answer.
+        library = options.get_option("library") or pkg
         # A package is a complete, importable artifact, so it loads its own
         # library. The single-file layout stays a fragment and does not.
-        bindings_code = self._render(unit, library=pkg)
+        header = unit if isinstance(unit, Header) else Header(declarations=unit.declarations, path=unit.path)
+        bindings_code = self._render(unit, library=library)
         fn_names = extract_function_names(unit)
+        # A function-less header still declares structs, enums and typedefs. The
+        # generated tests assert on those rather than on the module object,
+        # which ``AGENTS.md`` §1 prohibits as a sole assertion.
+        check_names = fn_names[:10] or declared_binding_names(header, self._lib_name)[:10]
 
         pyproject = textwrap.dedent(f"""\
             [build-system]
@@ -1104,42 +1203,48 @@ class CtypesWriter(BaseWriter):
         ]
 
         if test_type in ("both", "tripwire"):
-            tw_fn_checks = (
-                "\n".join(
-                    f'    assert hasattr(_bindings, "{name}"), "Symbol {name} missing from ctypes bindings"'
-                    for name in fn_names[:10]
-                )
-                or "    assert _bindings is not None"
+            tw_fn_checks = "\n".join(
+                f'    assert hasattr(_bindings, "{name}"), "Symbol {name} missing from ctypes bindings"'
+                for name in check_names
+            ) or (
+                # A header declaring nothing at all leaves the load itself as
+                # the only thing to assert on. ``_lib`` is the CDLL, not the
+                # module, so this is still a claim about the native binary.
+                f'    assert _bindings.{self._lib_name} is not None, "the native library did not load"'
             )
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 import pytest
                 from {pkg} import _bindings
 
                 @pytest.mark.tripwire
                 def test_ctypes_tripwire():
                     \"\"\"Tripwire: verify binary load and C symbols.\"\"\"
-                {_CHECKS}
-            """).replace(_CHECKS, tw_fn_checks)
+                {DEDENT_BLOCK}
+            """,
+                tw_fn_checks,
+            )
             files.append(OutputFile(path="tests/test_tripwire.py", content=tripwire))
 
         if test_type in ("both", "unit"):
-            unit_fn_checks = (
-                "\n".join(
-                    f'    assert hasattr(_bindings, "{name}"), "Expected declaration \'{name}\' in _bindings"'
-                    for name in fn_names[:10]
-                )
-                if fn_names
-                else "    assert inspect.ismodule(_bindings)"
+            # No second ``ismodule`` restatement in the empty case: repeating the
+            # assertion already in the body adds a line and no coverage.
+            unit_fn_checks = "\n".join(
+                f'    assert hasattr(_bindings, "{name}"), "Expected declaration \'{name}\' in _bindings"'
+                for name in check_names
             )
-            unit_test = textwrap.dedent(f"""\
+            unit_test = render_block_template(
+                f"""\
                 import inspect
                 from {pkg} import _bindings
 
                 def test_{pkg}_declarations():
                     \"\"\"Verify generated bindings module exports declarations.\"\"\"
                     assert inspect.ismodule(_bindings)
-                {_CHECKS}
-            """).replace(_CHECKS, unit_fn_checks)
+                {DEDENT_BLOCK}
+            """,
+                unit_fn_checks,
+            )
             files.append(OutputFile(path="tests/test_bindings.py", content=unit_test))
 
         return ProjectLayout(files=files)
