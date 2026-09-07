@@ -111,6 +111,7 @@ nav:
     - Nim Writer: reference/nim.md
     - Prompt Writer: reference/prompt.md
     - Scaffolding API: reference/scaffold.md
+    - Work Order API: reference/workorder.md
     - Generate Pipeline: reference/generate.md
     - Install Libclang CLI: reference/install-libclang.md
 

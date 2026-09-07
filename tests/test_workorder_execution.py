@@ -7,6 +7,19 @@ carries managed to ship. These tests build a real C library, generate a project
 against its header, and run the generated suite for real, asserting that Tier 1
 passes and that the stubs fail.
 
+**The generated suite alone does not reach the library, and cannot.** Tier 1 is
+language-local by construction -- ``ord(CT_MODE_FAST)`` is a Nim enum constant and a
+struct round-trip is a Nim field write -- and every Tier 2/3 stub calls ``fail()``
+before it would call anything. ``importc`` is compile-time only, so a linker asked for
+an object nobody references is satisfied by an object with no symbols in it. A gate
+built on the generated suite alone therefore passes against an *empty* translation
+unit, which is what this file used to do.
+
+So each gate appends a driver that calls real functions through the generated bindings
+module, and each has a negative control that rebuilds the native artifact from an empty
+translation unit and requires the run to go red. The negative control is the load-bearing
+part: a gate never observed failing for the right reason is a claim, not a mechanism.
+
 The skips are narrow and explicit. A toolchain check that quietly no-ops when the
 compiler is absent proves nothing while looking green.
 """
@@ -22,8 +35,13 @@ from pathlib import Path
 import pytest
 
 from headerkit.backends import get_backend
+from headerkit.backends.libclang import is_system_libclang_available
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from tests.native_build import position_independent_flags
+
+#: Every test here parses with libclang. Without the marker, a machine that has `nim`
+#: and `cc` but no libclang errors instead of skipping.
+pytestmark = pytest.mark.libclang
 
 #: A header with one enum, one record with an unsigned bit-field, and three
 #: functions -- one per stub tier. Enums are tag-named because the Nim writer
@@ -44,6 +62,32 @@ int ct_mode_cost(CtMode mode) { return mode == CT_MODE_FAST ? 1 : 10; }
 int ct_scale(CtStats* s, int factor) { if (!s) return -1; s->total *= factor; return s->total; }
 """
 
+#: A translation unit that defines nothing. Compiling this in place of ``LIB_C`` is the
+#: negative control: every gate below must go red against it. The gate this file
+#: replaced passed against exactly this input.
+EMPTY_LIB_C = "/* no symbols */\n"
+
+#: Environment variable the generated ctypes loader reads to locate the native library.
+#: Read from ``_library_loader`` in ``headerkit/writers/ctypes.py`` on branch
+#: ``fix/scaffold-package-importable``, which derives it from the package name:
+#: non-alphanumerics to ``_``, upper-cased, suffixed ``_LIBRARY``. Pinned by
+#: ``test_generated_ctypes_package_is_not_yet_importable`` below, which fails loudly
+#: if that contract is not what lands.
+CTYPES_LIBRARY_PATH_ENV = "CTDEMO_LIBRARY"
+
+#: Calls two C functions through the generated ctypes bindings and asserts their real
+#: return values, including a value written back through a struct pointer.
+DRIVER_PY = """\
+import ctypes
+from ctdemo import _bindings
+
+assert _bindings._lib.ct_add(2, 3) == 5
+stats = _bindings.CtStats()
+stats.total = 4
+assert _bindings._lib.ct_scale(ctypes.byref(stats), 5) == 20
+assert stats.total == 20
+"""
+
 
 def _c_compiler() -> str:
     for candidate in ("cc", "gcc", "clang"):
@@ -61,10 +105,10 @@ def _shared_library_name(stem: str) -> str:
     return f"lib{stem}.so"
 
 
-def _build_shared_library(compiler: str, workdir: Path) -> Path:
-    """Compile LIB_C into a real shared library and return its path."""
+def _build_shared_library(compiler: str, workdir: Path, *, source: str = LIB_C) -> Path:
+    """Compile ``source`` into a real shared library and return its path."""
     (workdir / "lib.h").write_text(LIB_H, encoding="utf-8")
-    (workdir / "lib.c").write_text(LIB_C, encoding="utf-8")
+    (workdir / "lib.c").write_text(source, encoding="utf-8")
     out = workdir / _shared_library_name("ctdemo")
     shared_flag = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared"]
     subprocess.run(
@@ -78,6 +122,8 @@ def _build_shared_library(compiler: str, workdir: Path) -> Path:
 
 
 def _scaffold(workdir: Path, target: str, package: str) -> None:
+    if not is_system_libclang_available():
+        pytest.skip("System libclang not available")
     unit = get_backend("libclang").parse(LIB_H, "lib.h")
     layout = scaffold(unit, ScaffoldOptions(package_name=package, target_language=target, layout="package"))
     layout.write_to_disk(workdir)
@@ -88,25 +134,75 @@ def _scaffold(workdir: Path, target: str, package: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_generated_ctypes_package_is_not_yet_importable(tmp_path: Path) -> None:
+    """Pin the two known ctypes-writer defects, precisely, so the xfail below cannot rot.
+
+    A strict xfail is satisfied by *any* failure, so on its own it would keep passing if
+    the reason changed underneath it. This pins the actual failure. When PR #78 lands,
+    this test goes red with a message saying what to do, and the xfail below must come
+    off in the same change.
+    """
+    _scaffold(tmp_path, "ctypes", "ctdemo")
+    source = (tmp_path / "src" / "ctdemo" / "_bindings.py").read_text(encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import ctdemo._bindings"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(tmp_path / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, (
+        "The generated ctypes package now imports. The ctypes importability fixes have "
+        "landed: remove the xfail on test_generated_python_suite_executes_against_a_real_library, "
+        f"and confirm the loader still reads {CTYPES_LIBRARY_PATH_ENV}."
+    )
+    assert "NameError" in result.stderr, result.stderr
+    assert "CtMode" in result.stderr, result.stderr
+    assert "_lib = " not in source, "a `_lib` binding now exists; the loader defect is fixed, see above"
+
+    # Armed for the fix rather than asserted against today's output: the moment a loader
+    # is emitted, its environment variable must be the one this file sets. A mismatch is
+    # the failure mode the xfail alone could not see -- the suite would keep xfailing on
+    # an import error and the marker would never come off.
+    if "_LIBRARY_PATH_ENV" in source:
+        assert f'_LIBRARY_PATH_ENV = "{CTYPES_LIBRARY_PATH_ENV}"' in source, source
+
+
 @pytest.mark.xfail(
     strict=True,
     reason=(
         "The ctypes writer emits a generated package that cannot be imported: it never "
         "defines `_lib`, and it emits `CtMode = CtMode` for a typedef'd enum, which raises "
         "NameError. Both are pre-existing writer defects fixed by PR #78, not defects in the "
-        "work-order tiering this file gates. strict=True means this turns into a FAILURE the "
-        "moment those fixes land, forcing the marker off rather than letting it rot in place."
+        "work-order tiering this file gates. strict=True turns this into a FAILURE the moment "
+        "those fixes land. The precise failure is pinned separately by "
+        "test_generated_ctypes_package_is_not_yet_importable, which also pins the loader's "
+        "environment-variable contract, because a strict xfail is satisfied by any failure "
+        "and would otherwise keep passing for a changed reason."
     ),
 )
 def test_generated_python_suite_executes_against_a_real_library(tmp_path: Path) -> None:
-    """Tier 1 must pass and every stub must fail, against a real compiled library."""
+    """Tier 1 must pass, every stub must fail, and the bindings must call the real library."""
     compiler = _c_compiler()
     lib = _build_shared_library(compiler, tmp_path)
     _scaffold(tmp_path, "ctypes", "ctdemo")
 
     env = dict(os.environ)
     env["PYTHONPATH"] = str(tmp_path / "src")
-    env["CTDEMO_LIB"] = str(lib)
+    env[CTYPES_LIBRARY_PATH_ENV] = str(lib)
+
+    # The generated suite never calls a C function -- Tier 1 is Python-local and every
+    # stub fails first -- so it is asserted separately here. Without this the gate says
+    # nothing about whether the bindings reach the library.
+    driver = subprocess.run(
+        [sys.executable, "-c", DRIVER_PY],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert driver.returncode == 0, driver.stdout + driver.stderr
 
     result = subprocess.run(
         [sys.executable, "-m", "pytest", str(tmp_path / "tests" / "test_workorder.py"), "-v", "--no-header"],
@@ -138,12 +234,37 @@ def _nim() -> str:
     return found
 
 
-def _run_generated_nim_suite(tmp_path: Path, *, mutate: bool = False) -> subprocess.CompletedProcess[str]:
+#: Appended to the generated Nim suite. The generated suite itself never calls a C
+#: function, so without this the linker is never asked to resolve one and the whole
+#: gate passes against an object file with no symbols in it.
+NIM_DRIVER = """
+suite "gate: the generated bindings call the real library":
+  test "ct_add executes through the generated binding":
+    check ct_add(2, 3) == 5
+
+  test "ct_scale executes through the generated binding":
+    var s: CtStats
+    s.total = 4
+    check ct_scale(addr s, 5) == 20
+    check s.total == 20
+"""
+
+#: The line the driver above prints when it runs and passes. Absent both when the link
+#: fails and when the call returns the wrong value.
+NIM_DRIVER_OK = "[OK] ct_add executes through the generated binding"
+
+
+def _run_generated_nim_suite(
+    tmp_path: Path,
+    *,
+    mutate: bool = False,
+    library_source: str = LIB_C,
+) -> subprocess.CompletedProcess[str]:
     """Generate, compile, link and run the Nim work-order suite against a real object file."""
     compiler = _c_compiler()
     nim = _nim()
     (tmp_path / "lib.h").write_text(LIB_H, encoding="utf-8")
-    (tmp_path / "lib.c").write_text(LIB_C, encoding="utf-8")
+    (tmp_path / "lib.c").write_text(library_source, encoding="utf-8")
     subprocess.run(
         [compiler, *position_independent_flags(), "-c", "lib.c", "-o", "lib.o"],
         cwd=tmp_path,
@@ -153,6 +274,8 @@ def _run_generated_nim_suite(tmp_path: Path, *, mutate: bool = False) -> subproc
     _scaffold(tmp_path, "nim", "ctdemo")
 
     suite = tmp_path / "tests" / "test_workorder.nim"
+    suite.write_text(suite.read_text(encoding="utf-8") + NIM_DRIVER, encoding="utf-8")
+
     if mutate:
         # Corrupt the Tier 1 expectation. The generated test asserts the enumerator's
         # declared value; if it truly executes and asserts, a wrong value must turn it
@@ -181,9 +304,16 @@ def _run_generated_nim_suite(tmp_path: Path, *, mutate: bool = False) -> subproc
 
 
 def test_generated_nim_suite_executes_against_a_real_object(tmp_path: Path) -> None:
-    """Tier 1 passes, every stub fails, and a failing case blocks no later case."""
+    """Tier 1 passes, every stub fails, a failing case blocks no later case, and the
+    bindings resolve and call real C functions in the linked object."""
     result = _run_generated_nim_suite(tmp_path)
     out = result.stdout + result.stderr
+
+    # The load-bearing pair: these two run only if `lib.o` actually contains `ct_add`
+    # and `ct_scale` and the generated `importc` declarations match their C signatures.
+    # `test_nim_gate_is_red_without_the_native_library` proves they can go red.
+    assert NIM_DRIVER_OK in out, out
+    assert "[OK] ct_scale executes through the generated binding" in out, out
 
     assert "[OK] every enumerator of `enum CtMode`" in out, out
     assert "[OK] every scalar field of `CtStats`" in out, out
@@ -210,3 +340,23 @@ def test_nim_tier1_assertions_are_load_bearing(tmp_path: Path) -> None:
     result = _run_generated_nim_suite(tmp_path, mutate=True)
     out = result.stdout + result.stderr
     assert "[FAILED] every enumerator of `enum CtMode`" in out, out
+
+
+def test_nim_gate_is_red_without_the_native_library(tmp_path: Path) -> None:
+    """Negative control: link the same suite against an object file with no symbols.
+
+    This is the control the gate above lacked. Built from an empty translation unit,
+    every assertion of that gate -- ``result.returncode != 0`` included -- still passed,
+    because nothing the generated suite runs calls a C function and ``importc`` is
+    compile-time only. With the driver appended, the link cannot be satisfied.
+    """
+    result = _run_generated_nim_suite(tmp_path, library_source=EMPTY_LIB_C)
+    out = result.stdout + result.stderr
+
+    assert result.returncode != 0, out
+    assert NIM_DRIVER_OK not in out, out
+    # Nothing runs at all: the failure is at link time, not in an assertion.
+    assert "[OK] every enumerator of `enum CtMode`" not in out, out
+    # Both linkers name the symbol they could not resolve: `"_ct_add", referenced from`
+    # on macOS, `undefined reference to 'ct_add'` on ELF platforms.
+    assert "ct_add" in out, out

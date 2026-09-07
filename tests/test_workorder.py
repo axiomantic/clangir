@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import textwrap
 
 import pytest
@@ -20,7 +21,7 @@ from headerkit.ir import (
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from headerkit.workorder import (
     WORK_ORDER_MARKER,
-    analyze,
+    analyze_work_order,
     build_work_order_files,
     render_agents_md,
     render_nim_tests,
@@ -51,7 +52,7 @@ STRUCT_REC = Struct(
 
 def test_enum_becomes_tier1_not_a_stub() -> None:
     """An enum is fully described by the IR, so it earns a real test and no stub."""
-    order = analyze(_unit(ENUM_MODE))
+    order = analyze_work_order(_unit(ENUM_MODE))
     assert [t.kind for t in order.tier1] == ["enum_coverage"]
     assert order.stubs == []
     assert order.tier1[0].values == (("MODE_X", 0), ("MODE_Y", 1))
@@ -59,23 +60,23 @@ def test_enum_becomes_tier1_not_a_stub() -> None:
 
 def test_enum_with_unresolved_values_is_skipped() -> None:
     """A backend that leaves an expression unevaluated must not be guessed at."""
-    order = analyze(_unit(Enum(name="E", values=[EnumValue("A", "1 << 3"), EnumValue("B", "X")])))
+    order = analyze_work_order(_unit(Enum(name="E", values=[EnumValue("A", "1 << 3"), EnumValue("B", "X")])))
     assert order.tier1 == []
 
 
 def test_enum_with_aliases_drops_the_distinctness_assertion() -> None:
     """A C enum may deliberately alias, so distinctness is asserted only when observed."""
-    aliased = analyze(_unit(Enum(name="E", values=[EnumValue("A", 1), EnumValue("B", 1)])))
+    aliased = analyze_work_order(_unit(Enum(name="E", values=[EnumValue("A", 1), EnumValue("B", 1)])))
     assert aliased.tier1[0].all_distinct is False
     assert "len(set(observed.values()))" not in render_python_tests(aliased, "pkg")
 
-    distinct = analyze(_unit(ENUM_MODE))
+    distinct = analyze_work_order(_unit(ENUM_MODE))
     assert distinct.tier1[0].all_distinct is True
     assert "len(set(observed.values()))" in render_python_tests(distinct, "pkg")
 
 
 def test_struct_yields_roundtrip_and_bitfield_tier1() -> None:
-    order = analyze(_unit(STRUCT_REC))
+    order = analyze_work_order(_unit(STRUCT_REC))
     kinds = [t.kind for t in order.tier1]
     assert kinds == ["struct_roundtrip", "bitfield_bounds"]
     assert order.tier1[1].width == 3
@@ -85,7 +86,7 @@ def test_struct_yields_roundtrip_and_bitfield_tier1() -> None:
 def test_signed_bitfield_is_excluded() -> None:
     """Sign extension makes the truncated value ABI-dependent, so the IR does not know it."""
     signed = Struct(name="S", fields=[Field(name="v", type=CType("int"), bit_width=3)])
-    order = analyze(_unit(signed))
+    order = analyze_work_order(_unit(signed))
     assert [t.kind for t in order.tier1] == []
 
 
@@ -99,12 +100,12 @@ def test_non_integer_fields_are_excluded_from_roundtrip() -> None:
             Field(name="nested", type=CType("Other")),
         ],
     )
-    assert analyze(_unit(s)).tier1 == []
+    assert analyze_work_order(_unit(s)).tier1 == []
 
 
 def test_function_with_enum_param_is_tier2_one_case_per_enumerator() -> None:
     fn = Function(name="set_mode", return_type=CType("void"), parameters=[Parameter("m", CType("Mode"))])
-    order = analyze(_unit(ENUM_MODE, fn))
+    order = analyze_work_order(_unit(ENUM_MODE, fn))
     stub = order.stubs[0]
     assert stub.tier == 2
     assert stub.cases == ("MODE_X", "MODE_Y")
@@ -114,7 +115,7 @@ def test_function_with_enum_param_is_tier2_one_case_per_enumerator() -> None:
 def test_overload_set_is_tier2_one_case_per_overload() -> None:
     a = Function(name="f", return_type=CType("int"), parameters=[Parameter("x", CType("int"))])
     b = Function(name="f", return_type=CType("int"), parameters=[Parameter("x", CType("double"))])
-    stub = analyze(_unit(a, b)).stubs[0]
+    stub = analyze_work_order(_unit(a, b)).stubs[0]
     assert stub.tier == 2
     assert len(stub.cases) == 2
 
@@ -122,7 +123,7 @@ def test_overload_set_is_tier2_one_case_per_overload() -> None:
 def test_pointer_param_adds_a_null_case_without_losing_the_semantics_question() -> None:
     """The NULL case must not displace the more valuable question of what the function is for."""
     fn = Function(name="destroy", return_type=CType("void"), parameters=[Parameter("h", Pointer(CType("Opaque")))])
-    stub = analyze(_unit(fn)).stubs[0]
+    stub = analyze_work_order(_unit(fn)).stubs[0]
     assert stub.cases == ("behaviour", "null_h")
     assert "what `destroy` is for" in stub.instruction
     assert "NULL" in stub.instruction
@@ -130,7 +131,7 @@ def test_pointer_param_adds_a_null_case_without_losing_the_semantics_question() 
 
 def test_plain_function_is_tier3() -> None:
     fn = Function(name="tick", return_type=CType("int"), parameters=[])
-    stub = analyze(_unit(fn)).stubs[0]
+    stub = analyze_work_order(_unit(fn)).stubs[0]
     assert stub.tier == 3
     assert stub.cases == ()
 
@@ -138,12 +139,12 @@ def test_plain_function_is_tier3() -> None:
 def test_a_function_never_gets_both_a_tier2_and_a_tier3_stub() -> None:
     """Diluting the work order with duplicate entries is how this feature fails."""
     fn = Function(name="set_mode", return_type=CType("void"), parameters=[Parameter("m", CType("Mode"))])
-    order = analyze(_unit(ENUM_MODE, fn))
+    order = analyze_work_order(_unit(ENUM_MODE, fn))
     assert [s.name for s in order.stubs] == ["test_set_mode"]
 
 
 def test_records_and_enums_never_produce_stubs() -> None:
-    order = analyze(_unit(ENUM_MODE, STRUCT_REC))
+    order = analyze_work_order(_unit(ENUM_MODE, STRUCT_REC))
     assert order.stubs == []
     assert len(order.tier1) == 3
 
@@ -154,14 +155,14 @@ def test_records_and_enums_never_produce_stubs() -> None:
 
 
 def test_python_tier1_enum_test_asserts_real_values() -> None:
-    out = render_python_tests(analyze(_unit(ENUM_MODE)), "pkg")
+    out = render_python_tests(analyze_work_order(_unit(ENUM_MODE)), "pkg")
     assert 'observed = {"MODE_X": _bindings.MODE_X, "MODE_Y": _bindings.MODE_Y}' in out
     assert 'assert observed == {"MODE_X": 0, "MODE_Y": 1}' in out
     assert WORK_ORDER_MARKER not in out.split("def test_enum_Mode_values")[1].split("def ")[0]
 
 
 def test_python_bitfield_test_asserts_the_derived_bound() -> None:
-    out = render_python_tests(analyze(_unit(STRUCT_REC)), "pkg")
+    out = render_python_tests(analyze_work_order(_unit(STRUCT_REC)), "pkg")
     assert (
         textwrap.dedent("""\
         obj = _bindings.Rec()
@@ -179,7 +180,7 @@ def test_python_stub_fails_and_carries_signature_and_definition_of_done() -> Non
         return_type=CType("int"),
         parameters=[Parameter("path", Pointer(CType("const char")))],
     )
-    out = render_python_tests(analyze(_unit(fn)), "pkg")
+    out = render_python_tests(analyze_work_order(_unit(fn)), "pkg")
     assert "pytest.fail(" in out
     assert "int parse_config(const char* path)" in out
     assert "Asserting that it does not raise is insufficient" in out
@@ -187,21 +188,73 @@ def test_python_stub_fails_and_carries_signature_and_definition_of_done() -> Non
 
 def test_python_tier2_uses_parametrize_with_one_id_per_case() -> None:
     fn = Function(name="set_mode", return_type=CType("void"), parameters=[Parameter("m", CType("Mode"))])
-    out = render_python_tests(analyze(_unit(ENUM_MODE, fn)), "pkg")
+    out = render_python_tests(analyze_work_order(_unit(ENUM_MODE, fn)), "pkg")
     assert "@pytest.mark.parametrize('case', ['MODE_X', 'MODE_Y'])" in out
 
 
-def test_generated_python_module_is_valid_syntax() -> None:
-    """A generated test file that does not parse fails as silently as no file at all."""
-    fn = Function(name="go", return_type=CType("int"), parameters=[Parameter("h", Pointer(CType("Opaque")))])
-    out = render_python_tests(analyze(_unit(ENUM_MODE, STRUCT_REC, fn)), "pkg")
+@pytest.mark.parametrize("symbol", ["go", "operator==", "operator*", "operator[]", "Foo::bar"])
+def test_generated_python_module_is_valid_syntax(symbol: str) -> None:
+    """A generated test file that does not parse fails as silently as no file at all.
+
+    A C++ overload or a qualified name pasted into a `def` is a `SyntaxError` that takes
+    down every valid test in the same module while the scaffolder reports success.
+    """
+    fn = Function(name=symbol, return_type=CType("int"), parameters=[Parameter("h", Pointer(CType("Opaque")))])
+    out = render_python_tests(analyze_work_order(_unit(ENUM_MODE, STRUCT_REC, fn)), "pkg")
     compile(out, "test_workorder.py", "exec")
+
+
+def test_symbols_differing_only_in_punctuation_get_distinct_test_names() -> None:
+    """Two operators collapsing onto one identifier would silently shadow one test."""
+    overloads = [
+        Function(name=name, return_type=CType("int"), parameters=[])
+        for name in ("operator==", "operator!=", "operator<", "operator>")
+    ]
+    names = [s.name for s in analyze_work_order(_unit(*overloads)).stubs]
+    assert len(set(names)) == len(names), names
+    assert all(n.isidentifier() for n in names), names
+
+
+def test_the_raw_symbol_survives_sanitisation_in_the_failure_message() -> None:
+    """The reader needs the spelling the header uses, not the identifier we invented."""
+    fn = Function(name="operator==", return_type=CType("int"), parameters=[])
+    stub = analyze_work_order(_unit(fn)).stubs[0]
+    assert stub.name.isidentifier()
+    assert stub.symbol == "operator=="
+    assert "`operator==`" in stub.instruction
+
+
+def test_a_subject_no_target_language_can_spell_is_skipped_not_pasted() -> None:
+    """`_bindings.ns::E` is a SyntaxError; there is no reference to emit, so emit none."""
+    qualified = Enum(name="ns::E", values=[EnumValue("A", 0), EnumValue("B", 1)])
+    order = analyze_work_order(_unit(qualified))
+    assert order.tier1 == []
+    compile(render_python_tests(order, "pkg"), "test_workorder.py", "exec")
+
+
+def test_roundtrip_values_fit_the_declared_field_width() -> None:
+    """Field N driven with N+1 overflows a narrow field, so the Tier 1 test fails as generated."""
+    wide = Struct(name="Packet", fields=[Field(name=f"f{i}", type=CType("uint8_t")) for i in range(200)])
+    values = analyze_work_order(_unit(wide)).tier1[0].values
+    assert len(values) == 200
+    # Representability, computed rather than restated: every value must survive a
+    # round-trip through the narrowest 8-bit ctypes field a writer could choose.
+    for name, value in values:
+        assert ctypes.c_int8(value).value == value, (name, value)
+        assert ctypes.c_uint8(value).value == value, (name, value)
+
+
+def test_roundtrip_values_are_unbounded_for_wide_fields() -> None:
+    """Narrowing the bound must not cost distinctness where the field can hold it."""
+    wide = Struct(name="Rec", fields=[Field(name=f"f{i}", type=CType("int")) for i in range(200)])
+    values = [v for _, v in analyze_work_order(_unit(wide)).tier1[0].values]
+    assert values == list(range(1, 201))
 
 
 def test_nim_stub_checkpoints_before_failing_and_never_requires() -> None:
     """`require` sets abortOnError and kills the whole run, so it must never be emitted."""
     fn = Function(name="go", return_type=CType("int"), parameters=[])
-    out = render_nim_tests(analyze(_unit(fn)), "pkg")
+    out = render_nim_tests(analyze_work_order(_unit(fn)), "pkg")
     assert out.index("checkpoint") < out.index("fail()")
     assert "require" not in out
 
@@ -209,15 +262,91 @@ def test_nim_stub_checkpoints_before_failing_and_never_requires() -> None:
 def test_nim_enum_cases_use_the_compile_time_macro() -> None:
     """Textually enumerating values would break on the holey enums C headers produce."""
     fn = Function(name="set_mode", return_type=CType("void"), parameters=[Parameter("m", CType("Mode"))])
-    out = render_nim_tests(analyze(_unit(ENUM_MODE, fn)), "pkg")
+    out = render_nim_tests(analyze_work_order(_unit(ENUM_MODE, fn)), "pkg")
     assert 'parametrizedTest("set_mode", Mode)' in out
 
 
 def test_nim_skips_bitfield_bounds() -> None:
     """Nim bindings carry no bit-field width, so the bound cannot be expressed."""
-    out = render_nim_tests(analyze(_unit(STRUCT_REC)), "pkg")
+    out = render_nim_tests(analyze_work_order(_unit(STRUCT_REC)), "pkg")
+    assert out is not None
     assert "bits wide" not in out
     assert 'test "":' not in out
+
+
+#: A header whose only declaration is a struct of unsigned bit-fields. Everything it
+#: produces is Tier 1 bit-field bounds, which the Nim emitter cannot express -- so the
+#: order is non-empty while the Nim suite has nothing to put in its body. `STRUCT_REC`
+#: does not reach this case: its plain `int` field fills the suite and masks it.
+BITFIELD_ONLY = Struct(
+    name="Flags",
+    fields=[
+        Field(name="a", type=CType("unsigned int"), bit_width=3),
+        Field(name="b", type=CType("unsigned int"), bit_width=5),
+    ],
+)
+
+
+def test_nim_returns_none_when_nothing_survives_the_filter() -> None:
+    """A `suite` with no body is `Error: invalid indentation`, not a Nim file."""
+    order = analyze_work_order(_unit(BITFIELD_ONLY))
+    assert order.is_empty is False, "the order itself is non-empty; only Nim cannot express it"
+    assert render_nim_tests(order, "pkg") is None
+
+
+def test_nim_emits_no_files_when_it_has_no_suite_to_emit() -> None:
+    """The markdown must not point the next session at a file that was never written."""
+    assert build_work_order_files(_unit(BITFIELD_ONLY), "pkg", "nim") == []
+    # The same header is fine in Python, which can express the bound.
+    assert [f.path for f in build_work_order_files(_unit(BITFIELD_ONLY), "pkg", "python")] == [
+        "tests/test_workorder.py",
+        "WORK_ORDER.md",
+        "SUGGESTIONS.md",
+        "AGENTS.md",
+    ]
+
+
+@pytest.mark.parametrize(
+    "decls",
+    [
+        (ENUM_MODE,),
+        (STRUCT_REC,),
+        (Function(name="go", return_type=CType("int"), parameters=[]),),
+        (ENUM_MODE, STRUCT_REC),
+    ],
+)
+def test_every_emitted_nim_suite_has_a_body(decls: tuple[object, ...]) -> None:
+    """Whatever survives the filter, the `suite` line must be followed by indented code."""
+    out = render_nim_tests(analyze_work_order(_unit(*decls)), "pkg")
+    assert out is not None
+    lines = out.splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("suite "))
+    assert any(line.startswith("  ") for line in lines[header + 1 :]), out
+
+
+def test_nim_work_order_lists_only_what_nim_actually_emitted() -> None:
+    """A bit-field bound named as `Already done` in a Nim project was never written."""
+    order = analyze_work_order(_unit(STRUCT_REC))
+    md = render_work_order_md(order, "pkg", "nim")
+    assert "test_Rec_field_roundtrip" in md
+    assert "test_Rec_b_bitfield_bounds" not in md
+    assert "test_Rec_b_bitfield_bounds" in render_work_order_md(order, "pkg", "python")
+
+
+def test_nim_struct_roundtrip_asserts_the_literal_not_a_cancelling_conversion() -> None:
+    """`check obj.f == type(obj.f)(1)` holds for any field type, order or layout."""
+    out = render_nim_tests(analyze_work_order(_unit(STRUCT_REC)), "pkg")
+    assert out is not None
+    assert "check obj.a.int == 1" in out
+    assert "check obj.a == type(obj.a)(1)" not in out
+
+
+def test_nim_struct_roundtrip_title_claims_only_what_it_proves() -> None:
+    """A Nim field write says nothing about the C ABI, so it must not say it does."""
+    out = render_nim_tests(analyze_work_order(_unit(STRUCT_REC)), "pkg")
+    assert out is not None
+    assert "round-trips through the generated wrapper" not in out
+    assert "is declared and holds the value written to it" in out
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +356,7 @@ def test_nim_skips_bitfield_bounds() -> None:
 
 def test_work_order_lists_every_stub_and_no_tier1_test_as_outstanding() -> None:
     fn = Function(name="go", return_type=CType("int"), parameters=[])
-    order = analyze(_unit(ENUM_MODE, fn))
+    order = analyze_work_order(_unit(ENUM_MODE, fn))
     md = render_work_order_md(order, "pkg")
     assert "test_go" in md
     assert "Already done" in md
@@ -305,8 +434,9 @@ def test_filled_in_stub_survives_a_rewrite_to_disk(tmp_path: object) -> None:
 
     scaffold(unit, opts).write_to_disk(base)
     stub_file = base / "tests" / "test_workorder.py"
-    stub_file.write_text("# a human wrote this\nassert True is not False\n", encoding="utf-8")
+    written = "# a human wrote this\ndef test_written_by_hand():\n    assert 2 + 2 == 4\n"
+    stub_file.write_text(written, encoding="utf-8")
 
     scaffold(unit, opts).write_to_disk(base)
-    assert stub_file.read_text(encoding="utf-8") == "# a human wrote this\nassert True is not False\n"
+    assert stub_file.read_text(encoding="utf-8") == written
     assert (base / "src" / "pkg" / "_bindings.py").exists()

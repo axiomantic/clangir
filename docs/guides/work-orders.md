@@ -12,7 +12,9 @@ which.
 Where the IR determines both the call and the expected result, headerkit writes the
 whole test and it passes as generated:
 
-- **Struct field round-trip** -- set every scalar integer field, read it back.
+- **Struct field round-trip** -- set every scalar integer field, read it back. The
+  value driven into each field is bounded by its declared width, so a struct of 200
+  `uint8_t` fields does not generate a test that fails as generated.
 - **Unsigned bit-field bounds** -- a `:3` field holds 7 and truncates 8. Derived from
   the declared width, not guessed.
 - **Enum value coverage** -- every enumerator is importable and holds its declared
@@ -20,7 +22,13 @@ whole test and it passes as generated:
 
 These produce no work-order entry. There is nothing to do.
 
-Three exclusions are deliberate, because in each case the IR does *not* in fact
+**What a round-trip proves depends on the target.** The ctypes round-trip goes through
+a real `Structure` whose layout the writer derived from the header. The Nim round-trip
+writes and reads a field of a Nim object without calling into C, so it proves the field
+is declared and holds what was written, and nothing about the ABI. The generated Nim
+test says so in its own title rather than borrowing the stronger wording.
+
+These exclusions are deliberate, because in each case the IR does *not* in fact
 determine the answer:
 
 - **Signed bit-fields** are skipped: sign extension makes the truncated value
@@ -28,7 +36,19 @@ determine the answer:
 - **Non-integer fields** (char, float, nested structs) are skipped from round-trip:
   they cannot be driven with a plain integer.
 - **Enums whose values a backend left unevaluated** are skipped rather than guessed.
-- **Bit-field bounds in Nim** are skipped: Nim bindings carry no bit-field width.
+- **Bit-field bounds in Nim** are skipped: Nim bindings carry no bit-field width. A
+  header whose Tier 1 result is *only* bit-field bounds therefore leaves a Nim project
+  with no work-order files at all, rather than a `suite` with an empty body -- which is
+  not valid Nim, and which regeneration would never repair, since the file is written
+  only if absent.
+- **Records and enums a target language cannot spell** -- a qualified name such as
+  `ns::E` -- are skipped: the test would have to name the type directly, and there is
+  no reference to emit.
+
+A C++ symbol whose name is not an identifier -- `operator==`, `operator*` -- still gets
+its stub. The generated test function is named after a sanitised form (`test_operator_eq_eq`)
+while the failure message and `WORK_ORDER.md` keep the spelling the header uses.
+Punctuation maps to distinct words, so two operators never collapse onto one test name.
 
 ## Tier 2 -- the cases are known, the expectation is not
 

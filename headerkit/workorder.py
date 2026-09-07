@@ -43,6 +43,53 @@ DEFINITION_OF_DONE = "Done means: call it and assert on the result. Asserting th
 
 _UNSIGNED_PREFIXES = ("unsigned", "uint", "_Bool", "bool")
 
+#: Punctuation that appears in a C++ symbol name, mapped to a word so two symbols
+#: differing only in punctuation do not collapse onto one identifier. ``operator==``
+#: and ``operator!=`` both becoming ``operator__`` would silently shadow one test with
+#: the other, which is worse than the syntax error the mapping replaces.
+_PUNCTUATION_WORDS: dict[str, str] = {
+    "+": "plus",
+    "-": "minus",
+    "*": "star",
+    "/": "slash",
+    "%": "percent",
+    "=": "eq",
+    "!": "bang",
+    "<": "lt",
+    ">": "gt",
+    "&": "amp",
+    "|": "pipe",
+    "^": "caret",
+    "~": "tilde",
+    "[": "lbracket",
+    "]": "rbracket",
+    "(": "lparen",
+    ")": "rparen",
+    ",": "comma",
+    ".": "dot",
+}
+
+
+def _identifier(name: str) -> str:
+    """Rewrite a C or C++ symbol name into a valid Python identifier.
+
+    A C++ overload (``operator==``) or a qualified name (``Foo::bar``) pasted straight
+    into a ``def`` produces a ``SyntaxError``, which takes down the whole generated
+    module -- including the valid Tier 1 tests beside it -- while the scaffolder still
+    reports success.
+    """
+    out: list[str] = []
+    for ch in name:
+        if ch.isalnum() or ch == "_":
+            out.append(ch)
+        else:
+            word = _PUNCTUATION_WORDS.get(ch)
+            out.append(f"_{word}" if word else "_")
+    ident = "".join(out)
+    if not ident or ident[0].isdigit():
+        ident = f"_{ident}"
+    return ident
+
 
 @dataclass(frozen=True)
 class Tier1Test:
@@ -61,6 +108,11 @@ class Tier1Test:
     #: a C enum with deliberate aliases is not.
     all_distinct: bool = False
 
+    def __post_init__(self) -> None:
+        # Sanitised here rather than at each call site, so a call site added later
+        # cannot forget it.
+        object.__setattr__(self, "name", _identifier(self.name))
+
 
 @dataclass(frozen=True)
 class Stub:
@@ -74,6 +126,11 @@ class Stub:
     cases: tuple[str, ...] = ()
     #: Nim enum type driving ``parametrizedTest``, when the cases came from an enum.
     enum_type: str | None = None
+
+    def __post_init__(self) -> None:
+        # ``symbol`` is deliberately left raw: it is what the failure message and the
+        # work order name, and a reader needs the spelling the header uses.
+        object.__setattr__(self, "name", _identifier(self.name))
 
     @property
     def tier(self) -> int:
@@ -142,12 +199,41 @@ _ROUNDTRIP_INTEGER_NAMES: frozenset[str] = frozenset(
 )
 
 
+#: Largest value a round-trip test may drive into a field of the given base spelling.
+#: The signed maximum is used for both signednesses, because the spelling alone does
+#: not say which. A struct of 200 ``uint8_t`` fields is ordinary in a protocol header,
+#: and driving field 197 with 198 truncates -- ctypes reads ``c_int8 <- 198`` back as
+#: ``-58`` -- so the generated Tier 1 test would fail as generated.
+_DRIVE_MAX_BY_SPELLING: dict[str, int] = {
+    "int8_t": 127,
+    "uint8_t": 127,
+    "short": 32767,
+    "short int": 32767,
+    "int16_t": 32767,
+    "uint16_t": 32767,
+}
+
+#: Fallback bound for every wider spelling. Well inside a 32-bit field.
+_DRIVE_MAX_DEFAULT = 2**31 - 1
+
+
+def _base_spelling(t: CType) -> str:
+    return " ".join(w for w in t.name.split() if w not in ("const", "volatile", "unsigned", "signed")).strip()
+
+
 def _is_plain_integer(t: TypeExpr) -> bool:
     """True for a scalar C integer type a round-trip test can drive with an int."""
     if not isinstance(t, CType):
         return False
-    spelling = " ".join(w for w in t.name.split() if w not in ("const", "volatile", "unsigned", "signed"))
-    return spelling.strip() in _ROUNDTRIP_INTEGER_NAMES
+    return _base_spelling(t) in _ROUNDTRIP_INTEGER_NAMES
+
+
+def _drive_value(t: TypeExpr, index: int) -> int:
+    """A distinct-where-it-can-be, always-representable value for field ``index``."""
+    limit = _DRIVE_MAX_DEFAULT
+    if isinstance(t, CType):
+        limit = _DRIVE_MAX_BY_SPELLING.get(_base_spelling(t), _DRIVE_MAX_DEFAULT)
+    return index % limit + 1
 
 
 def _enum_int_values(enum: Enum) -> list[tuple[str, int]]:
@@ -173,7 +259,7 @@ def _roundtrip_fields(struct: Struct) -> list[tuple[str, int]]:
             continue
         if not _is_plain_integer(f.type):
             continue
-        out.append((f.name, i + 1))
+        out.append((f.name, _drive_value(f.type, i)))
     return out
 
 
@@ -209,7 +295,7 @@ def _pointer_param(fn: Function) -> str | None:
     return None
 
 
-def analyze(unit: SourceUnit | Header) -> WorkOrder:
+def analyze_work_order(unit: SourceUnit | Header) -> WorkOrder:
     """Assign every declaration in ``unit`` to a tier.
 
     A function reached by Tier 2 never also receives a Tier 3 stub, and records and
@@ -226,6 +312,12 @@ def analyze(unit: SourceUnit | Header) -> WorkOrder:
             enums[d.name] = d
 
     for d in decls:
+        # A Tier 1 test names its subject directly (``_bindings.Rec``, ``var obj: Rec``),
+        # so a subject a target language cannot spell -- a qualified or operator name --
+        # has no reference to emit. Skipping is the honest response; pasting it in
+        # produces a module that does not parse, which takes the valid tests with it.
+        if isinstance(d, Enum | Struct) and d.name and not d.name.isidentifier():
+            continue
         if isinstance(d, Enum) and d.name:
             pairs = _enum_int_values(d)
             if len(pairs) >= 2:
@@ -468,8 +560,29 @@ def _render_python_stub(stub: Stub) -> str:
     )
 
 
-def render_nim_tests(order: WorkOrder, package_name: str) -> str:
-    """Render the generated unittest module for a scaffolded Nim project."""
+def _nim_tier1(order: WorkOrder) -> list[Tier1Test]:
+    """The Tier 1 tests the Nim emitter can actually express.
+
+    The Nim writer emits no bit-field width, so a Nim binding cannot express a
+    truncation bound. Skipping is the honest response; emitting an empty test would be
+    a vacuous assertion, and emitting a guessed bound would be worse.
+    """
+    return [t for t in order.tier1 if t.kind != "bitfield_bounds"]
+
+
+def render_nim_tests(order: WorkOrder, package_name: str) -> str | None:
+    """Render the generated unittest module for a scaffolded Nim project.
+
+    ``None`` when nothing survives the Nim-specific filter, because a ``suite`` with no
+    body is not valid Nim: the file ends at ``suite "...":`` and the compiler rejects it
+    with ``invalid indentation``. A header whose only declaration is a struct of
+    unsigned bit-fields produces exactly that, and since the file is written with
+    ``preserve_existing``, regeneration would never repair it.
+    """
+    tier1 = _nim_tier1(order)
+    if not tier1 and not order.stubs:
+        return None
+
     lines = [
         "## Generated by headerkit.",
         "##",
@@ -483,12 +596,7 @@ def render_nim_tests(order: WorkOrder, package_name: str) -> str:
         f'suite "{package_name} generated tests":',
     ]
 
-    for t in order.tier1:
-        # The Nim writer emits no bit-field width, so a Nim binding cannot express a
-        # truncation bound. Skipping is the honest response; emitting an empty test
-        # would be a vacuous assertion, and emitting a guessed bound would be worse.
-        if t.kind == "bitfield_bounds":
-            continue
+    for t in tier1:
         lines.extend(_render_nim_tier1(t))
 
     for stub in order.stubs:
@@ -498,7 +606,7 @@ def render_nim_tests(order: WorkOrder, package_name: str) -> str:
 
 
 def _render_nim_tier1(t: Tier1Test) -> list[str]:
-    out = [f'  test "{t.description}":']
+    out = [f'  test "{_nim_tier1_description(t)}":']
     if t.kind == "enum_coverage":
         for name, value in t.values:
             out.append(f"    check ord({name}) == {value}")
@@ -507,9 +615,25 @@ def _render_nim_tier1(t: Tier1Test) -> list[str]:
         for fname, value in t.values:
             out.append(f"    obj.{fname} = type(obj.{fname})({value})")
         for fname, value in t.values:
-            out.append(f"    check obj.{fname} == type(obj.{fname})({value})")
+            # The literal, not ``type(obj.f)(value)``: the conversion appears on both
+            # sides of that comparison and cancels, so it holds for any field type,
+            # any field order and any layout. Comparing against the literal is what
+            # makes a wrong field type visible.
+            out.append(f"    check obj.{fname}.int == {value}")
     out.append("")
     return out
+
+
+def _nim_tier1_description(t: Tier1Test) -> str:
+    """The Nim test title, narrowed to what the Nim test actually proves.
+
+    A Nim struct round-trip writes and reads a field of a Nim object. It proves the
+    field is declared and holds what was written; it does not call into C and therefore
+    says nothing about the C ABI, which the shared wording would imply.
+    """
+    if t.kind == "struct_roundtrip":
+        return f"every scalar field of `{t.subject}` is declared and holds the value written to it"
+    return t.description
 
 
 def _nim_doc(stub: Stub) -> list[str]:
@@ -575,14 +699,18 @@ def render_work_order_md(order: WorkOrder, package_name: str, language: str = "p
         "",
     ]
 
-    if order.tier1:
+    # The list must name the tests that were actually emitted for this language, not
+    # the language-independent tiering result. Nim drops bit-field bounds.
+    tier1 = _nim_tier1(order) if language == "nim" else order.tier1
+
+    if tier1:
         lines += [
             "## Already done (no action needed)",
             "",
             "These were derived from the header and should pass as generated:",
             "",
         ]
-        lines += [f"- `{t.name}` -- {t.description}" for t in order.tier1]
+        lines += [f"- `{t.name}` -- {t.description}" for t in tier1]
         lines.append("")
 
     tier2 = [s for s in order.stubs if s.tier == 2]
@@ -713,12 +841,18 @@ def build_work_order_files(
     Every file returned is marked ``preserve_existing``: these are the artifacts a
     human edits, and regeneration must not eat the work it asked for.
     """
-    order = analyze(unit)
+    order = analyze_work_order(unit)
     if order.is_empty:
         return []
 
     files: list[OutputFile] = []
     if language == "nim":
+        nim_suite = render_nim_tests(order, package_name)
+        if nim_suite is None:
+            # Nothing survives the Nim filter, so there is no suite to run and nothing
+            # for the markdown to point at. An AGENTS.md telling the next session to
+            # run a file that was never written is worse than no file at all.
+            return []
         files.append(
             OutputFile(
                 path="tests/workorder_dsl.nim",
@@ -729,7 +863,7 @@ def build_work_order_files(
         files.append(
             OutputFile(
                 path="tests/test_workorder.nim",
-                content=render_nim_tests(order, package_name),
+                content=nim_suite,
                 preserve_existing=True,
             )
         )
