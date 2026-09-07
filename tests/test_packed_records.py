@@ -32,16 +32,16 @@ _BITFIELD_UNIT_RULE_MATCHES_C = sys.version_info >= (3, 14)
 BACKENDS = ["libclang", "tree-sitter"]
 
 
-def _parse(backend_name: str, code: str) -> list[Struct]:
+def _parse(backend_name: str, code: str, extra_args: list[str] | None = None) -> list[Struct]:
     backend = get_backend(backend_name)
     if not backend.is_available():
         pytest.skip(f"{backend_name} backend unavailable")
-    unit = backend.parse(code, "packed.h")
+    unit = backend.parse(code, "rec.h", extra_args=extra_args)
     return [d for d in unit.declarations if isinstance(d, Struct)]
 
 
-def _only(backend_name: str, code: str, name: str) -> Struct:
-    records = {r.name: r for r in _parse(backend_name, code)}
+def _only(backend_name: str, code: str, name: str, extra_args: list[str] | None = None) -> Struct:
+    records = {r.name: r for r in _parse(backend_name, code, extra_args)}
     assert name in records, f"{backend_name} did not emit {name}: {sorted(records)}"
     return records[name]
 
@@ -50,7 +50,7 @@ def _only(backend_name: str, code: str, name: str) -> Struct:
 # Backends populate is_packed
 # ---------------------------------------------------------------------------
 
-# (label, source, record name, expected is_packed)
+# (label, source, expected is_packed) -- the record is always named ``S``.
 _PACKED_CASES = [
     (
         "prefix-attribute",
@@ -111,9 +111,11 @@ _PACKED_CASES = [
     ),
     (
         "unpacked-with-padding-bitfield",
-        # An anonymous bit-field does not contribute its type's alignment, so
-        # this record is already byte-aligned without being packed. Reading
-        # alignment alone would report it packed.
+        # Under the Itanium C++ ABI an anonymous bit-field does not contribute
+        # its type's alignment, so this record is already byte-aligned without
+        # being packed and reading alignment alone would report it packed.
+        # AAPCS64 does impose it, and there the record aligns to 4 -- either
+        # way it is unpacked; see the target-parametrized test below.
         "struct S { unsigned char a; unsigned int : 8; unsigned char b; };",
         False,
     ),
@@ -156,24 +158,165 @@ def test_aligned_attribute_is_recorded_separately_from_packing(backend_name: str
     assert record.is_packed is False
 
 
-def test_libclang_records_an_inexpressible_intermediate_pragma_pack() -> None:
+@pytest.mark.parametrize("backend_name", BACKENDS)
+def test_an_inexpressible_intermediate_pragma_pack_is_noted(backend_name: str) -> None:
     """``#pragma pack(2)`` squeezes a record without flattening it.
 
     ``is_packed`` is a boolean, and re-emitting ``__attribute__((packed))``
     would understate the offsets: a C probe puts this record at size 8 with
     ``b`` at byte 2, where a fully packed record would put ``b`` at byte 1.
-    The fact is kept in ``notes`` rather than reported wrongly or dropped.
+    The fact is kept in ``notes`` rather than reported wrongly or dropped --
+    and by both backends, so the same header does not yield two different IRs.
     """
-    backend = get_backend("libclang")
-    if not backend.is_available():
-        pytest.skip("libclang backend unavailable")
     record = _only(
-        "libclang",
+        backend_name,
         "#pragma pack(2)\nstruct S { unsigned char a; unsigned int b; unsigned char c; };\n#pragma pack()\n",
         "S",
     )
     assert record.is_packed is False
     assert any("pack(2)" in note for note in record.notes)
+
+
+@pytest.mark.parametrize("backend_name", BACKENDS)
+def test_a_pack_pragma_with_an_msvc_label_still_packs(backend_name: str) -> None:
+    """``#pragma pack(push, <label>, N)`` is the MSVC spelling.
+
+    GCC and Clang accept it too, and Windows-targeting headers use it heavily.
+    Reading the alignment as the word straight after ``push`` misses it and
+    yields an unpacked record from a packed header, silently. Both backends
+    must agree: a disagreement here is a defect whichever one is right.
+    """
+    source = (
+        "#pragma pack(push, mylabel, 1)\n"
+        "struct S { unsigned char a; unsigned int b; unsigned char c; };\n"
+        "#pragma pack(pop, mylabel)\n"
+        "struct T { unsigned char a; unsigned int b; unsigned char c; };\n"
+    )
+    records = {r.name: r for r in _parse(backend_name, source)}
+    assert records["S"].is_packed is True
+    # The label on ``pop`` must not stop the scope from ending, either.
+    assert records["T"].is_packed is False
+
+
+@pytest.mark.parametrize("backend_name", BACKENDS)
+def test_a_pack_pragma_inside_a_conditional_branch_does_not_pack(backend_name: str) -> None:
+    """Branches of ``#ifdef`` are mutually exclusive, so none may be applied.
+
+    Walking every branch leaves whichever one was visited last in force, which
+    is an alignment no translation of the header ever has. Here the branch is
+    not taken at all, so the record is unpacked; the tree-sitter backend cannot
+    evaluate the condition and says so in ``notes`` instead of guessing.
+    """
+    record = _only(
+        backend_name,
+        "#ifdef HEADERKIT_UNDEFINED_MACRO\n#pragma pack(1)\n#endif\n"
+        "struct S { unsigned char a; unsigned int b; unsigned char c; };\n",
+        "S",
+    )
+    assert record.is_packed is False
+
+
+def test_treesitter_notes_a_pack_pragma_it_could_not_evaluate() -> None:
+    """The tree-sitter backend has no preprocessor, so the fact must be visible.
+
+    libclang evaluates the condition and needs no note; this backend skips the
+    branch and records that the answer is unverified rather than silently
+    reporting the record unpacked.
+    """
+    record = _only(
+        "tree-sitter",
+        "#ifdef _MSC_VER\n#pragma pack(push, 1)\n#else\n#pragma pack(4)\n#endif\n"
+        "struct S { unsigned char a; unsigned int b; unsigned char c; };\n",
+        "S",
+    )
+    assert any("conditional preprocessor branch" in note for note in record.notes)
+
+
+def test_a_record_aligned_only_by_a_packed_aggregate_member_is_packed() -> None:
+    """Wrapping a family of records in one ``#pragma pack(1)`` is the idiom.
+
+    The inner record is packed first, so it reports an alignment of 1, and a
+    container whose widest member is that record has nothing left to detect on
+    it. A compiled C probe measures ``S1`` at size 6 alignment 1 where the
+    unpacked equivalent is 12 alignment 4, so it is packed and the natural
+    figure has to come from the leaf scalars.
+    """
+    records = {
+        r.name: r
+        for r in _parse(
+            "libclang",
+            "#pragma pack(1)\n"
+            "struct N1 { unsigned char x; unsigned int y; };\n"
+            "struct S1 { unsigned char a; struct N1 n; };\n"
+            "#pragma pack()\n",
+        )
+    }
+    assert records["N1"].is_packed is True
+    assert records["S1"].is_packed is True
+
+
+def test_an_unpacked_record_with_an_aggregate_member_is_not_packed() -> None:
+    """Negative control for the recursion: no pragma, no packing."""
+    records = {
+        r.name: r
+        for r in _parse(
+            "libclang",
+            "struct N2 { unsigned char x; unsigned int y; };\nstruct S2 { unsigned char a; struct N2 n; };\n",
+        )
+    }
+    assert records["N2"].is_packed is False
+    assert records["S2"].is_packed is False
+
+
+# (target triple, whether an unnamed bit-field imposes its type's alignment).
+# Measured by compiling ``struct { char a; unsigned int : 8; char b; }`` with
+# the host clang for each triple: 3/1 under the Itanium C++ ABI, 4/4 under
+# AAPCS. The split does not follow the architecture -- aarch64-apple-darwin
+# behaves like Itanium and aarch64-linux-gnu does not.
+_ANON_BITFIELD_ABI_TARGETS = [
+    ("x86_64-linux-gnu", False),
+    ("aarch64-apple-darwin", False),
+    ("riscv64-linux-gnu", False),
+    ("aarch64-linux-gnu", True),
+    ("arm-none-eabi", True),
+]
+
+
+@pytest.mark.parametrize(
+    ("target", "imposes"), _ANON_BITFIELD_ABI_TARGETS, ids=[t[0] for t in _ANON_BITFIELD_ABI_TARGETS]
+)
+def test_pragma_pack_with_an_anonymous_bitfield_follows_the_target_abi(target: str, imposes: bool) -> None:
+    """Whether the anonymous bit-field's alignment counts is a target property.
+
+    Under AAPCS the packed record measures 3 where the unpacked one measures 4,
+    so it really is packed and reporting it unpacked emits members at the wrong
+    offsets. Under the Itanium C++ ABI both measure 3 and there is nothing to
+    report. Excluding the bit-field unconditionally is right on one and a false
+    negative on the other, and both are supported CI platforms.
+    """
+    args = ["-target", target]
+    packed = _only(
+        "libclang",
+        "#pragma pack(1)\nstruct S { char a; unsigned int : 8; char b; };\n#pragma pack()\n",
+        "S",
+        extra_args=args,
+    )
+    unpacked = _only("libclang", "struct S { char a; unsigned int : 8; char b; };", "S", extra_args=args)
+    assert packed.is_packed is imposes
+    # The unpacked record must never be reported packed on either ABI: that is
+    # the false positive excluding the bit-field was introduced to prevent.
+    assert unpacked.is_packed is False
+
+
+def test_treesitter_notes_nothing_when_no_pack_pragma_is_conditional() -> None:
+    """Negative control: the note must not fire on an unconditional header."""
+    record = _only(
+        "tree-sitter",
+        "#pragma pack(1)\nstruct S { unsigned char a; unsigned int b; unsigned char c; };\n#pragma pack()\n",
+        "S",
+    )
+    assert record.is_packed is True
+    assert not any("conditional preprocessor branch" in note for note in record.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +325,13 @@ def test_libclang_records_an_inexpressible_intermediate_pragma_pack() -> None:
 
 
 def _build(source: str) -> dict[str, type[ctypes.Structure]]:
-    """Generate ctypes bindings from hand-built-equivalent parsed IR and load them."""
+    """Parse ``source``, generate ctypes bindings from the IR, and load them."""
     backend = get_backend("libclang")
     if not backend.is_available():
         pytest.skip("libclang backend unavailable")
-    code = get_writer("ctypes").write(backend.parse(source, "packed.h"))
+    code = get_writer("ctypes").write(backend.parse(source, "rec.h"))
     namespace: dict[str, object] = {}
-    exec(compile(code, "<generated>", "exec"), namespace)  # noqa: S102
+    exec(compile(code, "<generated>", "exec"), namespace)
     return {
         k: v for k, v in namespace.items() if isinstance(v, type) and issubclass(v, ctypes.Structure | ctypes.Union)
     }
@@ -300,8 +443,10 @@ def test_generated_ctypes_matches_c_layout(
     c_alignof: int,
     c_fields: dict[str, tuple[int, int, int]],
 ) -> None:
-    cls = _build(source)["S"]
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    assert "HEADERKIT: packed record" not in code, f"{label} is reproducible but was flagged"
 
+    cls = _build(source)["S"]
     assert ctypes.sizeof(cls) == c_sizeof
     assert ctypes.alignment(cls) == c_alignof
     for name, expected in c_fields.items():
@@ -318,28 +463,257 @@ def test_packed_bitfield_uses_a_byte_carrier_not_the_declared_type() -> None:
     code = get_writer("ctypes").write(
         get_backend("libclang").parse(
             "struct __attribute__((packed)) S { unsigned char a; unsigned int b : 8; unsigned char c; };",
-            "packed.h",
+            "rec.h",
         )
     )
     assert '("b", ctypes.c_ubyte, 8)' in code
     assert '("b", ctypes.c_uint, 8)' not in code
 
 
-def test_a_packed_bitfield_ctypes_cannot_place_is_flagged_not_emitted_silently() -> None:
-    """A bit-field wider than a byte that starts mid-byte has no ctypes spelling.
+# Packed shapes ctypes cannot reproduce at all. Each row: label, source, C
+# sizeof, C alignof, {field: (first bit, last bit, width)}, and the field the
+# diagnostic must name -- all measured with a compiled C probe, on the same
+# terms as ``_LAYOUT_CASES``.
+#
+# The generated size is deliberately absent. It is not a property of the
+# header: measured on macOS arm64, ``short12-char4-int20`` generates 6 bytes on
+# CPython 3.10 and 3.13 and 7 on 3.14. What every version agrees on is that the
+# generated class does not reproduce C, which is what the row asserts.
+_UNFAITHFUL_PACKED_CASES = [
+    (
+        "wide-bitfield-starting-mid-byte",
+        "struct __attribute__((packed)) S { unsigned int a : 4; unsigned int b : 30; unsigned char c; };",
+        6,
+        1,
+        {"a": (0, 3, 4), "b": (4, 33, 30), "c": (40, 47, 8)},
+        "b",
+    ),
+    (
+        "narrow-carrier-after-a-bitfield-that-crossed-its-unit",
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned char b : 4; unsigned int c : 20; };",
+        5,
+        1,
+        {"a": (0, 11, 12), "b": (12, 15, 4), "c": (16, 35, 20)},
+        "b",
+    ),
+    (
+        "narrow-carrier-then-plain-member",
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned char b : 4; unsigned char c; };",
+        3,
+        1,
+        {"a": (0, 11, 12), "b": (12, 15, 4), "c": (16, 23, 8)},
+        "b",
+    ),
+    (
+        "byte-carriers-straddling-a-byte",
+        "struct __attribute__((packed)) S { unsigned char a : 3; unsigned char b : 6; unsigned char c; };",
+        3,
+        1,
+        {"a": (0, 2, 3), "b": (3, 8, 6), "c": (16, 23, 8)},
+        "b",
+    ),
+    (
+        # The three rows below are the ones where C's packed offset and the
+        # unpacked running offset actually part company: ``b`` crosses the
+        # storage unit its declared type would have opened, so the unpacked
+        # offset rounds and C's does not. A shape where the two agree cannot
+        # tell a packed-offset defect from a correct one however it is
+        # asserted.
+        "bitfield-crossing-its-declared-unit",
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned short b : 8; unsigned short c : 8; };",
+        4,
+        1,
+        {"a": (0, 11, 12), "b": (12, 19, 8), "c": (20, 27, 8)},
+        "b",
+    ),
+    (
+        "bitfield-crossing-its-declared-unit-then-padding",
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned short b : 8;"
+        " unsigned int : 8; unsigned char c; };",
+        5,
+        1,
+        {"a": (0, 11, 12), "b": (12, 19, 8), "c": (32, 39, 8)},
+        "b",
+    ),
+    (
+        "bitfield-crossing-a-32-bit-unit",
+        "struct __attribute__((packed)) S { unsigned int a : 30; unsigned int b : 8; unsigned int c : 8; };",
+        6,
+        1,
+        {"a": (0, 29, 30), "b": (30, 37, 8), "c": (38, 45, 8)},
+        "b",
+    ),
+    (
+        "plain-member-after-a-part-filled-storage-unit",
+        "struct __attribute__((packed)) S { unsigned int a : 12; unsigned int b : 12; unsigned char c; };",
+        4,
+        1,
+        {"a": (0, 11, 12), "b": (12, 23, 12), "c": (24, 31, 8)},
+        "c",
+    ),
+]
 
-    C continues ``b`` across the storage-unit boundary, putting it at bit 4 (a
-    compiled probe measures the record at 6 bytes). ctypes moves it to the next
-    unit instead, and no carrier choice avoids that: 30 bits do not fit a byte.
-    The generated module says so rather than looking correct.
+
+@pytest.mark.parametrize(
+    ("label", "source", "c_sizeof", "c_alignof", "c_fields", "diverging_field"),
+    _UNFAITHFUL_PACKED_CASES,
+    ids=[case[0] for case in _UNFAITHFUL_PACKED_CASES],
+)
+def test_an_unreproducible_packed_record_is_flagged_not_emitted_silently(
+    label: str,
+    source: str,
+    c_sizeof: int,
+    c_alignof: int,
+    c_fields: dict[str, tuple[int, int, int]],
+    diverging_field: str,
+) -> None:
+    """A packed record ctypes cannot place must say so in the generated module.
+
+    Two assertions, and the second is what keeps the first honest: the
+    diagnostic has to fire *and* the generated class has to genuinely disagree
+    with C. Without the disagreement check a detector that flagged every packed
+    record would pass this suite.
     """
-    code = get_writer("ctypes").write(
-        get_backend("libclang").parse(
-            "struct __attribute__((packed)) S { unsigned int a : 4; unsigned int b : 30; unsigned char c; };",
-            "packed.h",
-        )
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    first_bit = c_fields[diverging_field][0]
+    assert f"C places '{diverging_field}' at bit {first_bit}" in code, label
+
+    cls = _build(source)["S"]
+    generated = (ctypes.sizeof(cls), ctypes.alignment(cls)) + tuple(
+        _field_bits(cls, ctypes.sizeof(cls), name) for name in c_fields
     )
-    assert "# HEADERKIT: packed bit-field(s) b" in code
+    measured = (c_sizeof, c_alignof) + tuple(c_fields[name] for name in c_fields)
+    assert generated != measured, f"{label} is reproducible after all; it does not belong in this corpus"
+
+
+def _emitted_fields(source: str, class_name: str = "S") -> list[tuple[str, str, int | None]]:
+    """The ``_fields_`` tuples the writer emits for one class.
+
+    Read back from the generated module rather than from its text: ``_fields_``
+    is a real list of tuples once the class body has run, so this is the
+    spelling itself and not a re-parse of it.
+    """
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    cls = namespace[class_name]
+    return [(f[0], f[1].__name__, f[2] if len(f) > 2 else None) for f in cls._fields_]  # type: ignore[union-attr]
+
+
+def test_packed_padding_is_respelled_from_its_c_offset_not_the_unpacked_one() -> None:
+    """A packed unnamed bit-field reserves exactly the bits it declares.
+
+    ``unsigned int : 8`` reserves 8 bits in a packed record, whatever storage
+    unit its declared type would have opened. It lands at bit 20 here, because
+    ``b`` ends there under packing -- measured with a compiled C probe, which
+    puts ``c`` at bit 32 and the record at 5 bytes. Reserving the span the
+    *unpacked* offset implies would take 12 bits instead of 8, and starting the
+    span at the unpacked offset would put it at bit 24 instead of 20.
+
+    Both errors are invisible in the resulting field offsets, because the next
+    plain member rounds to the same byte either way. What they do change is the
+    byte-granular chunks the padding is spelled in: a span of 8 bits from bit
+    20 is ``[4, 4]``, from bit 24 it is ``[8]``, and 12 bits from bit 20 is
+    ``[4, 8]``. So the chunk widths are the assertion.
+    """
+    source = (
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned short b : 8;"
+        " unsigned int : 8; unsigned char c; };"
+    )
+    emitted = _emitted_fields(source)
+    pad_widths = [width for name, _expr, width in emitted if name.startswith("_pad")]
+    assert pad_widths == [4, 4]
+    assert all(expr == "c_ubyte" for name, expr, _w in emitted if name.startswith("_pad"))
+
+
+def test_the_emitted_spelling_transcribes_the_c_packed_offsets() -> None:
+    """Walking the emitted tuples under C's packed rules must reproduce C.
+
+    This is the writer's *intent*, independent of what ctypes then does with
+    the spelling: a bit-field starts at the very next bit, a plain member
+    rounds to a byte. Every row of both corpora is checked, so a width or a
+    padding span that stops matching C is caught even on a record ctypes
+    cannot place anyway.
+    """
+    rows = [(case[1], case[4]) for case in _UNFAITHFUL_PACKED_CASES]
+    rows += [
+        (case[1], case[4]) for case in _LAYOUT_CASES if not hasattr(case, "values") and case[0].startswith("packed")
+    ]
+    assert len(rows) == len(_UNFAITHFUL_PACKED_CASES) + 4, "corpus rows changed; update the expected count"
+    for source, c_fields in rows:
+        offsets: dict[str, int] = {}
+        position = 0
+        for name, expr, width in _emitted_fields(source):
+            if width is None:
+                position = ((position + 7) // 8) * 8
+                offsets[name] = position
+                position += ctypes.sizeof(getattr(ctypes, expr)) * 8
+            else:
+                offsets[name] = position
+                position += width
+        for name, (first_bit, _last, _count) in c_fields.items():
+            assert offsets[name] == first_bit, f"{source}: {name} at {offsets[name]}, C says {first_bit}"
+
+
+def test_a_bitfield_is_narrowed_only_when_it_fits_the_byte_its_c_offset_lies_in() -> None:
+    """Narrowing is what makes ctypes follow C; it is unsound anywhere else.
+
+    A one-byte carrier removes the disagreement between C and ctypes only while
+    the field fits inside the byte C put it in. Past that boundary C itself
+    would have moved the field on, and a byte carrier cannot follow, so the
+    declared type has to stand. Reading the *unpacked* running offset to make
+    this decision narrows fields C placed mid-byte -- ``unsigned short c : 8``
+    at bit 20 in the third row below, which no byte can hold.
+
+    Checked across every packed corpus row, against the C offsets those rows
+    were measured at.
+    """
+    from headerkit.writers.ctypes import type_to_ctypes
+
+    rows = [(case[1], case[4]) for case in _UNFAITHFUL_PACKED_CASES]
+    rows += [
+        (case[1], case[4]) for case in _LAYOUT_CASES if not hasattr(case, "values") and case[0].startswith("packed")
+    ]
+    narrowed_seen = 0
+    for source, c_fields in rows:
+        emitted = {name: expr for name, expr, width in _emitted_fields(source) if width is not None}
+        for field in _only("libclang", source, "S").fields:
+            if field.bit_width is None or not field.name or field.name not in emitted:
+                continue
+            declared = type_to_ctypes(field.type).removeprefix("ctypes.")
+            if emitted[field.name] == declared:
+                continue
+            narrowed_seen += 1
+            first_bit = c_fields[field.name][0]
+            assert first_bit % 8 + field.bit_width <= 8, (
+                f"{source}: {field.name} narrowed to {emitted[field.name]} but C puts it at bit {first_bit}"
+            )
+    assert narrowed_seen, "no field was narrowed; the invariant above was never exercised"
+
+
+def test_unreproducible_records_are_named_in_a_module_level_tuple() -> None:
+    """The comment is invisible to importing code; the tuple is not.
+
+    A caller that generated bindings in a build step cannot see a ``#``
+    comment. Naming the records in a module attribute puts the fact where a
+    consumer's own assertion or startup check can reach it.
+    """
+    source = (
+        "struct __attribute__((packed)) S { unsigned short a : 12; unsigned char b : 4; unsigned char c; };\n"
+        "struct T { unsigned char x; };\n"
+    )
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    assert namespace.get("HEADERKIT_UNVERIFIED_RECORDS") == ("S",)
+
+
+def test_a_module_with_no_unreproducible_record_defines_no_tuple() -> None:
+    """Negative control: an all-clean module is unchanged by the mechanism."""
+    code = get_writer("ctypes").write(get_backend("libclang").parse("struct T { unsigned char x; };", "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    assert "HEADERKIT_UNVERIFIED_RECORDS" not in namespace
 
 
 def test_an_expressible_packed_record_carries_no_diagnostic() -> None:
@@ -347,10 +721,10 @@ def test_an_expressible_packed_record_carries_no_diagnostic() -> None:
     code = get_writer("ctypes").write(
         get_backend("libclang").parse(
             "struct __attribute__((packed)) S { unsigned char a; unsigned int b : 8; unsigned char c; };",
-            "packed.h",
+            "rec.h",
         )
     )
-    assert "# HEADERKIT: packed bit-field" not in code
+    assert "HEADERKIT: packed record" not in code
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +738,7 @@ def _write(writer_name: str, source: str = _PACKED_SOURCE) -> str:
     backend = get_backend("libclang")
     if not backend.is_available():
         pytest.skip("libclang backend unavailable")
-    return get_writer(writer_name).write(backend.parse(source, "packed.h"))
+    return get_writer(writer_name).write(backend.parse(source, "rec.h"))
 
 
 def test_cython_writer_marks_a_parsed_packed_record() -> None:
@@ -398,8 +772,20 @@ def test_json_writer_round_trips_is_packed() -> None:
     assert record["is_packed"] is True
 
 
+def _nim_pragmas(output: str) -> list[str]:
+    """The items of the first Nim ``{. .}`` pragma block in ``output``.
+
+    Reading the block rather than the whole module is what makes the assertion
+    about the record: the module also carries a ``header:`` entry naming the
+    parsed file, so a substring search for "packed" over the text would pass on
+    a header called ``packed.h`` whatever the writer did.
+    """
+    start = output.index("{.") + 2
+    return [item.strip() for item in output[start : output.index(".}", start)].split(",")]
+
+
 def test_nim_writer_emits_the_packed_pragma() -> None:
-    assert "{.packed" in _write("nim") or "packed" in _write("nim")
+    assert "packed" in _nim_pragmas(_write("nim"))
 
 
 def test_prompt_writer_marks_the_record_packed() -> None:
@@ -412,10 +798,11 @@ def test_unpacked_record_is_not_marked_packed_by_any_writer(backend_name: str) -
     backend = get_backend(backend_name)
     if not backend.is_available():
         pytest.skip(f"{backend_name} backend unavailable")
-    header = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "packed.h")
+    header = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "rec.h")
     assert "__attribute__((packed))" not in get_writer("cffi").write(header)
     assert "packed struct S" not in get_writer("cython").write(header)
     assert "_pack_ = 1" not in get_writer("ctypes").write(header)
+    assert "packed" not in _nim_pragmas(get_writer("nim").write(header))
 
 
 def test_diff_writer_reports_a_record_becoming_packed() -> None:
@@ -427,10 +814,12 @@ def test_diff_writer_reports_a_record_becoming_packed() -> None:
     backend = get_backend("libclang")
     if not backend.is_available():
         pytest.skip("libclang backend unavailable")
-    baseline = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "packed.h")
-    target = backend.parse(_PACKED_SOURCE, "packed.h")
+    baseline = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "rec.h")
+    target = backend.parse(_PACKED_SOURCE, "rec.h")
     report = diff_headers(baseline, target)
-    assert "packed" in str(report).lower()
+    # The entry itself, not ``str(report)``: the report's repr carries the
+    # header path, so a substring check against it passes on the filename.
+    assert any("packed attribute changed from False to True" in entry.detail for entry in report.entries)
 
 
 @pytest.mark.xfail(
@@ -447,8 +836,6 @@ def test_treesitter_handles_a_prefix_attribute_on_a_union() -> None:
     backend = get_backend("tree-sitter")
     if not backend.is_available():
         pytest.skip("tree-sitter backend unavailable")
-    unit = backend.parse("union U { unsigned char a; unsigned int b; } ;", "packed.h")
-    del unit
     record = _only("tree-sitter", "union __attribute__((packed)) U { unsigned char a; unsigned int b; };", "U")
     assert record.is_packed is True
 

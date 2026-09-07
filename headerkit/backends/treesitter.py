@@ -182,45 +182,101 @@ def _split_pragma_arg(text: str) -> list[str]:
     return tokens
 
 
-def _pack_regions(root: Any) -> list[tuple[int, int | None]]:
+#: Nodes whose children are mutually exclusive preprocessor branches. Only one
+#: of them survives translation, and which one is not knowable without
+#: evaluating the condition, so none of them may contribute to a running state.
+_CONDITIONAL_PREPROC = frozenset(
+    {
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_elif",
+        "preproc_else",
+        "preproc_elifdef",
+    }
+)
+
+
+def _pack_pragma_words(node: Any) -> list[str] | None:
+    """The words of a ``#pragma pack`` directive, or None for any other node."""
+    if node.type != "preproc_call":
+        return None
+    directive = node.child_by_field_name("directive")
+    if directive is None or _node_text(directive).strip() != "#pragma":
+        return None
+    arg = node.child_by_field_name("argument")
+    tokens = _split_pragma_arg(_node_text(arg)) if arg is not None else []
+    if not tokens or tokens[0] != "pack":
+        return None
+    return [t for t in tokens[1:] if t not in "(),"]
+
+
+def _first_conditional_pack(node: Any) -> int | None:
+    """Start offset of the first ``#pragma pack`` anywhere under ``node``."""
+    if _pack_pragma_words(node) is not None:
+        offset: int = node.start_byte
+        return offset
+    for child in node.children:
+        found = _first_conditional_pack(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _pack_regions(root: Any) -> tuple[list[tuple[int, int | None]], int | None]:
     """Map source positions to the ``#pragma pack`` alignment in force there.
 
     Returns ``(start_byte, alignment)`` pairs in ascending order, where
-    ``alignment`` is ``None`` for the compiler default. A record is matched to a
-    region by its own start offset, which is what gives the pragma its scope:
-    ``#pragma pack(1)`` applies to records that carry no attribute of their own,
-    and ``#pragma pack()`` or ``pop`` ends that scope.
+    ``alignment`` is ``None`` for the compiler default, together with the offset
+    of the first pack pragma found inside a conditional preprocessor branch (or
+    None if there was none). A record is matched to a region by its own start
+    offset, which is what gives the pragma its scope: ``#pragma pack(1)``
+    applies to records that carry no attribute of their own, and ``#pragma
+    pack()`` or ``pop`` ends that scope.
+
+    Conditional branches are not descended into. ``#ifdef _MSC_VER / #pragma
+    pack(push, 1) / #else / #pragma pack(4) / #endif`` has two mutually
+    exclusive answers, and walking both would leave whichever ``#endif`` came
+    last in force -- an alignment no translation of the header ever has. The
+    offset returned instead lets the record converter say the answer is
+    unknown from there on.
     """
     regions: list[tuple[int, int | None]] = []
     stack: list[int | None] = []
     current: int | None = None
+    conditional_pack: int | None = None
 
     def visit(node: Any) -> None:
-        nonlocal current
-        if node.type == "preproc_call":
-            directive = node.child_by_field_name("directive")
-            if directive is not None and _node_text(directive).strip() == "#pragma":
-                arg = node.child_by_field_name("argument")
-                tokens = _split_pragma_arg(_node_text(arg)) if arg is not None else []
-                if tokens and tokens[0] == "pack":
-                    words = [t for t in tokens[1:] if t not in "(),"]
-                    if not words:  # pragma pack() -- reset to default
-                        current = None
-                    elif words[0] == "push":
-                        stack.append(current)
-                        if len(words) > 1 and words[1].isdigit():
-                            current = int(words[1])
-                    elif words[0] == "pop":
-                        current = stack.pop() if stack else None
-                    elif words[0].isdigit():
-                        current = int(words[0])
-                    regions.append((node.end_byte, current))
+        nonlocal current, conditional_pack
+        if node.type in _CONDITIONAL_PREPROC:
+            found = _first_conditional_pack(node)
+            if found is not None and (conditional_pack is None or found < conditional_pack):
+                conditional_pack = found
+            return
+        words = _pack_pragma_words(node)
+        if words is not None:
+            if not words:  # pragma pack() -- reset to default
+                current = None
+            elif words[0] == "push":
+                stack.append(current)
+                # MSVC allows an identifier between ``push`` and the alignment
+                # (``pack(push, mylabel, 1)``), which GCC and Clang accept too
+                # and which is pervasive in Windows-targeting headers. The
+                # alignment is the numeric argument wherever it sits; a bare
+                # ``pack(push)`` carries none and keeps the current value.
+                numbers = [w for w in words[1:] if w.isdigit()]
+                if numbers:
+                    current = int(numbers[-1])
+            elif words[0] == "pop":
+                current = stack.pop() if stack else None
+            elif words[0].isdigit():
+                current = int(words[0])
+            regions.append((node.end_byte, current))
         for child in node.children:
             visit(child)
 
     visit(root)
     regions.sort(key=lambda r: r[0])
-    return regions
+    return regions, conditional_pack
 
 
 def _pack_at(regions: list[tuple[int, int | None]], offset: int) -> int | None:
@@ -314,9 +370,41 @@ class TreeSitterBackend:
         self._lifted_declarations: list[Declaration] = []
         self._filled_forward: Struct | None = None
         self._pack_regions: list[tuple[int, int | None]] = []
+        #: Offset of the first ``#pragma pack`` seen inside a conditional
+        #: preprocessor branch, whose effect on later records is unknowable
+        #: without evaluating the condition.
+        self._conditional_pack: int | None = None
 
     def is_available(self) -> bool:
         return _HAS_TREESITTER and (_HAS_TREESITTER_C or _HAS_TREESITTER_CPP)
+
+    def _pack_notes(self, node: Any, *, has_packed_attribute: bool, pack_alignment: int | None) -> list[str]:
+        """Packing facts about a record that ``is_packed`` cannot carry.
+
+        An attribute on the record settles the question outright, so neither
+        note applies to one that carries it -- the same order the libclang
+        backend uses.
+        """
+        if has_packed_attribute:
+            return []
+        notes: list[str] = []
+        if pack_alignment is not None and pack_alignment > 1:
+            # The libclang backend reaches the same conclusion from the recorded
+            # layout and can compare the members' natural alignment against it;
+            # this backend has no layout engine and reports the pragma itself.
+            # A record whose members are all narrower than the pragma is
+            # therefore noted here and not there.
+            notes.append(
+                f"Record is under an intermediate '#pragma pack({pack_alignment})', "
+                "which squeezes the layout without flattening it; is_packed cannot express that."
+            )
+        if self._conditional_pack is not None and node.start_byte > self._conditional_pack:
+            notes.append(
+                "A '#pragma pack' appears inside a conditional preprocessor branch "
+                "earlier in this file. Which branch applies is not knowable without "
+                "evaluating the condition, so the packing of this record is unverified."
+            )
+        return notes
 
     def _is_cpp_mode(self, code: str, filename: str, extra_args: list[str] | None = None) -> bool:
         if extra_args:
@@ -417,7 +505,7 @@ class TreeSitterBackend:
         self._seen_typedefs = set()
         self._lifted_declarations = []
         self._filled_forward = None
-        self._pack_regions = _pack_regions(tree.root_node)
+        self._pack_regions, self._conditional_pack = _pack_regions(tree.root_node)
 
         declarations: list[Declaration] = []
         for child in tree.root_node.children:
@@ -1344,7 +1432,10 @@ class TreeSitterBackend:
         # Only an alignment of exactly 1 is reported: an intermediate
         # ``#pragma pack(2)`` squeezes the record without flattening it, and a
         # boolean cannot say so without overstating the result.
-        is_packed = _record_has_packed_attribute(node) or _pack_at(self._pack_regions, node.start_byte) == 1
+        has_packed_attribute = _record_has_packed_attribute(node)
+        pack_alignment = _pack_at(self._pack_regions, node.start_byte)
+        is_packed = has_packed_attribute or pack_alignment == 1
+        notes = self._pack_notes(node, has_packed_attribute=has_packed_attribute, pack_alignment=pack_alignment)
         loc = SourceLocation(file=filename, line=node.start_point[0] + 1, column=node.start_point[1] + 1)
         record = Struct(
             name=name,
@@ -1361,6 +1452,7 @@ class TreeSitterBackend:
             inner_typedefs=inner_typedefs,
             nested_records=nested_records,
             location=loc,
+            notes=notes,
         )
 
         if forward_target is not None:

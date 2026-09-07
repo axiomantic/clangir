@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import functools
 import glob
 import os
 import re
@@ -82,6 +83,48 @@ from headerkit.ir import (
 _cindex: Any = None
 CursorKind: Any = None
 TypeKind: Any = None
+
+#: How far :meth:`ClangASTConverter._member_natural_align` recurses through
+#: nested aggregates before giving up. Only a pathological header nests deeper,
+#: and a bound is what keeps a cyclic canonical type from looping.
+_NATURAL_ALIGN_MAX_DEPTH = 8
+
+#: Probe used to measure whether the target gives an unnamed bit-field's
+#: declared type alignment to the enclosing record. ``a`` and ``b`` pin the
+#: record's own alignment to 1, so anything above 1 came from the bit-field.
+_UNNAMED_BITFIELD_PROBE = "struct _hk_abi_probe { char a; unsigned int : 8; char b; };\n"
+
+
+@functools.lru_cache(maxsize=16)
+def _unnamed_bitfields_impose_alignment(args: tuple[str, ...], is_cplus: bool) -> bool:
+    """Whether this target gives an unnamed bit-field's alignment to its record.
+
+    Measured with clang rather than assumed, because the answer is an ABI
+    choice and does not follow from the architecture alone. Compiled with one
+    clang, ``struct { char a; unsigned int : 8; char b; }`` is size 3 align 1
+    under the Itanium C++ ABI (x86-64 System V, Darwin arm64, riscv64,
+    powerpc64le) and size 4 align 4 under AAPCS (aarch64-linux-gnu,
+    armv7-linux-gnueabihf, arm-none-eabi).
+
+    Getting this wrong is not merely cosmetic. On a target that does impose the
+    alignment, a ``#pragma pack(1)`` record with an anonymous bit-field really
+    is packed -- it measures 3 where the unpacked record measures 4 -- and
+    excluding the bit-field puts the natural figure at 1, hides the packing,
+    and emits a binding whose members are at the wrong offsets.
+
+    Falls back to False, the Itanium answer, if the probe cannot be parsed.
+    """
+    with contextlib.suppress(Exception):
+        name = "_hk_abi_probe.cpp" if is_cplus else "_hk_abi_probe.c"
+        tu = _cindex.Index.create().parse(
+            name,
+            args=list(args),
+            unsaved_files=[(name, _UNNAMED_BITFIELD_PROBE)],
+        )
+        for cursor in tu.cursor.get_children():
+            if cursor.spelling == "_hk_abi_probe":
+                return bool(cursor.type.get_align() > 1)
+    return False
 
 
 def normalize_path(path: str) -> str:
@@ -886,12 +929,16 @@ class ClangASTConverter:
         is_cplus: bool = False,
         allowlist_paths: _PathSet | None = None,
         denylist_paths: _PathSet | None = None,
+        parse_args: tuple[str, ...] = (),
     ) -> None:
         self.filename = filename
         self.project_prefixes = project_prefixes
         self.is_cplus = is_cplus
         self.allowlist_paths = allowlist_paths
         self.denylist_paths = denylist_paths
+        #: Whether this translation unit's target gives an unnamed bit-field's
+        #: alignment to its record. Measured once per argument set.
+        self._unnamed_bitfields_align = _unnamed_bitfields_impose_alignment(parse_args, is_cplus)
         self.declarations: list[Declaration] = []
         # Track seen declarations to avoid duplicates
         self._seen: set[str] = set()
@@ -1761,10 +1808,9 @@ class ClangASTConverter:
         leaves alignment at 2, is not expressible as a boolean, and is
         therefore not reported here -- see ``_pack_note``.
 
-        Anonymous bit-fields are excluded from the natural alignment because
-        they do not contribute alignment under the Itanium ABI. Including them
-        would report ``struct { char a; unsigned int : 8; char b; }`` as packed
-        when no packing was requested.
+        Whether an anonymous bit-field contributes its type's alignment is a
+        property of the target, not a universal rule, so it is measured rather
+        than assumed -- see :func:`_unnamed_bitfields_impose_alignment`.
         """
         with contextlib.suppress(Exception):
             if any("PACKED" in child.kind.name for child in cursor.get_children()):
@@ -1797,6 +1843,35 @@ class ClangASTConverter:
             )
         return None
 
+    def _member_natural_align(self, member_type: Any, depth: int = 0) -> int:
+        """Alignment ``member_type`` would impose if nothing had been packed.
+
+        A record that is itself packed reports an alignment of 1, and a
+        container whose widest member is such a record therefore looks
+        unpacked: ``#pragma pack(1)`` wrapped around a family of records -- the
+        standard binary-format header idiom -- packs the inner ones first and
+        leaves nothing on the outer one to detect. Recursing to the leaf
+        scalars restores the figure the members would have imposed.
+        """
+        if depth > _NATURAL_ALIGN_MAX_DEPTH:
+            return 0
+        with contextlib.suppress(Exception):
+            canonical = member_type.get_canonical()
+            while canonical.kind == TypeKind.CONSTANTARRAY:
+                canonical = canonical.get_array_element_type().get_canonical()
+            declaration = canonical.get_declaration()
+            record_kinds = (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_DECL)
+            if declaration is not None and declaration.kind in record_kinds:
+                best = 0
+                for f in canonical.get_fields():
+                    if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
+                        continue
+                    best = max(best, self._member_natural_align(f.type, depth + 1))
+                if best > 0:
+                    return best
+            return int(canonical.get_align())
+        return 0
+
     def _layout_alignments(self, cursor: Any) -> tuple[int | None, int | None]:
         """Return (natural alignment of the members, recorded alignment)."""
         natural: int | None = None
@@ -1809,14 +1884,14 @@ class ClangASTConverter:
             best = 1
             saw_member = False
             for f in cursor.type.get_fields():
-                # An anonymous bit-field reserves bits without imposing its
-                # type's alignment, so it must not raise the natural figure.
-                if f.is_bitfield() and not f.spelling:
+                # Whether an anonymous bit-field imposes its type's alignment is
+                # a target property; the measured answer decides.
+                if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
                     continue
-                fa = f.type.get_align()
+                fa = self._member_natural_align(f.type)
                 if fa > 0:
                     saw_member = True
-                    best = max(best, int(fa))
+                    best = max(best, fa)
             if saw_member:
                 natural = best
         return natural, actual
@@ -3692,6 +3767,7 @@ class LibclangBackend:
             is_cplus=is_cplus,
             allowlist_paths=allowlist_paths,
             denylist_paths=denylist_paths,
+            parse_args=tuple(args),
         )
         header = converter.convert(tu)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import math
+import re
 import textwrap
 from typing import ClassVar
 
@@ -287,6 +288,21 @@ def _byte_split(start: int, end: int) -> list[int]:
     return widths
 
 
+#: Name of the module-level tuple naming records the writer could not
+#: reproduce. Read by importing code, unlike the comment beside each class.
+_UNVERIFIED_NAME = "HEADERKIT_UNVERIFIED_RECORDS"
+
+#: Recovers those record names from the rendered class bodies. The diagnostic
+#: is the only place the fact is recorded per class, and it names the class.
+_UNVERIFIED_MARKER = re.compile(r"^\s*# HEADERKIT: packed record (\w+) has no faithful ctypes$", re.MULTILINE)
+
+_UNTRACKABLE_PADDING_DIAGNOSTIC = (
+    "an unnamed bitfield of {width} bits follows a member whose bit offset "
+    "the writer cannot track, so the reserved bits cannot be respelled "
+    "without the alignment their declared type carries"
+)
+
+
 class _StructBody:
     """Accumulates the ctypes class body for one record.
 
@@ -296,8 +312,9 @@ class _StructBody:
     be reached by reserving the remaining bits of the current unit instead.
     """
 
-    def __init__(self, is_union: bool) -> None:
+    def __init__(self, is_union: bool, is_packed: bool = False) -> None:
         self.is_union = is_union
+        self.is_packed = is_packed
         self.nested: list[str] = []
         self.anonymous: list[str] = []
         self.entries: list[str] = []
@@ -310,6 +327,16 @@ class _StructBody:
         #: padding field whose declared type aligns wider than a byte arrives.
         self.flat_entries: list[str] = []
         self.bit_pos: int | None = 0
+        #: The same running offset under *packed* C rules, which never round a
+        #: bit-field up to its declared storage unit. ``bit_pos`` cannot serve
+        #: both: it models the unpacked allocation, and the two diverge the
+        #: moment a bit-field would have crossed its declared unit.
+        self.packed_bit_pos: int | None = 0
+        #: One entry per emitted ``flat_entries`` tuple, as ``(name,
+        #: expression, bit width)`` with a width of None for a plain member.
+        #: This is what the packed-layout model is walked over, so it describes
+        #: the spelling that is actually emitted rather than the source fields.
+        self.flat_layout: list[tuple[str, str, int | None]] = []
         self.pad_index = 0
         self.flat_pad_index = 0
         self.padding_bits = 0
@@ -331,11 +358,16 @@ class _StructBody:
         self.member_align_bits: int | None = 0
         #: Why no alignment-neutral carrier could be built, if that happened.
         self.diagnostic: str | None = None
-        #: Bit-fields a packed record cannot reproduce. A field wider than a
-        #: byte that starts mid-byte has no ctypes spelling: the byte carrier
-        #: that packing needs cannot hold it, and its declared type refuses to
-        #: straddle the storage unit it would have to straddle.
-        self.unplaceable_bitfields: list[str] = []
+
+    @property
+    def packed_offset(self) -> int | None:
+        """The running offset that governs this record's emitted spelling.
+
+        A packed record is emitted from ``flat_entries`` and laid out by C's
+        packed rules, so every decision about it -- carrier width, padding
+        spans -- must read the offset those rules produce.
+        """
+        return self.packed_bit_pos if self.is_packed else self.bit_pos
 
     @property
     def abi_dependent(self) -> bool:
@@ -368,10 +400,11 @@ class _StructBody:
         self.flat_pad_index += 1
         return name
 
-    def _add_both(self, entry: str) -> None:
+    def _add_both(self, entry: str, layout: tuple[str, str, int | None]) -> None:
         self.entries.append(entry)
         self.native_entries.append(entry)
         self.flat_entries.append(entry)
+        self.flat_layout.append(layout)
 
     def _advance_bitfield(self, expr: str, width: int) -> None:
         if self.is_union:
@@ -379,11 +412,17 @@ class _StructBody:
         info = _ctypes_scalar_bits(expr)
         if info is None or self.bit_pos is None:
             self.bit_pos = None
+            self.packed_bit_pos = None
             return
         unit = info[0]
         if self.bit_pos % unit + width > unit:
             self.bit_pos = _round_up(self.bit_pos, unit)
         self.bit_pos += width
+        # Packing removes the storage unit outright, so C starts the next
+        # bit-field at the very next bit however wide this one's declared type
+        # is. That is the whole difference from the branch above.
+        if self.packed_bit_pos is not None:
+            self.packed_bit_pos += width
 
     def _advance_plain(self, expr: str) -> None:
         if self.is_union:
@@ -391,9 +430,14 @@ class _StructBody:
         info = _ctypes_scalar_bits(expr)
         if info is None or self.bit_pos is None:
             self.bit_pos = None
+            self.packed_bit_pos = None
             return
         size, align = info
         self.bit_pos = _round_up(self.bit_pos, align) + size
+        # A plain member is byte-addressed even when packed, so it rounds -- to
+        # a byte rather than to its declared alignment.
+        if self.packed_bit_pos is not None:
+            self.packed_bit_pos = _round_up(self.packed_bit_pos, 8) + size
 
     def add_padding(self, f: Field) -> bool:
         """Reserve the bits of an unnamed bitfield. False if it cannot be placed."""
@@ -418,6 +462,7 @@ class _StructBody:
                 self.pad_carrier = (expr, align_bits, unit_bits)
 
         start = self.bit_pos
+        packed_start = self.packed_bit_pos
         pad_name = self._next_pad()
         self.entries.append(f'("{pad_name}", {expr}, {width})')
         # ``: 0`` reserves nothing in C; it only ends the current storage unit
@@ -446,23 +491,34 @@ class _StructBody:
         # every following member keeps its offset while the record stays
         # byte-alignable.
         if info is None or info[1] <= 8:
-            self.flat_entries.append(f'("{self._next_flat_pad()}", {expr}, {width})')
+            flat_name = self._next_flat_pad()
+            self.flat_entries.append(f'("{flat_name}", {expr}, {width})')
+            self.flat_layout.append((flat_name, expr, width))
             return True
 
         self.pad_align_bits = max(self.pad_align_bits, info[1])
         if self.is_union:
             # Union members all start at bit 0, so only the span matters.
             span = _byte_split(0, width)
+        elif self.is_packed:
+            # Packing reserves exactly the declared width, with no storage unit
+            # to skip past, so the span is taken from the packed offset. Using
+            # the unpacked one would over-reserve: ``unsigned short a : 12;
+            # unsigned int : 8;`` moves the unpacked offset to 20 by the
+            # declared unit but reserves only 8 bits when packed.
+            if packed_start is None:
+                self.diagnostic = _UNTRACKABLE_PADDING_DIAGNOSTIC.format(width=width)
+                return True
+            span = _byte_split(packed_start, packed_start + width)
         elif start is None or self.bit_pos is None:
-            self.diagnostic = (
-                f"an unnamed bitfield of {width} bits follows a member whose bit offset "
-                "the writer cannot track, so the reserved bits cannot be respelled "
-                "without the alignment their declared type carries"
-            )
+            self.diagnostic = _UNTRACKABLE_PADDING_DIAGNOSTIC.format(width=width)
             return True
         else:
             span = _byte_split(start, self.bit_pos)
-        self.flat_entries.extend(f'("{self._next_flat_pad()}", ctypes.c_ubyte, {w})' for w in span)
+        for chunk in span:
+            flat_name = self._next_flat_pad()
+            self.flat_entries.append(f'("{flat_name}", ctypes.c_ubyte, {chunk})')
+            self.flat_layout.append((flat_name, "ctypes.c_ubyte", chunk))
         return True
 
     def aligned_padding_entries(self) -> list[str]:
@@ -518,12 +574,13 @@ class _StructBody:
             return False
         self.nested.extend(body)
         self.anonymous.append(field_name)
-        self._add_both(f'("{field_name}", {cls_name})')
+        self._add_both(f'("{field_name}", {cls_name})', (field_name, cls_name, None))
         self.has_member = True
         self.member_align_bits = None
         # The nested record carries its own alignment, so the offset past it is
         # not derivable from the scalar table.
         self.bit_pos = None
+        self.packed_bit_pos = None
         return True
 
     def _portable_bitfield_carrier(self, expr: str, width: int) -> str:
@@ -545,10 +602,11 @@ class _StructBody:
         Windows.
         """
         info = _ctypes_scalar_bits(expr)
-        if info is None or self.is_union or self.bit_pos is None:
+        offset = self.packed_offset
+        if info is None or self.is_union or offset is None:
             return expr
         _unit_bits, align_bits = info
-        if align_bits <= 8 or self.bit_pos % 8 + width > 8:
+        if align_bits <= 8 or offset % 8 + width > 8:
             return expr
         narrow = _narrow_carrier(expr)
         if narrow is None:
@@ -557,31 +615,55 @@ class _StructBody:
             self.narrowed_carrier = (expr, align_bits)
         return narrow
 
-    def _is_unplaceable_when_packed(self, expr: str, carrier: str, width: int) -> bool:
-        """Whether a packed record could not reproduce this bit-field.
+    def packed_divergence(self) -> tuple[str, int] | None:
+        """The first field a packed spelling misplaces, as ``(name, C bit offset)``.
 
-        Packing removes the storage unit, so C starts the field at the very
-        next bit. ctypes can follow only while a one-byte carrier can hold the
-        field: a wider carrier keeps its own unit and refuses to straddle the
-        boundary. ``struct __attribute__((packed)) { unsigned a : 4; unsigned b
-        : 30; }`` puts ``b`` at bit 4 in C, and no ctypes spelling does -- 30
-        bits do not fit a byte carrier, and ``c_uint`` moves ``b`` to the next
-        unit. Narrowing having been refused is the signal, so this stays in
-        step with whatever the carrier helper decides.
+        Two offsets are walked side by side over the tuples that are actually
+        emitted. C's packed offset never rounds for a bit-field and rounds only
+        to a byte for a plain member. ctypes keeps allocating storage units
+        whatever ``_pack_`` says: a bit-field that changes carrier, or that no
+        longer fits the open unit, opens a new unit at the next byte *past the
+        end of the old one*, which is not where C put it.
+
+        Only the first disagreement is reported, and only when the two offsets
+        were still in step immediately before it -- so the reported field is
+        one ctypes provably misplaces, not one this model merely cannot follow.
+        Every field after it is suspect, which the diagnostic says.
         """
-        if self.is_union or self.bit_pos is None or carrier != expr:
-            return False
-        info = _ctypes_scalar_bits(expr)
-        if info is None or info[1] <= 8:
-            return False
-        return self.bit_pos % 8 != 0
+        if self.is_union or not self.is_packed:
+            return None
+        c_pos = 0
+        t_pos = 0
+        unit: tuple[int, int, str] | None = None  # (start, bits, expression)
+        for name, expr, width in self.flat_layout:
+            info = _ctypes_scalar_bits(expr)
+            if info is None:
+                return None
+            size_bits = info[0]
+            unit_end = unit[0] + unit[1] if unit is not None else t_pos
+            if width is None:
+                t_start = _round_up(unit_end, 8)
+                c_start = _round_up(c_pos, 8)
+                unit = None
+            elif unit is not None and expr == unit[2] and t_pos + width <= unit[0] + unit[1]:
+                t_start = t_pos
+                c_start = c_pos
+            else:
+                t_start = _round_up(unit_end, 8)
+                c_start = c_pos
+                unit = (t_start, size_bits, expr)
+            if t_start != c_start:
+                return name, c_start
+            t_pos = t_start + (size_bits if width is None else width)
+            c_pos = c_start + (size_bits if width is None else width)
+        return None
 
     def add_member(self, f: Field) -> None:
         expr = type_to_ctypes(f.type)
         self.has_member = True
         self._note_member_align(expr)
         if f.bit_width is None:
-            self._add_both(_field_to_ctypes_tuple(f))
+            self._add_both(_field_to_ctypes_tuple(f), (f.name, expr, None))
             self._advance_plain(expr)
             return
         # Only the byte-granular spelling narrows. ``entries`` stays faithful
@@ -591,8 +673,7 @@ class _StructBody:
         self.native_entries.append(_field_to_ctypes_tuple(f))
         carrier = self._portable_bitfield_carrier(expr, f.bit_width)
         self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
-        if self._is_unplaceable_when_packed(expr, carrier, f.bit_width):
-            self.unplaceable_bitfields.append(f.name)
+        self.flat_layout.append((f.name, carrier, f.bit_width))
         # The running offset tracks C, so it advances by the *declared* type.
         self._advance_bitfield(expr, f.bit_width)
 
@@ -619,7 +700,7 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
     if not decl.fields:
         return [f"class {class_name}({base_class}):", "    pass"]
 
-    body = _StructBody(decl.is_union)
+    body = _StructBody(decl.is_union, decl.is_packed)
     for index, f in enumerate(decl.fields):
         if f.is_padding:
             if not body.add_padding(f):
@@ -688,12 +769,14 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         # byte-granular spelling gives every bit-field a carrier no wider than
         # the bits it uses, which is what makes the two agree; it is the same
         # list the ABI branch already relies on for padding.
-        if body.unplaceable_bitfields:
-            named = ", ".join(body.unplaceable_bitfields)
-            lines.append(f"    # HEADERKIT: packed bit-field(s) {named} start mid-byte and are")
-            lines.append("    # wider than a byte, which ctypes cannot express: C continues the")
-            lines.append("    # field across the storage-unit boundary and ctypes moves it to the")
-            lines.append("    # next unit. Verify this record against your C compiler.")
+        divergence = body.packed_divergence()
+        if divergence is not None:
+            name, c_bit = divergence
+            lines.append(f"    # HEADERKIT: packed record {class_name} has no faithful ctypes")
+            lines.append(f"    # spelling. C places '{name}' at bit {c_bit}; ctypes allocates a")
+            lines.append("    # storage unit per bit-field and cannot open one there, so")
+            lines.append(f"    # '{name}' and every field after it may be misplaced. Verify")
+            lines.append("    # this record against your C compiler before relying on it.")
         lines.append("    _fields_ = [")
         lines.extend(f"        {entry}," for entry in body.flat_entries)
         lines.append("    ]")
@@ -933,6 +1016,23 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
         "functions": "Function Prototypes",
         "variables": "Global Variables",
     }
+
+    # A comment is invisible to whatever imports this module, and these records
+    # are precisely the ones a caller must not trust blindly. The same names go
+    # into a module-level tuple so the defect is reachable from code -- an
+    # assertion in a consumer's test, a startup check -- and not only from a
+    # human reading the file. It is defined only when there is something to
+    # report, so a module with no affected record is byte-for-byte what it was:
+    # read it as ``getattr(mod, "HEADERKIT_UNVERIFIED_RECORDS", ())``, where
+    # absent means none.
+    unverified = _UNVERIFIED_MARKER.findall("\n".join(sections["structs"]))
+    if unverified:
+        output_lines.append("#: Records in this module whose layout ctypes could not reproduce.")
+        output_lines.append("#: Each also carries a '# HEADERKIT:' comment on its class.")
+        output_lines.append(f"{_UNVERIFIED_NAME} = (")
+        output_lines.extend(f'    "{name}",' for name in unverified)
+        output_lines.append(")")
+        output_lines.append("")
 
     for section_name in section_order:
         items = sections[section_name]
