@@ -1381,13 +1381,16 @@ class TestR13PaddingLayoutMatchesC:
 #: Whether a C unnamed bit-field contributes its declared type's alignment to
 #: the enclosing record, measured with compiled C probes:
 #:
-#: =========================  =================  ==========================
-#: ABI                        toolchains         imposes alignment?
-#: =========================  =================  ==========================
+#: =========================  ====================  ==================
+#: ABI                        toolchains            imposes alignment?
+#: =========================  ====================  ==================
 #: AAPCS64 (Linux aarch64)    gcc 14.2, clang 19.1  yes
 #: x86-64 System V (Linux)    gcc 14.2, clang 19.1  no
 #: Darwin arm64               Apple clang 21        no
-#: =========================  =================  ==========================
+#: Windows x86-64             MinGW cc, gcc,        yes
+#:                            clang, clang targeting
+#:                            MSVC -- all agreed
+#: =========================  ====================  ==================
 #:
 #: ``c6_onlypad`` in the corpus above therefore measures 4/4 on one host and
 #: 1/1 on another. The end-to-end tests compare against whichever host runs
@@ -1408,15 +1411,16 @@ _ABI_LAYOUT_CASES: tuple[tuple[str, str, tuple[int, int], tuple[int, int]], ...]
     ("a8", "struct a8 { unsigned int : 8; unsigned int : 0; };", (4, 4), (4, 1)),
 )
 
-#: Host identifications and the flag each must produce. The first three rows are
-#: measured; the rest pin the documented fallback for ABIs not measured.
+#: Host identifications and the flag each must produce. Every row but
+#: ``linux/armv7l`` is measured; that one pins the documented fallback for the
+#: 32-bit ARM ABIs, which were not measured.
 _ABI_HOSTS: tuple[tuple[str, str, bool], ...] = (
     ("linux", "aarch64", True),
     ("linux", "x86_64", False),
     ("darwin", "arm64", False),
     ("darwin", "x86_64", False),
     ("linux", "armv7l", True),
-    ("win32", "AMD64", False),
+    ("win32", "AMD64", True),
 )
 
 

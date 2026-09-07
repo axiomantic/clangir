@@ -70,6 +70,14 @@ CTYPES_TYPE_MAP: dict[str, str] = {
 #: Name of the host-ABI flag the generated module defines when it needs one.
 _ABI_FLAG = "_HK_UNNAMED_BITFIELD_ALIGNS"
 
+#: Names of the zero-length arrays that carry an alignment a respelled field
+#: would otherwise have lost. A zero-length ctypes array occupies no bytes and
+#: still imposes its element type's alignment on the record, identically on
+#: every CPython measured (3.10 through 3.14) -- which is what lets the field
+#: spellings be chosen for position alone.
+_ALIGN_FIELD = "_hk_align"
+_PAD_ALIGN_FIELD = "_hk_pad_align"
+
 #: Definition emitted into a generated module that contains an all-padding
 #: record. ``platform.machine`` is consulted at import time on purpose: ctypes
 #: lays a record out for the ABI of the host running Python, which need not be
@@ -77,15 +85,18 @@ _ABI_FLAG = "_HK_UNNAMED_BITFIELD_ALIGNS"
 ABI_ALIGNMENT_NOTE = """\
 # Does a C unnamed bit-field contribute its declared type's alignment to the
 # record that contains it? That is an ABI choice. Measured with compiled C
-# probes: AAPCS64 (Linux aarch64, gcc 14.2 and clang 19.1) imposes the
-# alignment; x86-64 System V (Linux x86_64, gcc 14.2 and clang 19.1) and
-# Darwin arm64 (Apple clang 21) do not. Other ABIs were not measured and are
-# assumed to follow System V, which is the majority rule of the three.
-# Resolved on import because ctypes follows the ABI of the host running this
-# module, which need not be the host that generated it.
-_HK_UNNAMED_BITFIELD_ALIGNS = not sys.platform.startswith(
-    ("darwin", "ios")
-) and platform.machine().lower().startswith(("aarch64", "arm"))"""
+# probes: AAPCS64 (Linux aarch64, gcc 14.2 and clang 19.1) and Windows x86-64
+# impose the alignment; x86-64 System V (Linux x86_64, gcc 14.2 and clang
+# 19.1) and Darwin arm64 (Apple clang 21) do not. On Windows every toolchain
+# on the runner -- MinGW cc, gcc, clang, and clang targeting MSVC -- agreed,
+# so this is not a MinGW-versus-MSVC split. Other ABIs were not measured and
+# are assumed to follow System V. Resolved on import because ctypes follows
+# the ABI of the host running this module, which need not be the host that
+# generated it.
+_HK_UNNAMED_BITFIELD_ALIGNS = sys.platform.startswith("win") or (
+    not sys.platform.startswith(("darwin", "ios"))
+    and platform.machine().lower().startswith(("aarch64", "arm"))
+)"""
 
 
 def _is_anonymous_name(name: str | None) -> bool:
@@ -212,6 +223,34 @@ def _ctypes_scalar_bits(expr: str) -> tuple[int, int] | None:
         return None
 
 
+#: ctypes scalars that hold an unsigned bit-field, and so narrow to
+#: ``c_ubyte`` rather than ``c_byte``. Signedness is the one property of a
+#: bit-field's declared type that narrowing must preserve: it decides whether
+#: ctypes sign-extends the stored value on read.
+_UNSIGNED_CTYPES: frozenset[str] = frozenset(
+    {
+        "ctypes.c_bool",
+        "ctypes.c_ubyte",
+        "ctypes.c_ushort",
+        "ctypes.c_uint",
+        "ctypes.c_ulong",
+        "ctypes.c_ulonglong",
+        "ctypes.c_size_t",
+        "ctypes.c_uint8",
+        "ctypes.c_uint16",
+        "ctypes.c_uint32",
+        "ctypes.c_uint64",
+    }
+)
+
+
+def _narrow_carrier(expr: str) -> str | None:
+    """The one-byte carrier that stores the same values as ``expr``."""
+    if not expr.startswith("ctypes.") or _ctypes_scalar_bits(expr) is None:
+        return None
+    return "ctypes.c_ubyte" if expr in _UNSIGNED_CTYPES else "ctypes.c_byte"
+
+
 def _round_up(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
@@ -264,6 +303,10 @@ class _StructBody:
         #: greatest. An all-padding record is respelled entirely in this one
         #: type; see ``aligned_padding_entries``.
         self.pad_carrier: tuple[str, int, int] | None = None
+        #: Widest alignment, in bits, that narrowing a named bit-field's
+        #: carrier gave up, with the expression that carried it. A zero-length
+        #: array of that type puts the alignment back.
+        self.narrowed_carrier: tuple[str, int] | None = None
         #: Widest alignment, in bits, the real members impose on their own.
         #: None once a member arrives whose alignment the writer cannot read,
         #: which forces the conservative answer below.
@@ -443,15 +486,68 @@ class _StructBody:
         self.bit_pos = None
         return True
 
+    def _portable_bitfield_carrier(self, expr: str, width: int) -> str:
+        """``expr`` narrowed to one byte where that makes the field portable.
+
+        CPython before 3.14 opens a fresh storage unit whenever a bit-field's
+        declared type differs in size from the unit it would otherwise land
+        in, and aligns that unit to the new type. C does not: it keeps packing
+        as long as the field fits the unit it is already in. ``struct {
+        unsigned char a; unsigned short b : 5; }`` therefore puts ``b`` at bit
+        8 in C and on Python 3.14, and at bit 16 on 3.10 through 3.13.
+
+        A carrier of one byte removes the disagreement, because then no
+        declared type ever differs from the unit in play. Narrowing is sound
+        only when the field already fits in the byte the running offset is in
+        -- otherwise C itself would move the field on, and the byte carrier
+        would not follow. The declared type is kept in that case, which is the
+        faithful spelling on 3.14 and under the MSVC algorithm ctypes uses on
+        Windows.
+        """
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.is_union or self.bit_pos is None:
+            return expr
+        _unit_bits, align_bits = info
+        if align_bits <= 8 or self.bit_pos % 8 + width > 8:
+            return expr
+        narrow = _narrow_carrier(expr)
+        if narrow is None:
+            return expr
+        if self.narrowed_carrier is None or align_bits > self.narrowed_carrier[1]:
+            self.narrowed_carrier = (expr, align_bits)
+        return narrow
+
     def add_member(self, f: Field) -> None:
         expr = type_to_ctypes(f.type)
-        self._add_both(_field_to_ctypes_tuple(f))
         self.has_member = True
         self._note_member_align(expr)
-        if f.bit_width is not None:
-            self._advance_bitfield(expr, f.bit_width)
-        else:
+        if f.bit_width is None:
+            self._add_both(_field_to_ctypes_tuple(f))
             self._advance_plain(expr)
+            return
+        # Only the byte-granular spelling narrows. ``entries`` stays faithful
+        # to the declared types, and mixing a narrowed member into it would
+        # change the layout it exists to reproduce.
+        self.entries.append(_field_to_ctypes_tuple(f))
+        carrier = self._portable_bitfield_carrier(expr, f.bit_width)
+        self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
+        # The running offset tracks C, so it advances by the *declared* type.
+        self._advance_bitfield(expr, f.bit_width)
+
+
+def _alignment_entries(body: _StructBody, *, include_padding: bool) -> list[str]:
+    """Zero-length arrays restoring alignments the byte-granular spelling gave up.
+
+    Only the ``flat_entries`` spelling gives any alignment up, so this belongs
+    to that spelling alone; the faithful ``entries`` list carries its
+    alignments in the declared types themselves.
+    """
+    entries = []
+    if body.narrowed_carrier is not None:
+        entries.append(f'("{_ALIGN_FIELD}", {body.narrowed_carrier[0]} * 0)')
+    if include_padding and body.pad_carrier is not None:
+        entries.append(f'("{_PAD_ALIGN_FIELD}", {body.pad_carrier[0]} * 0)')
+    return entries
 
 
 def _record_body(decl: Struct, class_name: str) -> list[str] | None:
@@ -532,12 +628,26 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         lines.append("    ]")
         return lines
 
+    # Both branches reserve the padding with byte-granular carriers, which is
+    # what makes one spelling correct everywhere: a chain of one-byte
+    # bit-fields lays out identically under every ctypes engine -- CPython
+    # before 3.14, CPython 3.14 and later, and the MSVC algorithm ctypes uses
+    # on Windows -- because the three disagree only about what to do when a
+    # bit-field's declared type differs from the unit it would land in, and
+    # with a single one-byte carrier that case never arises. The branches
+    # therefore differ only in alignment, which a zero-length array of the
+    # padding's declared type supplies without occupying a byte. That
+    # separation is required, not stylistic: before 3.14 ctypes derives a
+    # record's alignment only from bit-fields that open a storage unit, so a
+    # wide carrier that lands mid-unit raises nothing.
     lines.append(f"    if {_ABI_FLAG}:")
     lines.append("        _fields_ = [")
-    lines.extend(f"            {entry}," for entry in body.entries)
+    lines.extend(f"            {entry}," for entry in _alignment_entries(body, include_padding=True))
+    lines.extend(f"            {entry}," for entry in body.flat_entries)
     lines.append("        ]")
     lines.append("    else:")
     lines.append("        _fields_ = [")
+    lines.extend(f"            {entry}," for entry in _alignment_entries(body, include_padding=False))
     lines.extend(f"            {entry}," for entry in body.flat_entries)
     lines.append("        ]")
     return lines
