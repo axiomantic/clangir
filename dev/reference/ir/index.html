@@ -1386,6 +1386,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#headerkit.ir.Enum.qualified_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;qualified_name
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1812,6 +1823,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label=" parse">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#headerkit.ir.ParserBackend.parse--traversal-and-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traversal and filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2573,6 +2601,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#headerkit.ir.Enum.qualified_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;qualified_name
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2999,6 +3038,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label=" parse">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#headerkit.ir.ParserBackend.parse--traversal-and-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traversal and filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -3896,7 +3952,7 @@ Used for callbacks, vtables, and function tables.</p>
   </span>
 
 <a href="#headerkit.ir.Enum" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Enum</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Enum</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_scoped</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cpp_name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -3974,6 +4030,23 @@ named or anonymous (used in typedefs or inline).</p>
           </tr>
           <tr class="doc-section-item">
             <td>
+                <code>namespace</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Enclosing C++ namespace, or None at global scope. Part of
+the enum's identity: <code>a::E</code> and <code>b::E</code> are distinct declarations.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
                 <code>location</code>
             </td>
             <td>
@@ -3987,6 +4060,44 @@ named or anonymous (used in typedefs or inline).</p>
             <td>
               <div class="doc-md-description">
                 <p>Source location for error reporting.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>is_scoped</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>True for a C++ <code>enum class</code>/<code>enum struct</code>. A scoped
+enumerator is a member of the tag, spelled <code>E::X</code>, and is not
+introduced into the enclosing namespace as <code>X</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>cpp_name</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Fully-qualified C++ spelling of the tag, when it is not
+    derivable from <code>namespace</code> and <code>name</code>. A member enum is hoisted to
+    the top level and loses its enclosing record, so <code>class C { enum M; }</code>
+    records <code>C::M</code> here; <code>None</code> means <code>namespace</code>-plus-<code>name</code> is the
+    whole spelling.</p>
 <h4 id="headerkit.ir.Enum--examples">Examples<a class="headerlink" href="#headerkit.ir.Enum--examples" title="Permanent link">&para;</a></h4>
 <p>Named enum::</p>
 <div class="highlight"><pre><span></span><code>color = Enum("Color", [
@@ -4024,6 +4135,30 @@ named or anonymous (used in typedefs or inline).</p>
 
 
 
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="headerkit.ir.Enum.qualified_name" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">qualified_name</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#headerkit.ir.Enum.qualified_name" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">qualified_name</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The tag's full C++ spelling, or None if it is anonymous.</p>
+
+    </div>
+
+</div>
 
 
 
@@ -4274,7 +4409,7 @@ named or anonymous (used in typedefs or inline).</p>
   </span>
 
 <a href="#headerkit.ir.Struct" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Struct</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">methods</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_union</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_cppclass</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_packed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">template_params</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">cpp_name</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">notes</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">inner_typedefs</span><span class="o">=</span><span class="n"><span title="dict">dict</span></span><span class="p">(),</span> <span class="n">bases</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_abstract</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">constructors</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">destructor</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">conversions</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">vtable_entries</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">attributes</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_deprecated</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">alignment</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Struct</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">methods</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_union</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_cppclass</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_packed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">template_params</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">cpp_name</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">notes</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">inner_typedefs</span><span class="o">=</span><span class="n"><span title="dict">dict</span></span><span class="p">(),</span> <span class="n">nested_records</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">bases</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_abstract</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">constructors</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">destructor</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">conversions</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">vtable_entries</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">attributes</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_deprecated</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">alignment</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -4422,6 +4557,30 @@ which disables padding and alignment. Affects memory layout.</p>
           </tr>
           <tr class="doc-section-item">
             <td>
+                <code>nested_records</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="            Struct
+
+
+  
+      dataclass
+   (headerkit.ir.Struct)" href="#headerkit.ir.Struct">Struct</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Records defined inside this record's body. A C++
+nested class stays here rather than being lifted to the top level,
+because its name is only meaningful when qualified by the enclosing
+scope.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="list">list</span>()</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
                 <code>location</code>
             </td>
             <td>
@@ -4512,7 +4671,7 @@ which disables padding and alignment. Affects memory layout.</p>
   </span>
 
 <a href="#headerkit.ir.Field" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Field</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="nb">type</span><span class="p">,</span> <span class="n">bit_width</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">anonymous_struct</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_anonymous_transparent</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">access</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_static</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Field</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="nb">type</span><span class="p">,</span> <span class="n">bit_width</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">anonymous_struct</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_anonymous_transparent</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">access</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_static</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">is_padding</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -4633,6 +4792,29 @@ or None for C struct fields / default access.</p>
             <td>
               <div class="doc-md-description">
                 <p>True if this is a static data member.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>is_padding</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>True for an unnamed bitfield (<code>int : 3;</code>), which
+    C17 6.7.2.1p13 gives no member name. Such an entry is not an
+    accessible member, but it does occupy bits, so a consumer that
+    reconstructs layout (the ctypes writer) needs it. A <code>bit_width</code>
+    of 0 is the zero-width form (<code>int : 0;</code>), which aligns the next
+    field to a fresh storage unit rather than reserving bits.
+    Writers that emit C source must skip these: the C compiler lays
+    the record out from the original declaration.</p>
 <h4 id="headerkit.ir.Field--examples">Examples<a class="headerlink" href="#headerkit.ir.Field--examples" title="Permanent link">&para;</a></h4>
 <p>Simple field::</p>
 <div class="highlight"><pre><span></span><code>x_field = Field("x", CType("int"))  # int x
@@ -4649,6 +4831,9 @@ or None for C struct fields / default access.</p>
 <p>Anonymous nested struct::</p>
 <div class="highlight"><pre><span></span><code>inner = Struct(None, [Field("x", CType("int"))], is_union=False)
 field = Field("pos", CType("void"), anonymous_struct=inner)
+</code></pre></div>
+<p>Unnamed bitfield padding::</p>
+<div class="highlight"><pre><span></span><code>pad = Field("", CType("unsigned int"), bit_width=3, is_padding=True)
 </code></pre></div>
               </div>
             </td>
@@ -5833,12 +6018,31 @@ header = backend.parse("int foo(void);", "test.h")
 
 
 <a href="#headerkit.ir.ParserBackend.parse" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">parse</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">include_dirs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">extra_args</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">use_default_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">recursive_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_depth</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">project_prefixes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">parse</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">include_dirs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">extra_args</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">use_default_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">recursive_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_depth</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">project_prefixes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">allowlist</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">denylist</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Parse C/C++ code and return the IR representation.</p>
+<h5 id="headerkit.ir.ParserBackend.parse--traversal-and-filtering">Traversal and filtering<a class="headerlink" href="#headerkit.ir.ParserBackend.parse--traversal-and-filtering" title="Permanent link">&para;</a></h5>
+<p><code>recursive_includes</code> governs <em>traversal</em>: descending into each
+non-system included header and merging what it declares.
+<code>project_prefixes</code> decides which paths count as project rather than
+system headers, and <code>max_depth</code> (with a backend-internal cycle guard)
+bounds the descent.</p>
+<p><code>allowlist</code> and <code>denylist</code> govern <em>filtering</em>, and they narrow the
+merged result in <strong>both</strong> traversal modes:</p>
+<ul>
+<li><code>recursive_includes=True</code> with no <code>allowlist</code> returns declarations
+  from every non-system included header.</li>
+<li><code>recursive_includes=True</code> with an <code>allowlist</code> returns the main
+  file's declarations plus those of the named files, and nothing else.</li>
+<li><code>recursive_includes=False</code> with no <code>allowlist</code> returns the main
+  file's declarations alone.</li>
+<li><strong>Deny wins over allow.</strong> A file named by both lists is excluded.</li>
+<li>The main file is never denied; a denylist governs included files only.</li>
+<li>A list entry matching nothing is not an error.</li>
+</ul>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -5944,8 +6148,10 @@ Format is backend-specific.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If True, detect umbrella headers and
-recursively parse included project headers.</p>
+                <p>If True, descend into included project headers
+and merge their declarations into the result. False parses only the
+main file, and is the only way to exclude included declarations
+entirely.</p>
               </div>
             </td>
             <td>
@@ -5977,7 +6183,50 @@ recursively parse included project headers.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Path prefixes to treat as project headers.</p>
+                <p>Path prefixes to treat as project headers rather
+than system headers, so that they are descended into.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>allowlist</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Files whose declarations are kept, alongside the main
+file's own. <code>None</code> keeps every non-system file reached by traversal.
+Absolute entries are used as-is; relative entries (including a bare
+basename) resolve against the parsed file's directory, then
+<code>include_dirs</code>, then the current working directory. An entry
+containing <code>*</code>, <code>?</code> or <code>[</code> is an :mod:<code>fnmatch</code> pattern whose
+directory part resolves the same way. Matching is on whole resolved
+paths, never substrings.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>denylist</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Files whose declarations are dropped, using the same
+resolution and glob rules as <code>allowlist</code>. Deny wins over allow. A
+denylist with no allowlist means "everything except these". The
+parsed file itself cannot be denied.</p>
               </div>
             </td>
             <td>

@@ -1260,6 +1260,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label=" TreeSitterBackend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#headerkit.backends.treesitter.TreeSitterBackend.parse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;parse
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1777,6 +1794,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label=" TreeSitterBackend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#headerkit.backends.treesitter.TreeSitterBackend.parse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;parse
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1868,6 +1902,91 @@
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="headerkit.backends.treesitter.TreeSitterBackend.parse" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">parse</span>
+
+
+<a href="#headerkit.backends.treesitter.TreeSitterBackend.parse" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">parse</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">include_dirs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">extra_args</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">use_default_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">recursive_includes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_depth</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">project_prefixes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">allowlist</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">denylist</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Parse C/C++ code with tree-sitter and return the IR representation.</p>
+<p>This backend parses exactly the <code>code</code> string it is given. It does not
+read the filesystem and does not follow <code>#include</code> directives, so
+<code>include_dirs</code>, <code>recursive_includes</code>, <code>max_depth</code>,
+<code>project_prefixes</code>, <code>allowlist</code> and <code>denylist</code> have nothing to act
+on.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>allowlist</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><strong>Not honored by this backend.</strong> An allowlist selects
+which included files keep their declarations; since no declaration
+here can originate from an <code>#include</code>, there is nothing to select.
+An entry naming a file other than the one being parsed raises
+:class:<code>UserWarning</code> rather than being discarded silently, because
+such a caller is expecting symbols this backend will never produce.
+Entries that all resolve to the parsed file itself are already
+satisfied and warn nothing. Use the libclang backend when allowlist
+filtering is required.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>denylist</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><strong>Not honored by this backend</strong>, for the same reason and
+with the same warning. An entry naming another file describes a
+declaration this backend was never going to emit, so honoring it and
+ignoring it are indistinguishable -- which is exactly the silence the
+warning breaks. Entries resolving to the parsed file itself warn
+nothing, because this backend does not deny the parsed file either.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
 
 
 

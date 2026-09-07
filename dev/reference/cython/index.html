@@ -2232,6 +2232,12 @@ automatic cimport generation.</p>
     <div class="doc doc-contents ">
 
         <p>Convert IR Header to Cython <code>.pxd</code> string.</p>
+<p>The body is rendered <em>before</em> the cimport header. A cimport is only
+correct when the type it names actually reaches the output, and for
+<code>bool</code> that decision is taken inside :meth:<code>_format_ctype</code> while a
+declaration is being formatted. Rendering first is what lets the header
+state what the body really emitted rather than what the IR merely
+mentioned.</p>
 
 
     </div>
