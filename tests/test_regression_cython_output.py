@@ -887,6 +887,13 @@ class TestCompileHarness:
         with pytest.raises(ToolchainError) as exc:
             cythonize_and_compile(tmp_path, "struct real_s { int actual; };\n", pxd, pyx)
         assert "C compilation failed" in str(exc.value)
+        # "C compilation failed" is this harness's own prefix, so alone it says only
+        # that *something* failed. The two compilers word this defect differently but
+        # both name the member and the struct, so the identifiers are what is checked.
+        # gcc quotes them with U+2018/U+2019 or ASCII depending on locale, so the
+        # quote characters themselves are deliberately left out of the match.
+        assert "not_a_field" in str(exc.value)
+        assert "real_s" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -1041,7 +1048,9 @@ def build_and_run_cpp(tmp_path: Path, header: str, pxd: str, pyx: str) -> Any:
         raise ToolchainError(f"cython failed:\n{cython.stdout}\n{cython.stderr}")
 
     assert _CXX is not None
-    link_args = ["-shared"]
+    # -fPIC is the default on Darwin but not on Linux, where ld rejects the
+    # non-PIC relocations in a -shared object.
+    link_args = ["-shared", "-fPIC"]
     if sys.platform == "darwin":
         link_args.append("-undefined")
         link_args.append("dynamic_lookup")

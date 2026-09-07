@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,7 @@ def _compile_c(workdir: Path, compiler: str, stem: str = "mod") -> subprocess.Co
         [
             compiler,
             "-c",
+            "-fPIC",
             f"{stem}.c",
             f"-I{sysconfig.get_paths()['include']}",
             f"-I{workdir}",
@@ -114,6 +116,50 @@ def _compile_c(workdir: Path, compiler: str, stem: str = "mod") -> subprocess.Co
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+#: Measured spellings of "this type is too incomplete to declare a variable".
+#:
+#: gcc names only the variable ("storage size of 'x' isn't known") and clang names
+#: only the type ("variable has incomplete type 'enum X'"), so neither wording is
+#: portable on its own.  gcc also quotes identifiers with U+2018/U+2019 rather than
+#: an ASCII apostrophe, which is why no quote character appears in either fragment.
+#: Verified against gcc 14 (Linux), clang 19 (Linux), and Apple clang 21 (macOS).
+_INCOMPLETE_TYPE_DIAGNOSTICS = ("variable has incomplete type", "storage size of")
+
+
+def _assert_incomplete_type_error(
+    result: subprocess.CompletedProcess[str],
+    workdir: Path,
+    *,
+    type_name: str,
+    variable: str,
+    stem: str = "mod",
+) -> None:
+    """Assert the compile failed *because* ``variable``'s type is incomplete.
+
+    A bare ``returncode != 0`` would accept a missing header or an unrelated syntax
+    error just as happily, which is the false confidence this module exists to
+    remove.  Compiler wording is not portable, so the proof is split in two halves
+    that are each portable: the message must be one of the measured spellings, and
+    the diagnostic must point at the declaration under test -- the ``.c`` line the
+    compiler cites has to be the one declaring ``variable`` with ``type_name``.
+
+    :raises AssertionError: if the compile succeeded, failed with an unrecognized
+        diagnostic, or blamed a line other than the declaration under test.
+    """
+    assert result.returncode != 0, "pre-fix output compiled cleanly; the compile check proves nothing"
+    stderr = result.stderr
+    assert any(spelling in stderr for spelling in _INCOMPLETE_TYPE_DIAGNOSTICS), (
+        f"compile failed, but not with a known incomplete-type diagnostic:\n{stderr}"
+    )
+    cite = re.search(rf"^{re.escape(stem)}\.c:(\d+):\d+: error:", stderr, re.MULTILINE)
+    assert cite is not None, f"no {stem}.c error: diagnostic to attribute:\n{stderr}"
+    blamed = (workdir / f"{stem}.c").read_text().splitlines()[int(cite.group(1)) - 1]
+    assert type_name in blamed and variable in blamed, (
+        f"the error blames {stem}.c:{cite.group(1)} ({blamed.strip()!r}), "
+        f"not the {type_name} {variable} declaration:\n{stderr}"
     )
 
 
@@ -227,8 +273,7 @@ class TestR5TaglessTypedefEnum:
         bad.mkdir()
         _cythonize(bad, source, pxd.replace("ctypedef enum", "cdef enum"), pyx)
         reverted = _compile_c(bad, compiler)
-        assert reverted.returncode != 0, "pre-fix output compiled cleanly; the compile check proves nothing"
-        assert "incomplete type" in reverted.stderr
+        _assert_incomplete_type_error(reverted, bad, type_name="MyEnumType", variable="__pyx_v_v")
 
 
 # ---------------------------------------------------------------------------
@@ -674,13 +719,14 @@ class TestR10DependentMemberAliases:
         )
         assert cython.returncode == 0, f"cython failed:\n{cython.stdout}\n{cython.stderr}"
 
+        link_flags = ["-shared", "-fPIC"]
+        if sys.platform == "darwin":
+            link_flags += ["-undefined", "dynamic_lookup"]
         build = subprocess.run(
             [
                 compiler,
                 "-std=c++17",
-                "-shared",
-                "-undefined",
-                "dynamic_lookup",
+                *link_flags,
                 f"-I{sysconfig.get_paths()['include']}",
                 f"-I{tmp_path}",
                 "mod.cpp",
@@ -1151,7 +1197,9 @@ class TestR12LoneOpaqueEnum:
             )
             assert impl.returncode == 0, f"impl.c failed to build:\n{impl.stderr}"
 
-            link_flags = ["-shared"] if sys.platform != "darwin" else ["-bundle", "-undefined", "dynamic_lookup"]
+            link_flags = (
+                ["-shared", "-fPIC"] if sys.platform != "darwin" else ["-bundle", "-undefined", "dynamic_lookup"]
+            )
             link = subprocess.run(
                 [compiler, *link_flags, "mod.o", "impl.o", "-o", "mod.so"],
                 cwd=workdir,
