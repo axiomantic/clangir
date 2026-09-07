@@ -39,7 +39,12 @@ from headerkit.backends import get_backend
 from headerkit.backends.libclang import _detect_cplus
 from headerkit.ir import CType, Enum, Struct, Typedef, Variable
 from headerkit.writers.cython import PxdWriter, _unsupported_operator_reason, write_pxd
-from tests.native_build import PYTHON_INCLUDE_DIR, link_extension_command
+from tests.native_build import (
+    PYTHON_INCLUDE_DIR,
+    describe_load_dependencies,
+    extension_filename,
+    link_extension_command,
+)
 
 pytestmark = pytest.mark.libclang
 
@@ -1073,7 +1078,8 @@ def build_and_run_cpp(tmp_path: Path, header: str, pxd: str, pyx: str) -> Any:
         check=False,
     )
     if probe.returncode != 0:
-        raise ToolchainError(f"import/execute failed:\n{probe.stdout}\n{probe.stderr}")
+        detail = describe_load_dependencies(tmp_path / extension_filename("use"))
+        raise ToolchainError(f"import/execute failed:\n{probe.stdout}\n{probe.stderr}{detail}")
     return probe.stdout.strip()
 
 

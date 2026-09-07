@@ -27,6 +27,8 @@ The module filename
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import sysconfig
 from collections.abc import Sequence
@@ -85,12 +87,15 @@ def _extension_link_flags() -> list[str]:
     module, so the link and the build both succeed and ``import use`` fails
     with "DLL load failed while importing use: The specified module could not
     be found" -- a message that names neither the missing DLL nor MinGW.
-    Linking the two runtimes into the module removes the dependency instead of
+    Linking those runtimes into the module removes the dependency instead of
     relying on the runner's PATH. Only the C++ tests reached this, because a C
-    extension names no ``libstdc++``.
+    extension names no ``libstdc++``. Plain ``-static`` is needed alongside the
+    two ``-static-lib*`` flags: those two cover ``libstdc++`` and ``libgcc``
+    but not ``libwinpthread-1.dll``, which ``libstdc++``'s threading support
+    pulls in on its own.
     """
     if IS_WINDOWS:
-        return ["-shared", "-static-libstdc++", "-static-libgcc"]
+        return ["-shared", "-static", "-static-libstdc++", "-static-libgcc"]
     if IS_DARWIN:
         return ["-bundle", "-undefined", "dynamic_lookup"]
     return ["-shared", "-fPIC"]
@@ -127,6 +132,32 @@ def compile_object_command(
         "-o",
         output,
     ]
+
+
+def describe_load_dependencies(module_path: Path) -> str:
+    """The DLLs ``module_path`` needs at load time, for an error message.
+
+    Windows reports a missing load-time dependency as "DLL load failed while
+    importing <mod>: The specified module could not be found", which names
+    neither the dependency nor the module that wanted it. That message is
+    indistinguishable from a dozen unrelated causes, so the dependency list is
+    read off the module itself and attached to the failure. Returns an empty
+    string wherever the question does not arise or no tool can answer it.
+    """
+    if not IS_WINDOWS or not module_path.is_file():
+        return ""
+    objdump = shutil.which("objdump")
+    if objdump is None:
+        return ""
+    probe = subprocess.run(  # noqa: S603
+        [objdump, "-p", str(module_path)], capture_output=True, text=True, check=False
+    )
+    if probe.returncode != 0:
+        return ""
+    names = [line.split("DLL Name:", 1)[1].strip() for line in probe.stdout.splitlines() if "DLL Name:" in line]
+    if not names:
+        return ""
+    return "\nload-time DLL dependencies of " + module_path.name + ": " + ", ".join(names)
 
 
 def link_extension_command(
