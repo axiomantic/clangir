@@ -259,6 +259,11 @@ class _StructBody:
         self.has_member = False
         #: Widest alignment, in bits, any padding carrier would impose.
         self.pad_align_bits = 0
+        #: The widest-aligning padding carrier, as ``(expression, alignment
+        #: bits, storage-unit bits)`` -- ordered so the widest compares
+        #: greatest. An all-padding record is respelled entirely in this one
+        #: type; see ``aligned_padding_entries``.
+        self.pad_carrier: tuple[str, int, int] | None = None
         #: Widest alignment, in bits, the real members impose on their own.
         #: None once a member arrives whose alignment the writer cannot read,
         #: which forces the conservative answer below.
@@ -339,6 +344,11 @@ class _StructBody:
                 return True
             width = fill
 
+        if info is not None:
+            unit_bits, align_bits = info
+            if self.pad_carrier is None or (align_bits, unit_bits) > self.pad_carrier[1:]:
+                self.pad_carrier = (expr, align_bits, unit_bits)
+
         start = self.bit_pos
         self.entries.append(f'("{self._next_pad()}", {expr}, {width})')
         self._advance_bitfield(expr, width)
@@ -371,6 +381,47 @@ class _StructBody:
             span = _byte_split(start, self.bit_pos)
         self.flat_entries.extend(f'("{self._next_flat_pad()}", ctypes.c_ubyte, {w})' for w in span)
         return True
+
+    def aligned_padding_entries(self) -> list[str]:
+        """The all-padding carrier, respelled as one chain in the widest type.
+
+        An all-padding record has no addressable member, so only its ``sizeof``
+        and alignment are observable; the individual carriers' bit positions
+        are not. That freedom is what makes this respelling safe -- and it is
+        needed because CPython before 3.14 derives a record's alignment only
+        from bit-fields that open a storage unit. ``struct { unsigned char : 4;
+        unsigned int : 4; }`` therefore aligned to 1 on 3.10 through 3.13 and
+        to 4 on 3.14, while C (AAPCS64) says 4 on every one of them. Laying the
+        whole span in the widest carrier makes that carrier open the first unit
+        on every Python, so one spelling is right across all of them.
+
+        The chain reproduces C's size as well as its alignment: ``n`` bits in a
+        carrier of ``u``-bit units occupy ``ceil(n / u)`` units, which is
+        ``round_up(ceil(n / 8), u / 8)`` bytes -- C's rule for a record whose
+        alignment is ``u / 8``.
+        """
+        if self.pad_carrier is None:
+            return []
+        expr, _align_bits, unit_bits = self.pad_carrier
+        total = self.total_padding_bits
+        entries = []
+        index = 0
+        while index * unit_bits < total:
+            width = min(unit_bits, total - index * unit_bits)
+            entries.append(f'("_pad{index}", {expr}, {width})')
+            index += 1
+        return entries
+
+    @property
+    def total_padding_bits(self) -> int:
+        """Bits the padding spans, counting units a carrier skipped past.
+
+        ``bit_pos`` accounts for a carrier that could not fit in the storage
+        unit it started in and so moved to the next one; the running sum of
+        declared widths does not. The sum is the fallback for the case where
+        the offset became untrackable.
+        """
+        return self.bit_pos if self.bit_pos is not None else self.padding_bits
 
     def add_anonymous(self, f: Field, index: int) -> bool:
         """Emit a C11 transparent member as a nested class plus an _anonymous_ entry."""
@@ -438,12 +489,13 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         # and the host resolves the branch when the module is imported: a named
         # bit-field of the same storage type reproduces the imposed alignment,
         # and a byte array reserves the same bits while staying byte-aligned.
-        nbytes = math.ceil(body.padding_bits / 8)
-        if nbytes == 0:
+        nbytes = math.ceil(body.total_padding_bits / 8)
+        aligned_entries = body.aligned_padding_entries()
+        if nbytes == 0 or not aligned_entries:
             return [f"class {class_name}({base_class}):", "    pass"]
         lines.append(f"    if {_ABI_FLAG}:")
         lines.append("        _fields_ = [")
-        lines.extend(f"            {entry}," for entry in body.entries)
+        lines.extend(f"            {entry}," for entry in aligned_entries)
         lines.append("        ]")
         lines.append("    else:")
         lines.append("        _fields_ = [")
