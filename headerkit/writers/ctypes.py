@@ -301,6 +301,10 @@ class _StructBody:
         self.nested: list[str] = []
         self.anonymous: list[str] = []
         self.entries: list[str] = []
+        #: The same members with every ``: 0`` respelled as a zero-length
+        #: array. Emitted where ctypes already reproduces the host's C
+        #: compiler; see ``add_padding``.
+        self.native_entries: list[str] = []
         #: The same members, with every padding carrier respelled so it cannot
         #: raise the record's alignment. Identical to ``entries`` until a
         #: padding field whose declared type aligns wider than a byte arrives.
@@ -361,6 +365,7 @@ class _StructBody:
 
     def _add_both(self, entry: str) -> None:
         self.entries.append(entry)
+        self.native_entries.append(entry)
         self.flat_entries.append(entry)
 
     def _advance_bitfield(self, expr: str, width: int) -> None:
@@ -389,6 +394,7 @@ class _StructBody:
         """Reserve the bits of an unnamed bitfield. False if it cannot be placed."""
         expr = type_to_ctypes(f.type)
         width = f.bit_width or 0
+        is_zero_width = width == 0
         info = _ctypes_scalar_bits(expr)
         if width == 0:
             # ``int : 0`` reserves no bits; it moves the next member to a fresh
@@ -407,7 +413,22 @@ class _StructBody:
                 self.pad_carrier = (expr, align_bits, unit_bits)
 
         start = self.bit_pos
-        self.entries.append(f'("{self._next_pad()}", {expr}, {width})')
+        pad_name = self._next_pad()
+        self.entries.append(f'("{pad_name}", {expr}, {width})')
+        # ``: 0`` reserves nothing in C; it only ends the current storage unit
+        # and moves the next member to a fresh one. Reaching that boundary with
+        # a *fill bit-field* is faithful under the GCC rule, where the fill
+        # sits in the unit that is being closed. It is not faithful under the
+        # MSVC rule, which gives the fill a unit of its own and then gives the
+        # next member yet another: measured on Windows, ``struct { unsigned
+        # char a : 3; unsigned int : 0; unsigned char b : 5; }`` is 8 bytes and
+        # the fill spelling produced 12. A zero-length array closes the unit
+        # and imposes the boundary's alignment while occupying nothing, which
+        # is what ``: 0`` actually means.
+        if is_zero_width:
+            self.native_entries.append(f'("{pad_name}", {expr} * 0)')
+        else:
+            self.native_entries.append(f'("{pad_name}", {expr}, {width})')
         self._advance_bitfield(expr, width)
         self.padding_bits += width
 
@@ -543,6 +564,7 @@ class _StructBody:
         # to the declared types, and mixing a narrowed member into it would
         # change the layout it exists to reproduce.
         self.entries.append(_field_to_ctypes_tuple(f))
+        self.native_entries.append(_field_to_ctypes_tuple(f))
         carrier = self._portable_bitfield_carrier(expr, f.bit_width)
         self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
         # The running offset tracks C, so it advances by the *declared* type.
@@ -605,7 +627,7 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
             return [f"class {class_name}({base_class}):", "    pass"]
         lines.append(f"    if {_NATIVE_FLAG}:")
         lines.append("        _fields_ = [")
-        lines.extend(f"            {entry}," for entry in body.entries)
+        lines.extend(f"            {entry}," for entry in body.native_entries)
         lines.append("        ]")
         lines.append(f"    elif {_ABI_FLAG}:")
         lines.append("        _fields_ = [")
@@ -660,7 +682,7 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
     # wide carrier that lands mid-unit raises nothing.
     lines.append(f"    if {_NATIVE_FLAG}:")
     lines.append("        _fields_ = [")
-    lines.extend(f"            {entry}," for entry in body.entries)
+    lines.extend(f"            {entry}," for entry in body.native_entries)
     lines.append("        ]")
     lines.append(f"    elif {_ABI_FLAG}:")
     lines.append("        _fields_ = [")

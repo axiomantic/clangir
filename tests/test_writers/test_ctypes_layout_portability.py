@@ -180,7 +180,8 @@ def test_windows_keeps_the_declared_types(backend_name: str, struct_name: str, s
     """
     record = _exec_as(_generate(backend_name, source), system="win32", machine="AMD64")[struct_name]
 
-    assert not _zero_length_arrays(record), (  # type: ignore[arg-type]
+    names = [entry[0] for entry in record._fields_]  # type: ignore[attr-defined]
+    assert not [n for n in names if n.startswith("_hk_align") or n.startswith("_hk_pad_align")], (
         f"{struct_name} carries an alignment field on Windows, where the declared types already align it"
     )
     carriers = _bitfield_carriers(record)  # type: ignore[arg-type]
