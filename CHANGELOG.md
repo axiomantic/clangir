@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-09-07
+
+### Fixed
+
+- `LibclangBackend`: an object-like macro whose replacement list is *declaration specifiers* rather than a constant expression is no longer emitted as an `int` constant. `#define PyMODINIT_FUNC __declspec(dllexport) PyObject *` produced `int PyMODINIT_FUNC`, so a consumer generating Cython emitted `__Pyx_PyLong_From_int(PyMODINIT_FUNC)` and the C compiler rejected the expansion (`use of undeclared identifier 'dllexport'`). The token-validation loop accepted every identifier as an operand and never checked that the tokens *composed* into an expression. Two checks now run before a multi-token replacement list is accepted: any token clang classifies as a **keyword** disqualifies it (`static`, `extern`, `inline`, `const`, `unsigned`, `struct`, `__cdecl`, `__stdcall`, `__fastcall`, `sizeof`, and the C++ literals `true` / `false` / `nullptr`), and the remaining tokens must form a **well-formed constant expression** -- rejecting two adjacent operands (`__declspec ( dllexport ) PyObject`), a trailing binary operator (`PyObject *`, `PyObject &`), call syntax (`__declspec ( dllimport )`), and unbalanced parentheses. Both rules read clang's own token classification and the C expression grammar, not a denylist of extension spellings. Genuine constant macros are unaffected: `#define SIZE 100`, `#define PI 3.14`, `#define VERSION "1.0"`, `#define NEG -1`, `#define HEX 0x1F`, `#define SHIFTED (1 << 4)`, `#define B (A + 1)` and `#define PICK (1 ? 2 : 3)` all keep their previous type and value. Previously only the GNU spelling `__attribute__((visibility("default"))) PyObject *` was rejected, and incidentally so -- by the string-literal guard reacting to `"default"`. The MSVC spelling carries no string literal, so nothing caught it; the defect was never platform-specific.
+
 ## [0.38.0] - 2026-09-05
 
 ### Changed

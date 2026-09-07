@@ -20,6 +20,7 @@ from headerkit.backends.libclang import (
     _configure_libclang,
     _deduplicate_declarations,
     _get_libclang_search_paths,
+    _is_constant_expression_shape,
     _is_system_header,
     _mangle_specialization_name,
     get_system_include_dirs,
@@ -1113,6 +1114,178 @@ class TestMacroParsing:
         max_consts = [c for c in constants if c.name == "MAX"]
         # Function-like macros should not produce Constants
         assert len(max_consts) == 0
+
+
+@pytest.mark.allow("subprocess")
+@libclang
+class TestDeclarationSpecifierMacrosRejected:
+    """Macros whose replacement list is declaration specifiers are not constants.
+
+    ``#define PyMODINIT_FUNC __declspec(dllexport) PyObject *`` is a
+    declaration-specifier macro.  Emitting it as ``int PyMODINIT_FUNC`` makes a
+    consumer generate ``sizeof(PyMODINIT_FUNC)``, which the C compiler rejects.
+    """
+
+    def setup_method(self):
+        self.backend = LibclangBackend()
+
+    @pytest.mark.parametrize(
+        ("name", "body"),
+        [
+            ("MSVC_EXPORT", "__declspec(dllexport) PyObject *"),
+            ("MSVC_IMPORT_ONLY", "__declspec(dllimport)"),
+            ("GNU_VISIBILITY", '__attribute__ ((visibility ("default"))) PyObject *'),
+            ("CDECL_RET", "__cdecl int"),
+            ("STDCALL_RET", "__stdcall int"),
+            ("FASTCALL_RET", "__fastcall void"),
+            ("STORAGE_STATIC", "static"),
+            ("STORAGE_EXTERN_INLINE", "extern inline"),
+            ("TYPE_CONST_CHAR_PTR", "const char *"),
+            ("TYPE_UNSIGNED_INT", "unsigned int"),
+            ("TYPE_STRUCT", "struct PyObject"),
+            ("TYPE_POINTER", "PyObject *"),
+            ("TYPE_REFERENCE", "PyObject &"),
+            ("TYPE_BARE", "PyObject"),
+            ("TYPE_TYPEDEFD", "myint_t"),
+            ("DLLIMPORT_BARE", "dllimport"),
+        ],
+    )
+    def test_declaration_specifier_macro_is_not_a_constant(self, name: str, body: str):
+        code = textwrap.dedent(f"""\
+            typedef struct PyObject PyObject;
+            typedef int myint_t;
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert matches == [], f"#define {name} {body} was wrongly classified as {matches!r}"
+
+    @pytest.mark.parametrize(
+        ("name", "body", "type_name", "value"),
+        [
+            ("SIZE", "100", "int", 100),
+            ("PI", "3.14", "double", 3.14),
+            ("VERSION", '"1.0"', "char", '"1.0"'),
+            ("NEG", "-1", "int", -1),
+            ("HEX", "0x1F", "int", 31),
+            ("CHAR_LIT", "'a'", "char", "'a'"),
+            ("SHIFTED", "(1 << 4)", "int", 16),
+            ("PARENED_NEG", "(-1)", "int", -1),
+            ("FLOAT_EXPR", "(1.5 * 2)", "double", 3.0),
+            ("SUFFIXED", "10ULL", "int", 10),
+        ],
+    )
+    def test_constant_macro_still_classified(self, name: str, body: str, type_name: str, value: object):
+        code = textwrap.dedent(f"""\
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert len(matches) == 1, f"#define {name} {body} was not classified as a constant"
+        assert matches[0].type is not None
+        assert matches[0].type.name == type_name
+        assert matches[0].value == value
+
+    def test_macro_referencing_another_macro_still_classified(self):
+        """``#define B (A + 1)`` keeps working: identifiers are valid expression operands."""
+        code = textwrap.dedent("""\
+            #define A 5
+            #define B (A + 1)
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == "B"]
+        assert len(matches) == 1
+        assert matches[0].type is not None
+        assert matches[0].type.name == "int"
+        assert matches[0].raw_expression == "( A + 1 )"
+
+    def test_ternary_expression_macro_still_classified(self):
+        code = textwrap.dedent("""\
+            #define PICK (1 ? 2 : 3)
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == "PICK"]
+        assert len(matches) == 1
+        assert matches[0].raw_expression == "( 1 ? 2 : 3 )"
+
+    @pytest.mark.parametrize(
+        "name,body", [("FLAG_TRUE", "(true)"), ("FLAG_FALSE", "(false)"), ("NULL_PTR", "(nullptr)")]
+    )
+    def test_keyword_literal_macro_is_not_an_int_constant(self, name: str, body: str):
+        """A parenthesised C++ keyword is structurally expression-shaped but is not an int.
+
+        These reach the keyword check only: ``( true )`` alternates operand and
+        parentheses correctly, so the shape predicate admits it.  Classifying it
+        as ``int`` with no value -- and ``nullptr`` as ``int`` outright -- is the
+        same defect class as the declaration-specifier macros.
+        """
+        code = textwrap.dedent(f"""\
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", "-std=c++17"])
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert matches == [], f"#define {name} {body} was wrongly classified as {matches!r}"
+
+    def test_python_pymodinit_func_shape_absent_from_cython_output(self):
+        """The end-to-end consequence: the macro must not reach the generated pxd.
+
+        A ``cdef extern`` declaration of this macro makes Cython emit
+        ``__Pyx_PyLong_From_int(PyMODINIT_FUNC)``, which expands to
+        ``__declspec(dllexport) PyObject *`` in expression position and fails to
+        compile.  Real constants in the same header must survive.
+        """
+        code = textwrap.dedent("""\
+            typedef struct PyObject PyObject;
+            #define PyMODINIT_FUNC __declspec(dllexport) PyObject *
+            #define REAL_CONST 42
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        names = [d.name for d in header.declarations if isinstance(d, Constant)]
+        assert "PyMODINIT_FUNC" not in names
+        assert "REAL_CONST" in names
+
+
+class TestConstantExpressionShape:
+    """Unit tests for the structural expression-shape predicate."""
+
+    @pytest.mark.parametrize(
+        "spellings",
+        [
+            ["1"],
+            ["-", "1"],
+            ["(", "1", "<<", "4", ")"],
+            ["(", "A", "+", "1", ")"],
+            ["(", "-", "1", ")"],
+            ["(", "1", "?", "2", ":", "3", ")"],
+            ["~", "0"],
+            ["!", "A"],
+        ],
+    )
+    def test_accepts_constant_expressions(self, spellings: list[str]):
+        assert _is_constant_expression_shape(spellings) is True
+
+    @pytest.mark.parametrize(
+        "spellings",
+        [
+            ["PyObject", "*"],  # trailing binary operator: a declarator
+            ["PyObject", "&"],
+            ["__declspec", "(", "dllexport", ")", "PyObject", "*"],
+            ["__declspec", "(", "dllimport", ")"],  # call syntax
+            ["A", "B"],  # adjacent operands
+            ["(", "1", "+", "2"],  # unbalanced
+            ["1", "+", "2", ")"],
+            ["+"],  # operator only
+            [],  # empty
+        ],
+    )
+    def test_rejects_non_expressions(self, spellings: list[str]):
+        assert _is_constant_expression_shape(spellings) is False
 
 
 class TestLinuxVersionedSearchPaths:

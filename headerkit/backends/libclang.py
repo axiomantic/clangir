@@ -753,6 +753,78 @@ def _detect_cplus(filename: str, extra_args: Sequence[str] | None) -> bool:
     return filename.endswith(CPP_HEADER_EXTENSIONS)
 
 
+# Operator spellings admissible in a C constant expression.  ``(`` and ``)`` are
+# handled structurally by :func:`_is_constant_expression_shape` rather than being
+# listed here, because their meaning depends on position: grouping in operand
+# position, a function call in operator position.
+_EXPR_UNARY_OPERATORS = frozenset({"+", "-", "~", "!"})
+_EXPR_BINARY_OPERATORS = frozenset({"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", ">", "?", ":"})
+
+
+def _has_keyword_token(tokens: list[Any]) -> bool:
+    """Report whether any token is a C/C++ keyword.
+
+    A constant expression is built from literals, identifiers and operators; it
+    contains no keywords.  Declaration specifiers -- ``static``, ``extern``,
+    ``inline``, ``const``, ``unsigned``, ``struct``, and the calling-convention
+    keywords ``__cdecl`` / ``__stdcall`` / ``__fastcall`` -- are keywords, so
+    clang's own token classification separates them from constants without a
+    denylist of spellings that would forever trail the next compiler extension.
+    """
+    for token in tokens:
+        kind = getattr(getattr(token, "kind", None), "name", None)
+        if kind == "KEYWORD":
+            return True
+    return False
+
+
+def _is_constant_expression_shape(spellings: list[str]) -> bool:
+    """Report whether token spellings form a well-formed constant expression.
+
+    Walks the tokens tracking whether an operand or an operator is expected,
+    which rejects the shapes that declaration specifiers produce but constant
+    expressions never do:
+
+    * two adjacent operands (``__declspec ( dllexport ) PyObject``, ``PyObject``
+      following a closing paren) -- a C expression requires an operator between
+      operands;
+    * a trailing binary operator (``PyObject *``, ``PyObject &``) -- a pointer or
+      reference declarator, not a value;
+    * call syntax (``__declspec ( dllimport )``) -- a ``(`` in operator position.
+      A constant expression contains no function calls.
+
+    Caller has already established that every non-operator token is a numeric
+    literal or an identifier, so operands need no further validation here.
+    """
+    expect_operand = True
+    depth = 0
+    for spelling in spellings:
+        if expect_operand:
+            if spelling == "(":
+                depth += 1
+                continue
+            if spelling in _EXPR_UNARY_OPERATORS:
+                continue
+            if spelling == ")" or spelling in _EXPR_BINARY_OPERATORS:
+                return False
+            expect_operand = False
+            continue
+        if spelling == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+            continue
+        if spelling == "(":
+            # Call syntax: an operand immediately followed by an argument list.
+            return False
+        if spelling in _EXPR_BINARY_OPERATORS:
+            expect_operand = True
+            continue
+        # Two adjacent operands.
+        return False
+    return depth == 0 and not expect_operand
+
+
 def _is_function_like_macro(tokens: list[Any]) -> bool:
     """Report whether a macro definition's tokens describe a function-like macro.
 
@@ -1474,6 +1546,10 @@ class ClangASTConverter:
                     has_float = True
                     break
 
+        # A keyword in the replacement list means declaration specifiers, not a value.
+        if _has_keyword_token(tokens):
+            return None, None, None, None
+
         # Valid expression tokens for integer/float expressions
         valid_operators = {"+", "-", "*", "/", "%", "&", "|", "^", "~", "<<", ">>", "(", ")", "<", ">", "!", "?", ":"}
 
@@ -1489,6 +1565,11 @@ class ClangASTConverter:
             if spelling.isidentifier():
                 continue
             # Unknown token - not a simple expression
+            return None, None, None, None
+
+        # Every token is individually admissible; require that they also compose
+        # into an expression rather than a sequence of declaration specifiers.
+        if not _is_constant_expression_shape(spellings):
             return None, None, None, None
 
         # Expression looks valid - try to safely evaluate
