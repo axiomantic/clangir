@@ -37,8 +37,10 @@ jobs:
             exit 1
           fi
 
-          BASE_VERSION=$(git show "origin/$BASE_REF:pyproject.toml" | grep '^version' | sed 's/version = "\(.*\)"/\1/')
-          PR_VERSION=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          BASE_VERSION=$(git show "origin/$BASE_REF:pyproject.toml" | grep '^version' | sed 's/version = "\(.*\)"/\1/') \
+            || { echo "::error::No version line in pyproject.toml at origin/$BASE_REF"; exit 1; }
+          PR_VERSION=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/') \
+            || { echo "::error::No version line in pyproject.toml on this branch"; exit 1; }
 
           if [ "$BASE_VERSION" = "$PR_VERSION" ]; then
             echo "::warning::Version in pyproject.toml ($PR_VERSION) has not changed. If this PR includes user-facing changes, bump the version before merging."
@@ -60,8 +62,14 @@ jobs:
 
           CHANGED_FILES=$(git diff "origin/$BASE_REF...HEAD" --name-only)
 
-          if printf '%s\n' "$CHANGED_FILES" | grep -q '^CHANGELOG.md$'; then
-            echo "CHANGELOG.md has been updated."
-          else
-            echo "::warning::CHANGELOG.md has not been modified. If this PR includes user-facing changes, add a changelog entry before merging."
-          fi
+          # Matched without a pipe: grep -q closes the pipe on its first match, and
+          # on a diff exceeding the 64K pipe buffer the writer then takes SIGPIPE,
+          # which pipefail reports as a failed match.
+          case $'\n'"$CHANGED_FILES"$'\n' in
+            *$'\nCHANGELOG.md\n'*)
+              echo "CHANGELOG.md has been updated."
+              ;;
+            *)
+              echo "::warning::CHANGELOG.md has not been modified. If this PR includes user-facing changes, add a changelog entry before merging."
+              ;;
+          esac
