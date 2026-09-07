@@ -75,9 +75,22 @@ def _python_import_library() -> str:
 
 
 def _extension_link_flags() -> list[str]:
-    """Return the linker flags that turn a translation unit into a loadable module."""
+    """Return the linker flags that turn a translation unit into a loadable module.
+
+    The two ``-static-*`` flags are Windows-only and are about *import*, not
+    about linking: the runner's ``c++`` is MinGW, so a ``.pyd`` it links names
+    ``libstdc++-6.dll``, ``libgcc_s_seh-1.dll`` and ``libwinpthread-1.dll`` as
+    load-time dependencies. Those live in the MinGW ``bin`` directory, which is
+    not on the loader's search path for the interpreter that imports the
+    module, so the link and the build both succeed and ``import use`` fails
+    with "DLL load failed while importing use: The specified module could not
+    be found" -- a message that names neither the missing DLL nor MinGW.
+    Linking the two runtimes into the module removes the dependency instead of
+    relying on the runner's PATH. Only the C++ tests reached this, because a C
+    extension names no ``libstdc++``.
+    """
     if IS_WINDOWS:
-        return ["-shared"]
+        return ["-shared", "-static-libstdc++", "-static-libgcc"]
     if IS_DARWIN:
         return ["-bundle", "-undefined", "dynamic_lookup"]
     return ["-shared", "-fPIC"]
