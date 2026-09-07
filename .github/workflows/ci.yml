@@ -10,13 +10,15 @@ on:
       - 'LICENSE'
       - '.gitignore'
   pull_request:
-    branches: [main]
     paths-ignore:
       - 'docs/**'
       - '*.md'
       - 'mkdocs.yml'
       - 'LICENSE'
       - '.gitignore'
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
