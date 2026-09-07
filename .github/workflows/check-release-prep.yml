@@ -5,8 +5,19 @@ on:
     paths-ignore:
       - '.github/**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   check:
+    # A stack of PRs is one release. The parent carries the version bump and the
+    # changelog entry; a child stacked on it correctly carries neither. Only the
+    # PR into the default branch has a defined answer to "is this release ready".
+    if: github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -15,9 +26,17 @@ jobs:
           fetch-depth: 0
 
       - name: Check version bump
+        shell: bash
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
+          set -euo pipefail
+
+          if ! git rev-parse --verify --quiet "origin/$BASE_REF^{commit}" >/dev/null; then
+            echo "::error::Base ref origin/$BASE_REF is not present in this checkout; cannot compare versions."
+            exit 1
+          fi
+
           BASE_VERSION=$(git show "origin/$BASE_REF:pyproject.toml" | grep '^version' | sed 's/version = "\(.*\)"/\1/')
           PR_VERSION=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
 
@@ -28,10 +47,20 @@ jobs:
           fi
 
       - name: Check changelog
+        shell: bash
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          if git diff "origin/$BASE_REF...HEAD" --name-only | grep -q '^CHANGELOG.md$'; then
+          set -euo pipefail
+
+          if ! git rev-parse --verify --quiet "origin/$BASE_REF^{commit}" >/dev/null; then
+            echo "::error::Base ref origin/$BASE_REF is not present in this checkout; cannot diff against the base."
+            exit 1
+          fi
+
+          CHANGED_FILES=$(git diff "origin/$BASE_REF...HEAD" --name-only)
+
+          if printf '%s\n' "$CHANGED_FILES" | grep -q '^CHANGELOG.md$'; then
             echo "CHANGELOG.md has been updated."
           else
             echo "::warning::CHANGELOG.md has not been modified. If this PR includes user-facing changes, add a changelog entry before merging."
