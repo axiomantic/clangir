@@ -331,6 +331,11 @@ class _StructBody:
         self.member_align_bits: int | None = 0
         #: Why no alignment-neutral carrier could be built, if that happened.
         self.diagnostic: str | None = None
+        #: Bit-fields a packed record cannot reproduce. A field wider than a
+        #: byte that starts mid-byte has no ctypes spelling: the byte carrier
+        #: that packing needs cannot hold it, and its declared type refuses to
+        #: straddle the storage unit it would have to straddle.
+        self.unplaceable_bitfields: list[str] = []
 
     @property
     def abi_dependent(self) -> bool:
@@ -552,6 +557,25 @@ class _StructBody:
             self.narrowed_carrier = (expr, align_bits)
         return narrow
 
+    def _is_unplaceable_when_packed(self, expr: str, carrier: str, width: int) -> bool:
+        """Whether a packed record could not reproduce this bit-field.
+
+        Packing removes the storage unit, so C starts the field at the very
+        next bit. ctypes can follow only while a one-byte carrier can hold the
+        field: a wider carrier keeps its own unit and refuses to straddle the
+        boundary. ``struct __attribute__((packed)) { unsigned a : 4; unsigned b
+        : 30; }`` puts ``b`` at bit 4 in C, and no ctypes spelling does -- 30
+        bits do not fit a byte carrier, and ``c_uint`` moves ``b`` to the next
+        unit. Narrowing having been refused is the signal, so this stays in
+        step with whatever the carrier helper decides.
+        """
+        if self.is_union or self.bit_pos is None or carrier != expr:
+            return False
+        info = _ctypes_scalar_bits(expr)
+        if info is None or info[1] <= 8:
+            return False
+        return self.bit_pos % 8 != 0
+
     def add_member(self, f: Field) -> None:
         expr = type_to_ctypes(f.type)
         self.has_member = True
@@ -567,6 +591,8 @@ class _StructBody:
         self.native_entries.append(_field_to_ctypes_tuple(f))
         carrier = self._portable_bitfield_carrier(expr, f.bit_width)
         self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
+        if self._is_unplaceable_when_packed(expr, carrier, f.bit_width):
+            self.unplaceable_bitfields.append(f.name)
         # The running offset tracks C, so it advances by the *declared* type.
         self._advance_bitfield(expr, f.bit_width)
 
@@ -650,10 +676,30 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         suffix = "," if len(body.anonymous) == 1 else ""
         lines.append(f"    _anonymous_ = ({joined}{suffix})")
 
-    # ``_pack_ = 1`` already pins the record to byte alignment, so the wide
-    # carrier cannot raise it and the two spellings agree. Branching would only
-    # duplicate the field list.
-    if not body.abi_dependent or decl.is_packed:
+    if decl.is_packed:
+        # ``_pack_ = 1`` pins the record's *alignment* to a byte, but it does
+        # not change how ctypes allocates a bit-field's storage unit: a field
+        # declared ``unsigned int`` still reserves a full 32-bit unit and the
+        # next member starts after it. A packed record in C reserves only the
+        # bits the field declares. Measured against a compiled C probe,
+        # ``struct __attribute__((packed)) { unsigned char a; unsigned int b :
+        # 8; unsigned char c; }`` is 3 bytes with ``c`` at bit 16 in C, and the
+        # declared-type spelling produced 6 bytes with ``c`` at bit 40. The
+        # byte-granular spelling gives every bit-field a carrier no wider than
+        # the bits it uses, which is what makes the two agree; it is the same
+        # list the ABI branch already relies on for padding.
+        if body.unplaceable_bitfields:
+            named = ", ".join(body.unplaceable_bitfields)
+            lines.append(f"    # HEADERKIT: packed bit-field(s) {named} start mid-byte and are")
+            lines.append("    # wider than a byte, which ctypes cannot express: C continues the")
+            lines.append("    # field across the storage-unit boundary and ctypes moves it to the")
+            lines.append("    # next unit. Verify this record against your C compiler.")
+        lines.append("    _fields_ = [")
+        lines.extend(f"        {entry}," for entry in body.flat_entries)
+        lines.append("    ]")
+        return lines
+
+    if not body.abi_dependent:
         lines.append("    _fields_ = [")
         lines.extend(f"        {entry}," for entry in body.entries)
         lines.append("    ]")

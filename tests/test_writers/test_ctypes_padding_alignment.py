@@ -406,8 +406,8 @@ def test_generated_layout_matches_the_host_c_compiler(
 
 
 def _packed_header() -> Header:
-    """Hand-built: no parser backend sets ``is_packed`` today, so parsing
-    ``__attribute__((packed))`` would silently produce an unpacked record."""
+    """Hand-built so the writer is exercised on its own. Both backends now set
+    ``is_packed``; ``test_packed_records.py`` covers the parsed path."""
     return Header(
         path="p.h",
         declarations=[
@@ -438,10 +438,18 @@ def test_a_packed_record_keeps_one_field_list() -> None:
 
 def test_a_packed_record_still_reserves_the_padding_bits() -> None:
     """A negative control for the test above: dropping the branch must not be
-    achieved by dropping the padding."""
+    achieved by dropping the padding.
+
+    The carrier is a byte, not the declared ``unsigned int``. Packing removes
+    the storage unit, so C reserves exactly the 8 bits and puts ``b`` straight
+    after them; a ``c_uint`` carrier reserves a full 32-bit unit instead. A
+    compiled C probe measures this record at 3 bytes with ``b`` at bit 16,
+    and the ``c_uint`` spelling produced 6 bytes with ``b`` at bit 40.
+    """
     code = get_writer("ctypes").write(_packed_header())
 
-    assert '("_pad0", ctypes.c_uint, 8)' in code
+    assert '("_pad0", ctypes.c_ubyte, 8)' in code
+    assert '("_pad0", ctypes.c_uint, 8)' not in code
 
 
 _UNTRACKABLE = "struct e1 { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };"

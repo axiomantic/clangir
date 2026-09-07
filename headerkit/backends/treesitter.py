@@ -153,9 +153,7 @@ def _record_has_packed_attribute(node: Any) -> bool:
     ``struct_specifier``.
     """
     return any(
-        _PACKED_SPELLINGS & _attribute_names(child)
-        for child in node.children
-        if child.type == "attribute_specifier"
+        _PACKED_SPELLINGS & _attribute_names(child) for child in node.children if child.type == "attribute_specifier"
     )
 
 
