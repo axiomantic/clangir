@@ -77,10 +77,22 @@ def _python_import_library() -> str:
 def _extension_link_flags() -> list[str]:
     """Return the linker flags that turn a translation unit into a loadable module."""
     if IS_WINDOWS:
-        return ["-shared", _python_import_library()]
+        return ["-shared"]
     if IS_DARWIN:
         return ["-bundle", "-undefined", "dynamic_lookup"]
     return ["-shared", "-fPIC"]
+
+
+def _extension_link_libraries() -> list[str]:
+    """Return the libraries to place *after* the inputs on the link line.
+
+    Position matters: the Windows runner carries both a MinGW ``cc`` and an
+    MSVC-target ``clang++``, and MinGW drives GNU ``ld``, which resolves a
+    library only against the objects that precede it. An import library placed
+    before the objects is silently discarded and every ``__imp_Py*`` symbol
+    comes back undefined.
+    """
+    return [_python_import_library()] if IS_WINDOWS else []
 
 
 def compile_object_command(
@@ -123,6 +135,7 @@ def link_extension_command(
         *_extension_link_flags(),
         *(f"-I{include}" for include in includes),
         *inputs,
+        *_extension_link_libraries(),
         "-o",
         extension_filename(stem),
     ]
