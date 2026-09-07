@@ -38,12 +38,14 @@ Example
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import glob
 import os
 import re
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -93,6 +95,79 @@ def normalize_path(path: str) -> str:
     :returns: Normalized path string.
     """
     return path.replace("\\", "/").lower()
+
+
+def _resolve_path(path: str, search_dirs: Sequence[str] = ()) -> str:
+    """Resolve a path to an absolute, symlink-free, comparison-ready form.
+
+    An absolute path is resolved directly.  A relative path is tried against each
+    entry of ``search_dirs`` in order and resolved against the first directory
+    where it names an existing file; if none does, it is resolved against the
+    current working directory.  Case and separators are normalized last so the
+    result compares correctly on Windows.
+
+    :param path: Path to resolve; may be absolute or relative.
+    :param search_dirs: Directories to try, in priority order, for a relative path.
+    :returns: Normalized absolute path.
+    """
+    if not os.path.isabs(path):
+        for directory in search_dirs:
+            candidate = os.path.join(directory, path)
+            if os.path.exists(candidate):
+                path = candidate
+                break
+    return normalize_path(os.path.realpath(os.path.abspath(path)))
+
+
+def _filter_search_dirs(filename: str, include_dirs: Sequence[str] | None) -> list[str]:
+    """Directories a relative allowlist/denylist entry is resolved against, in priority order.
+
+    The main file's own directory comes first, because an entry naming a bare
+    header basename (the common case) means "the header sitting next to the file
+    being parsed".  The include search path follows, then the process cwd via the
+    fallback in :func:`_resolve_path`.
+    """
+    dirs = [os.path.dirname(os.path.abspath(filename)) or os.getcwd()]
+    if include_dirs:
+        dirs.extend(include_dirs)
+    return dirs
+
+
+_GLOB_METACHARACTERS = ("*", "?", "[")
+
+
+class _PathSet:
+    """A resolved set of allowlist/denylist entries, matched against resolved paths.
+
+    An entry containing a glob metacharacter (``*``, ``?``, ``[``) becomes an
+    :mod:`fnmatch` pattern; every other entry becomes one exact path.  Both are
+    resolved by the rule in :func:`_resolve_path` before any comparison, so a
+    match is always between two absolute, symlink-free, normalized paths and is
+    never a substring test: ``er.h`` does not match ``other.h``.
+
+    A glob entry's *directory* part is resolved the same way a plain entry is;
+    only its final component stays a pattern.  Resolving the directory rather
+    than pattern-matching it is what lets a pattern survive a symlinked parent
+    (``/tmp`` -> ``/private/tmp`` on macOS), where a pattern built from the
+    unresolved spelling would silently match nothing.
+    """
+
+    def __init__(self, entries: Sequence[str], search_dirs: Sequence[str]) -> None:
+        self.exact: set[str] = set()
+        self.patterns: list[str] = []
+        for entry in entries:
+            head, tail = os.path.split(entry)
+            if any(char in tail for char in _GLOB_METACHARACTERS):
+                bases = [_resolve_path(head, search_dirs)] if head else [_resolve_path(d) for d in search_dirs]
+                self.patterns.extend(normalize_path(os.path.join(base, tail)) for base in bases)
+            else:
+                self.exact.add(_resolve_path(entry, search_dirs))
+
+    def matches(self, resolved_path: str) -> bool:
+        """True if ``resolved_path`` (already run through :func:`_resolve_path`) is named."""
+        if resolved_path in self.exact:
+            return True
+        return any(fnmatch.fnmatchcase(resolved_path, pattern) for pattern in self.patterns)
 
 
 def _get_xcrun_libclang_paths() -> list[str]:
@@ -414,16 +489,91 @@ def get_system_include_dirs(cplus: bool = False) -> list[str]:
     return result_cache
 
 
+def _location_is_in_system_header(tu: Any, file_obj: Any) -> bool:
+    """Ask clang whether it treated ``file_obj`` as a system header.
+
+    Backed by ``clang_Location_isInSystemHeader``, which reports how clang itself
+    classified the include search path the file was found on. The vendored bindings
+    expose ``is_in_system_header`` on every supported LLVM version; a binding that
+    does not answers False and leaves the decision to the path heuristic.
+
+    :param tu: Translation unit the file belongs to.
+    :param file_obj: A cindex ``File`` from the translation unit.
+    :returns: True if clang classified the file as a system header.
+    """
+    try:
+        location = _cindex.SourceLocation.from_offset(tu, file_obj, 0)
+        return bool(location.is_in_system_header)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _matches_project_prefix(header_path: str, project_prefixes: tuple[str, ...] | None) -> bool:
+    """Check whether a header was explicitly allowlisted as a project header.
+
+    An allowlisted path overrides every system classification, including
+    clang's own, so that an umbrella header installed under a system
+    location can still be descended into.
+
+    :param header_path: Path to the header file.
+    :param project_prefixes: Path prefixes to treat as project, or None.
+    :returns: True if the path is under one of the prefixes.
+    """
+    if not project_prefixes:
+        return False
+
+    path_str = normalize_path(str(header_path))
+    for prefix in project_prefixes:
+        normalized_prefix = normalize_path(prefix)
+        if path_str == normalized_prefix or path_str.startswith(normalized_prefix.rstrip("/") + "/"):
+            return True
+    return False
+
+
+# Directory names that mark a compiler's own bundled include tree. The resource
+# directory is versioned (``lib/clang/19/include``, ``gcc/x86_64-linux-gnu/13/include``),
+# so the marker and the ``include`` component are not adjacent and a fixed
+# ``clang/include`` fragment never matches on Linux.
+_COMPILER_RESOURCE_MARKERS = frozenset({"clang", "gcc", "g++", "c++"})
+
+# How many components may separate the marker from the ``include`` component.
+# ``gcc/<triple>/<version>/include`` is the longest real form.
+_COMPILER_RESOURCE_WINDOW = 3
+
+_COMPILER_INCLUDE_DIRS = frozenset({"include", "include-fixed"})
+
+
+def _is_compiler_resource_dir(path_str: str) -> bool:
+    """Check whether a normalized path lies inside a compiler's bundled include tree.
+
+    :param path_str: Path already passed through :func:`normalize_path`.
+    :returns: True if a compiler marker directory precedes an include directory.
+    """
+    parts = path_str.split("/")
+    for index, part in enumerate(parts):
+        if part not in _COMPILER_INCLUDE_DIRS:
+            continue
+        window_start = max(0, index - _COMPILER_RESOURCE_WINDOW)
+        if _COMPILER_RESOURCE_MARKERS & set(parts[window_start:index]):
+            return True
+    return False
+
+
 def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None = None) -> bool:
     """Check if a header path is a system header.
 
     System headers are identified by:
     - Being in /usr/include, /usr/local/include
     - Being in SDK paths (MacOSX.sdk, etc.)
-    - Being in compiler-specific paths (clang/include, gcc/include)
+    - Being in a compiler's own versioned resource directory
+      (``lib/clang/19/include``, ``lib/gcc/<triple>/13/include``)
     - Being in framework directories
 
-    Headers can be whitelisted as "project" headers using project_prefixes.
+    This is a path heuristic and therefore always one platform behind. When a
+    translation unit is available, :meth:`LibclangBackend._is_system_include`
+    consults clang's own classification first and falls back to this function.
+
+    Headers can be allowlisted as "project" headers using project_prefixes.
     This is useful for umbrella headers where the library is installed in
     a system location but we want to recursively parse its sub-headers.
 
@@ -434,11 +584,8 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
     path_str = normalize_path(str(header_path))
 
     # Check project prefixes first - if path matches, it's NOT a system header
-    if project_prefixes:
-        for prefix in project_prefixes:
-            normalized = normalize_path(prefix).rstrip("/") + "/"
-            if path_str.startswith(normalized) or path_str == normalize_path(prefix):
-                return False
+    if _matches_project_prefix(header_path, project_prefixes):
+        return False
 
     # System header locations that are absolute path prefixes
     system_path_prefixes = (
@@ -448,15 +595,16 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
         "/opt/local/",
         "/system/library/frameworks",
         "/library/developer/commandlinetools",
+        # Linux distribution toolchains ship their resource dirs here.
+        "/usr/lib/gcc/",
+        "/usr/lib64/gcc/",
+        "/usr/lib/clang/",
+        "/usr/lib64/clang/",
     )
 
     # System header path fragments that can appear anywhere in the path
     system_path_fragments = (
         ".sdk/",
-        "clang/include",
-        "gcc/include",
-        "g++/include",
-        "c++/include",
         # Windows: LLVM and Windows SDK paths
         "program files/llvm/",
         "program files (x86)/llvm/",
@@ -478,32 +626,7 @@ def _is_system_header(header_path: str, project_prefixes: tuple[str, ...] | None
         if fragment in path_str:
             return True
 
-    return False
-
-
-def _is_umbrella_header(
-    header: Header,
-    threshold: int = 3,
-    project_prefixes: tuple[str, ...] | None = None,
-) -> bool:
-    """Detect if a header is an umbrella header.
-
-    An umbrella header is characterized by:
-    - Having multiple included headers (>= threshold)
-    - Having few or no declarations of its own (< threshold)
-
-    :param header: The parsed Header IR
-    :param threshold: Minimum number of includes to consider umbrella header (default: 3)
-    :param project_prefixes: Optional tuple of path prefixes to treat as project (not system)
-    :returns: True if this appears to be an umbrella header
-    """
-    # Count non-system included headers
-    project_includes = [h for h in header.included_headers if not _is_system_header(h, project_prefixes)]
-
-    # Umbrella header criteria:
-    # 1. Multiple project includes (at least threshold)
-    # 2. Few or no declarations in the main file
-    return len(project_includes) >= threshold and len(header.declarations) < threshold
+    return _is_compiler_resource_dir(path_str)
 
 
 def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declaration]:
@@ -518,14 +641,21 @@ def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declarati
     - `typedef struct Foo {...} Foo;` creates both Struct and Typedef
     - We keep only the Struct (with typedef flag set) and remove the Typedef
 
+    Special handling for typedef enum pattern:
+    - `typedef enum [Foo] {...} Foo;` creates both Enum and Typedef
+    - We keep only the Enum and remove the redundant Typedef
+
     :param declarations: List of declarations to deduplicate
     :returns: List with duplicates removed, preserving order
     """
     seen: set[tuple[type, str | None, str | None]] = set()
     unique: list[Declaration] = []
 
+    enum_names: set[str | None] = {decl.name for decl in declarations if isinstance(decl, Enum)}
+
     # First pass: collect struct names that have typedef'd versions
     typedef_struct_names: set[str | None] = set()
+    typedef_enum_names: set[str | None] = set()
     for decl in declarations:
         if isinstance(decl, Typedef):
             # Check if this typedef aliases a struct with the same name
@@ -541,6 +671,14 @@ def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declarati
                 if struct_name == decl.name:
                     typedef_struct_names.add(decl.name)
 
+                # `typedef enum [Tag] {...} Name;` yields both an Enum and a
+                # redundant self-referential Typedef.  Drop the Typedef the same
+                # way the struct pattern above does, but only when the Enum it
+                # would alias is actually present.
+                enum_name = type_name[5:] if type_name.startswith("enum ") else type_name
+                if enum_name == decl.name and decl.name in enum_names:
+                    typedef_enum_names.add(decl.name)
+
     # Second pass: filter declarations and mark typedef'd structs
     for decl in declarations:
         # Build a key: (type, name, namespace)
@@ -552,6 +690,10 @@ def _deduplicate_declarations(declarations: list[Declaration]) -> list[Declarati
 
         # Skip typedef if it's a typedef struct pattern
         if isinstance(decl, Typedef) and decl_name in typedef_struct_names:
+            continue
+
+        # Skip typedef if it's a redundant typedef enum pattern
+        if isinstance(decl, Typedef) and decl_name in typedef_enum_names:
             continue
 
         # Mark struct as typedef'd if it has a matching typedef
@@ -584,6 +726,60 @@ def _mangle_specialization_name(cpp_name: str) -> str:
     return name
 
 
+_MACRO_PROBE_PREFIX = "__headerkit_macro_probe_"
+
+
+# Extensions clang's own driver maps to C++.  ``.h`` is deliberately absent: it
+# is ambiguous, and clang treats it as C unless a flag says otherwise.
+CPP_HEADER_EXTENSIONS = (".hpp", ".hh", ".hxx", ".h++", ".H", ".tcc", ".tpp")
+
+
+def _detect_cplus(filename: str, extra_args: Sequence[str] | None) -> bool:
+    """Return True when the translation unit is C++, as clang's driver decides it.
+
+    Flags win over the extension, in both directions: an explicit ``-x c``
+    forces C even for a ``.hpp``.  Otherwise the extension decides, because
+    clang infers C++ from it and the backend must agree with the compiler it is
+    driving.  Deriving this from the flags alone let a ``.hpp`` parse as C++
+    while the backend believed it held C, so every C++-only guard stayed shut on
+    a translation unit that clang had already read as C++.
+    """
+    if extra_args:
+        for i, arg in enumerate(extra_args):
+            if arg.startswith("-std=c++"):
+                return True
+            if arg == "-x" and i + 1 < len(extra_args):
+                return extra_args[i + 1] == "c++"
+    return filename.endswith(CPP_HEADER_EXTENSIONS)
+
+
+def _is_function_like_macro(tokens: list[Any]) -> bool:
+    """Report whether a macro definition's tokens describe a function-like macro.
+
+    The C preprocessor distinguishes ``#define F(a) ...`` from ``#define X (1+2)``
+    purely by whether the ``(`` is immediately adjacent to the macro name, with no
+    intervening whitespace. Token extents give that adjacency exactly, so the
+    replacement list never has to be inspected -- which is what lets an
+    empty-bodied function-like macro such as ``#define F(v)`` be recognised.
+    """
+    if len(tokens) < 2 or tokens[1].spelling != "(":
+        return False
+    try:
+        return bool(tokens[0].extent.end.offset == tokens[1].extent.start.offset)
+    except AttributeError:
+        return False
+
+
+def _same_macro_value(a: Constant, b: Constant) -> bool:
+    """Report whether two macro Constants carry the same value and type."""
+    return (a.value, a.evaluated_value, a.raw_expression, a.type) == (
+        b.value,
+        b.evaluated_value,
+        b.raw_expression,
+        b.type,
+    )
+
+
 class ClangASTConverter:
     """Converts libclang cursors to headerkit IR.
 
@@ -595,6 +791,14 @@ class ClangASTConverter:
         Only declarations from this file are included (system headers excluded).
     :param project_prefixes: Optional tuple of path prefixes to treat as project headers.
         Declarations from these paths will be included in addition to the main file.
+    :param is_cplus: True when the translation unit is C++.  C++ has no separate enum
+        tag namespace, which changes how tag-less typedef'd enums are detected.
+    :param allowlist_paths: Resolved entries (see :class:`_PathSet`) naming the
+        included files whose declarations are kept alongside the main file's.
+        ``None`` means "no allowlist was supplied" and admits nothing extra.
+    :param denylist_paths: Resolved entries whose declarations are dropped even
+        when an allowlist or a project prefix names them -- deny wins over allow.
+        The main file itself is never denied.
 
     Note
     ----
@@ -602,21 +806,49 @@ class ClangASTConverter:
     :class:`LibclangBackend` for the public API.
     """
 
-    def __init__(self, filename: str, project_prefixes: tuple[str, ...] | None = None) -> None:
+    def __init__(
+        self,
+        filename: str,
+        project_prefixes: tuple[str, ...] | None = None,
+        *,
+        is_cplus: bool = False,
+        allowlist_paths: _PathSet | None = None,
+        denylist_paths: _PathSet | None = None,
+    ) -> None:
         self.filename = filename
         self.project_prefixes = project_prefixes
+        self.is_cplus = is_cplus
+        self.allowlist_paths = allowlist_paths
+        self.denylist_paths = denylist_paths
         self.declarations: list[Declaration] = []
         # Track seen declarations to avoid duplicates
         self._seen: set[str] = set()
+        # Macro name -> the Constant currently emitted for it. A later #define of
+        # the same name supersedes an earlier one, so the previous Constant is
+        # withdrawn from ``declarations`` rather than the redefinition ignored.
+        self._macro_decls: dict[str, Constant] = {}
         # Current namespace context (for nested namespace support)
         self._namespace_stack: list[str] = []
         # Store translation unit for dependency resolution
         self._tu: Any = None
+        # Anonymous record/enum declaration key -> stable generated tag name
+        self._anon_names: dict[str, str] = {}
+        # Counter backing the fallback slug for anonymous tags no declarator names
+        self._anon_counter: int = 0
 
     @property
     def _current_namespace(self) -> str | None:
         """Get current namespace as '::'-joined string, or None if global."""
         return "::".join(self._namespace_stack) if self._namespace_stack else None
+
+    def _record_key(self, kind: str, name: str | None) -> str:
+        """Build the ``_seen`` identity for a record, qualified by namespace.
+
+        Mirrors the ``(type, name, namespace)`` identity that
+        :func:`_deduplicate_declarations` uses.  Without the namespace component
+        ``a::dup`` and ``b::dup`` collide and the second one is silently dropped.
+        """
+        return f"{kind}:{self._current_namespace or ''}:{name}"
 
     def _remove_forward_declaration(self, name: str | None, kind: str) -> None:
         """Remove a forward declaration from declarations list.
@@ -631,7 +863,7 @@ class ClangASTConverter:
         # Find and remove the forward declaration
         for i, decl in enumerate(self.declarations):
             if isinstance(decl, Struct):
-                if decl.name == name:
+                if decl.name == name and decl.namespace == self._current_namespace:
                     # Check if it's a forward declaration (no fields, no methods)
                     if not decl.fields and not decl.methods:
                         # Verify the kind matches
@@ -667,6 +899,11 @@ class ClangASTConverter:
 
             # Collect types defined by this cursor
             defined_types.update(self._collect_defined_types(child))
+
+        # Phase 1b: Bind anonymous records/enums to the declarators that name them.
+        # This must run before any declaration is processed so that a record and
+        # every reference to it resolve to the same generated tag.
+        self._prescan_anonymous_names(main_cursors)
 
         # Phase 2: Calculate needed types (used but not defined in main file)
         needed_types = used_types - defined_types
@@ -974,27 +1211,52 @@ class ClangASTConverter:
             self._process_cursor(child)
 
     def _is_from_target_file(self, cursor: Any) -> bool:
-        """Check if cursor is from the target file or a whitelisted project path.
+        """Check if cursor is from the target file or an allowed project path.
 
         Returns True if cursor is from:
         1. The main target file (self.filename), OR
-        2. A path matching one of the project_prefixes (for umbrella headers)
+        2. A path under one of the project_prefixes (for umbrella headers), OR
+        3. One of the allowlisted files
+
+        and is not named by the denylist.  The main file is exempt from the
+        denylist: denying the file the caller asked to parse would return an
+        empty result with nothing to explain it, which is a silent failure
+        wearing the costume of a successful parse.
+
+        Cases 2 and 3 compare absolute, symlink-resolved paths.  clang reports a
+        location as the path it was included by -- typically relative, e.g.
+        ``./tux_foo.h`` -- so comparing the raw spelling against a caller-supplied
+        absolute path never matches.
         """
         loc = cursor.location
         if loc.file is None:
             return False
 
-        file_path = loc.file.name
+        file_path = str(loc.file.name)
 
-        # Check main file
+        # Check main file.  Deliberately ahead of the denylist: the main file
+        # cannot be denied out of existence.
         if normalize_path(file_path) == normalize_path(self.filename):
             return True
 
+        if not self.project_prefixes and not self.allowlist_paths and not self.denylist_paths:
+            return False
+
+        resolved = _resolve_path(file_path)
+
+        # Deny wins over allow.
+        if self.denylist_paths is not None and self.denylist_paths.matches(resolved):
+            return False
+
+        # Check allowlisted files
+        if self.allowlist_paths is not None and self.allowlist_paths.matches(resolved):
+            return True
+
         # Check project prefixes (for umbrella headers)
-        if self.project_prefixes:
-            for prefix in self.project_prefixes:
-                if normalize_path(prefix) in normalize_path(file_path):
-                    return True
+        for prefix in self.project_prefixes or ():
+            resolved_prefix = _resolve_path(prefix).rstrip("/")
+            if resolved == resolved_prefix or resolved.startswith(resolved_prefix + "/"):
+                return True
 
         return False
 
@@ -1049,51 +1311,54 @@ class ClangASTConverter:
         - String literals: ``#define VERSION "1.0"``
         - Expression macros: ``#define TOTAL (A + B)``
 
-        Function-like macros (with parameters) are skipped.
+        Function-like macros (with parameters) and macros with an empty
+        replacement list are skipped: neither denotes a value, so emitting
+        either as a variable declaration produces code that does not compile.
+
+        A later ``#define`` of a name supersedes an earlier one. When the
+        superseding definition is not emittable, the earlier Constant is
+        withdrawn.
         """
         name = cursor.spelling
         if not name:
             return
 
-        # Skip if already processed
-        key = f"macro:{name}"
-        if key in self._seen:
-            return
-        self._seen.add(key)
+        constant = self._build_macro_constant(cursor, name)
 
-        # Get tokens - first token is the macro name, rest is the value
+        previous = self._macro_decls.get(name)
+        if previous is not None and constant is not None and _same_macro_value(previous, constant):
+            # Identical redefinition - keep the original declaration and its position.
+            return
+
+        self._macro_decls.pop(name, None)
+        if previous is not None:
+            # A redefinition replaces the earlier value; drop the stale Constant.
+            self.declarations = [d for d in self.declarations if d is not previous]
+
+        if constant is not None:
+            self._macro_decls[name] = constant
+            self.declarations.append(constant)
+
+    def _build_macro_constant(self, cursor: Any, name: str) -> Constant | None:
+        """Build the :class:`Constant` for a ``#define``, or None if it denotes no value.
+
+        Function-like macros and macros with an empty replacement list are
+        rejected: neither has a type or a value, so emitting either as a variable
+        declaration yields code that does not compile.
+        """
+        # First token is the macro name, the rest is the replacement list.
         tokens = list(cursor.get_tokens())
+
+        if _is_function_like_macro(tokens):
+            return None
+
         if len(tokens) < 2:
-            # No value (e.g., #define EMPTY)
-            return
+            # Empty replacement list (e.g. #define FLAG) - a flag, not a constant.
+            return None
 
-        # Check for function-like macro: name followed by '('
-        # Function-like macros have the pattern: NAME ( params ) body
-        if len(tokens) >= 2 and tokens[1].spelling == "(":
-            # Could be function-like macro OR expression starting with paren
-            # Function-like: #define MAX(a,b) ...
-            # Expression: #define X (1+2)
-            # Check if there's an identifier after the opening paren
-            if len(tokens) >= 3:
-                third = tokens[2].spelling
-                # If it's an identifier followed by comma or close paren, it's function-like
-                if third.isidentifier() or third == ")":
-                    # Look ahead for comma or close paren pattern
-                    for i, tok in enumerate(tokens[2:], start=2):
-                        if tok.spelling == ")":
-                            # Check if this closes the parameter list (more tokens after)
-                            if i + 1 < len(tokens):
-                                # Has body after params - function-like macro
-                                return
-                            break
-                        if tok.spelling == ",":
-                            # Has comma in parens - function-like macro
-                            return
-
-        # Determine macro type from tokens
         macro_type, value, evaluated_value, raw_expr = self._analyze_macro_tokens(tokens[1:])
         if macro_type is None:
-            return
+            return None
 
         loc = cursor.location
         location = SourceLocation(
@@ -1102,16 +1367,14 @@ class ClangASTConverter:
             column=loc.column,
         )
 
-        self.declarations.append(
-            Constant(
-                name=name,
-                value=value if value is not None else evaluated_value,
-                evaluated_value=evaluated_value,
-                raw_expression=raw_expr,
-                type=macro_type,
-                is_macro=True,
-                location=location,
-            )
+        return Constant(
+            name=name,
+            value=value if value is not None else evaluated_value,
+            evaluated_value=evaluated_value,
+            raw_expression=raw_expr,
+            type=macro_type,
+            is_macro=True,
+            location=location,
         )
 
     def _analyze_macro_tokens(
@@ -1418,21 +1681,201 @@ class ClangASTConverter:
                 return int(align)
         return None
 
-    def _process_struct(self, cursor: Any, is_union: bool, is_cppclass: bool = False) -> None:
-        """Process a struct/union/class declaration."""
-        name = cursor.spelling or None
+    # -----------------------------------------------------------------
+    # Anonymous tag naming
+    # -----------------------------------------------------------------
 
-        # Skip anonymous nested structs/unions inside another struct/union/class
-        try:
+    @staticmethod
+    def _anon_tag_suffix(kind: Any) -> str | None:
+        """Return the generated-name suffix for an anonymous tag of this kind."""
+        if kind == CursorKind.STRUCT_DECL:
+            return "_s"
+        if kind == CursorKind.UNION_DECL:
+            return "_u"
+        if kind == CursorKind.ENUM_DECL:
+            return "_e"
+        return None
+
+    @staticmethod
+    def _anon_key(cursor: Any) -> str:
+        """Return a stable identity for an anonymous record/enum declaration.
+
+        The USR is preferred because the same anonymous declaration is reachable
+        from several cursors (a top-level sibling and a child of the declarator
+        that uses it) and must resolve to one name from every path.
+        """
+        usr = ""
+        with contextlib.suppress(Exception):
+            usr = cursor.get_usr() or ""
+        if usr:
+            return usr
+        loc = cursor.location
+        if loc.file:
+            return f"{loc.file.name}:{loc.line}:{loc.column}"
+        return f"anon:{id(cursor)}"
+
+    @staticmethod
+    def _is_anonymous_decl(cursor: Any) -> bool:
+        """Check whether a record/enum declaration cursor has no C tag name.
+
+        ``cursor.spelling`` is not usable as the test: clang fabricates
+        ``struct (unnamed at file:line:col)`` and ``struct (anonymous at ...)``
+        spellings, which are truthy.
+        """
+        with contextlib.suppress(Exception):
+            if cursor.is_anonymous():
+                return True
+        spelling = cursor.spelling or ""
+        return not spelling or "(unnamed" in spelling or "(anonymous" in spelling
+
+    def _resolve_tag_declaration(self, clang_type: Any) -> Any | None:
+        """Peel arrays, pointers and elaborations off a type to reach its tag declaration."""
+        current = clang_type
+        for _ in range(16):
+            try:
+                kind = current.kind
+                if kind == TypeKind.ELABORATED:
+                    current = current.get_named_type()
+                elif kind == TypeKind.POINTER:
+                    current = current.get_pointee()
+                elif kind in (TypeKind.CONSTANTARRAY, TypeKind.INCOMPLETEARRAY, TypeKind.VARIABLEARRAY):
+                    current = current.element_type
+                elif kind in (TypeKind.RECORD, TypeKind.ENUM):
+                    return current.get_declaration()
+                else:
+                    return None
+            except Exception:
+                return None
+        return None
+
+    def _prescan_anonymous_names(self, cursors: list[Any]) -> None:
+        """Bind every anonymous record/enum to the declarator that names it.
+
+        An anonymous ``struct { ... } var;`` produces a STRUCT_DECL that is a
+        *sibling* of the VAR_DECL, so the binding cannot be discovered while
+        processing the record itself. This pre-pass walks the declarators first
+        so both the definition and every reference agree on one generated tag.
+        """
+        for cursor in cursors:
+            self._prescan_cursor_for_anon_names(cursor)
+
+    def _prescan_cursor_for_anon_names(self, cursor: Any) -> None:
+        kind = cursor.kind
+        if kind == CursorKind.FIELD_DECL:
+            self._bind_anon_name(cursor.spelling, cursor.type, qualifier=self._record_qualifier(cursor))
+        elif kind in (
+            CursorKind.VAR_DECL,
+            CursorKind.PARM_DECL,
+            CursorKind.TYPEDEF_DECL,
+        ):
+            self._bind_anon_name(cursor.spelling, cursor.type)
+        elif kind == CursorKind.FUNCTION_DECL:
+            with contextlib.suppress(Exception):
+                self._bind_anon_name(cursor.spelling, cursor.result_type)
+
+        with contextlib.suppress(Exception):
+            for child in cursor.get_children():
+                self._prescan_cursor_for_anon_names(child)
+
+    @staticmethod
+    def _record_qualifier(cursor: Any) -> str:
+        """Return the enclosing record's name, used to qualify a field's tag.
+
+        Two records in one translation unit may each hold a member named
+        ``css``; deriving the tag from the member alone would collide. The
+        enclosing record's name disambiguates, giving ``_outer_css_s``.
+        Returns ``""`` when the parent is itself unnamed, leaving the tag
+        unqualified rather than embedding clang's internal spelling.
+        """
+        parent = None
+        with contextlib.suppress(Exception):
             parent = cursor.semantic_parent
-            if parent and parent.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_DECL):
-                is_anon = False
-                with contextlib.suppress(Exception):
-                    is_anon = cursor.is_anonymous()
-                if is_anon or not name or "(anonymous" in name:
-                    return
-        except Exception:
-            pass
+        if parent is None or parent.kind not in (
+            CursorKind.STRUCT_DECL,
+            CursorKind.UNION_DECL,
+            CursorKind.CLASS_DECL,
+        ):
+            return ""
+        spelling = parent.spelling
+        if not spelling or "(" in spelling:
+            return ""
+        return str(spelling)
+
+    def _bind_anon_name(self, declarator: str, clang_type: Any, qualifier: str = "") -> None:
+        if not declarator:
+            return
+        decl = self._resolve_tag_declaration(clang_type)
+        if decl is None or not self._is_anonymous_decl(decl):
+            return
+        suffix = self._anon_tag_suffix(decl.kind)
+        if suffix is None:
+            return
+        if qualifier and decl.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.ENUM_DECL):
+            declarator = f"{qualifier}_{declarator}"
+        self._anon_names.setdefault(self._anon_key(decl), f"_{declarator}{suffix}")
+
+    def _normalize_anon_name(self, cursor: Any) -> str | None:
+        """Return the IR tag name for a record/enum declaration.
+
+        Clang's internal ``(unnamed at ...)`` / ``(anonymous at ...)`` spellings
+        never reach the IR. An anonymous declaration resolves to the name bound
+        from its declarator, or to None when nothing references it (a genuinely
+        nameless declaration, which every writer can render).
+        """
+        if not self._is_anonymous_decl(cursor):
+            return cursor.spelling or None
+        return self._anon_names.get(self._anon_key(cursor))
+
+    def _require_anon_name(self, cursor: Any) -> str:
+        """Return a tag name for an anonymous declaration used in type position.
+
+        A type reference must name something, so an unbound declaration falls
+        back to a per-translation-unit counter slug. The counter is used instead
+        of the source location because file:line:col makes output depend on
+        formatting.
+        """
+        key = self._anon_key(cursor)
+        existing = self._anon_names.get(key)
+        if existing is not None:
+            return existing
+        self._anon_counter += 1
+        kind_word = {
+            CursorKind.UNION_DECL: "union",
+            CursorKind.ENUM_DECL: "enum",
+        }.get(cursor.kind, "struct")
+        generated = f"_anon_{kind_word}_{self._anon_counter}"
+        self._anon_names[key] = generated
+        return generated
+
+    def _process_struct(
+        self, cursor: Any, is_union: bool, is_cppclass: bool = False, *, emit: bool = True
+    ) -> Struct | None:
+        """Process a struct/union/class declaration.
+
+        :param emit: When False the record is returned without being appended to
+            the translation unit's declarations. A C++ nested class uses this:
+            it belongs inside its parent's body, not at the top level.
+        :returns: The record, or None when the cursor yields no declaration.
+        """
+        name = self._normalize_anon_name(cursor)
+
+        # A C11 anonymous member -- ``struct { ... };`` with no declarator -- is
+        # flattened into the parent's field list, not emitted separately. A
+        # *named* member whose type happens to be an anonymous struct
+        # (``struct { ... } css;``) is a different construct: it keeps its
+        # member and needs its own tag, so ``name`` is bound and it falls
+        # through to normal emission.
+        if name is None:
+            try:
+                parent = cursor.semantic_parent
+                if (
+                    parent
+                    and parent.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_DECL)
+                    and self._is_anonymous_decl(cursor)
+                ):
+                    return None
+            except Exception:
+                pass
 
         # Check if this is a template specialization
         # Method 1: Check specialized_template attribute (reliable when available)
@@ -1465,9 +1908,9 @@ class ClangASTConverter:
 
         # For specializations, use display name for deduplication key
         if is_specialization:
-            key = f"{key_prefix}:{cursor.displayname}"
+            key = self._record_key(key_prefix, cursor.displayname)
         else:
-            key = f"{key_prefix}:{name}"
+            key = self._record_key(key_prefix, name)
 
         # Forward declarations have no definition - output as opaque type
         is_forward_decl = not cursor.is_definition()
@@ -1476,23 +1919,29 @@ class ClangASTConverter:
         # - If we've seen a definition, skip any subsequent declarations
         # - If we've only seen a forward declaration, a definition should replace it
         definition_key = f"{key}:definition"
-        if definition_key in self._seen:
-            # Already have a definition, skip this
-            return
+        # A nested record is keyed only by its own tag, which is not unique: a
+        # global `struct view` and a class member `struct view` collide. The
+        # nested one is scoped to its parent and never reaches the top level, so
+        # it neither consults nor updates the translation-unit dedup set.
+        # Sharing it silently dropped whichever of the two was seen second.
+        if emit:
+            if definition_key in self._seen:
+                # Already have a definition, skip this
+                return None
 
-        if is_forward_decl:
-            # Only emit forward declaration if we haven't seen this type at all
-            if key in self._seen:
-                return
-            self._seen.add(key)
-        else:
-            # This is a definition - mark it and remove any prior forward declaration
-            self._seen.add(definition_key)
-            if key in self._seen:
-                # We previously emitted a forward declaration - need to remove it
-                # and replace with the definition
-                self._remove_forward_declaration(name, key_prefix)
-            self._seen.add(key)
+            if is_forward_decl:
+                # Only emit forward declaration if we haven't seen this type at all
+                if key in self._seen:
+                    return None
+                self._seen.add(key)
+            else:
+                # This is a definition - mark it and remove any prior forward declaration
+                self._seen.add(definition_key)
+                if key in self._seen:
+                    # We previously emitted a forward declaration - need to remove it
+                    # and replace with the definition
+                    self._remove_forward_declaration(name, key_prefix)
+                self._seen.add(key)
 
         fields: list[Field] = []
         methods: list[Function] = []
@@ -1501,6 +1950,7 @@ class ClangASTConverter:
         destructor: Function | None = None
         conversions: list[Function] = []
         notes: list[str] = []
+        nested_records: list[Struct] = []
 
         is_abstract = False
         if not is_forward_decl and (is_cppclass or cursor.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL)):
@@ -1529,18 +1979,49 @@ class ClangASTConverter:
                     field = self._convert_field(child)
                     if field:
                         fields.append(field)
-                    else:
+                    elif not self._is_padding_bitfield(child):
                         notes.append(
                             f"Field '{child.spelling}' skipped: unable to represent type '{child.type.spelling}'"
                         )
                 elif child.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL):
-                    is_anon = False
-                    with contextlib.suppress(Exception):
-                        is_anon = child.is_anonymous()
-                    if is_anon or not child.spelling or "(anonymous" in child.spelling:
-                        field = self._convert_field(child)
-                        if field:
-                            fields.append(field)
+                    if not self._is_anonymous_decl(child):
+                        # A tagged record *defined* inside another record body
+                        # still needs a top-level definition; a field using it
+                        # by value would otherwise name an incomplete type.
+                        # Non-definitions are left alone: a bare ``struct x *p``
+                        # member introduces the tag without a body, and the
+                        # writer already emits those forward declarations.
+                        # A C++ nested class is NOT lifted to the top level:
+                        # its name is only meaningful when qualified by the
+                        # enclosing class, and flattening it would violate
+                        # scope integrity. It is kept as a nested record, which
+                        # the writer renders inside the parent's body where the
+                        # qualification is implicit.
+                        if child.is_definition():
+                            if is_cppclass:
+                                nested = self._process_struct(
+                                    child,
+                                    is_union=child.kind == CursorKind.UNION_DECL,
+                                    emit=False,
+                                )
+                                if nested is not None:
+                                    nested_records.append(nested)
+                            else:
+                                self._process_struct(child, is_union=child.kind == CursorKind.UNION_DECL)
+                    elif self._normalize_anon_name(child) is None:
+                        nested = self._build_anonymous_record(child)
+                        if nested is not None:
+                            fields.append(self._make_anonymous_field(nested))
+                    else:
+                        # A named member's anonymous type still needs a
+                        # top-level definition; the member that follows
+                        # refers to it by the tag bound during the prescan.
+                        self._process_struct(child, is_union=child.kind == CursorKind.UNION_DECL)
+                elif child.kind == CursorKind.ENUM_DECL:
+                    # An enum declared inside a record body still needs a
+                    # top-level declaration; fields referring to it would
+                    # otherwise name an undeclared type.
+                    self._process_enum(child)
                 elif child.kind == CursorKind.VAR_DECL and (is_cppclass or cursor.kind == CursorKind.STRUCT_DECL):
                     # Static member variable
                     field = self._convert_field(child)
@@ -1609,8 +2090,11 @@ class ClangASTConverter:
             is_deprecated=is_deprecated,
             alignment=alignment,
             location=self._get_location(cursor),
+            nested_records=nested_records,
         )
-        self.declarations.append(struct)
+        if emit:
+            self.declarations.append(struct)
+        return struct
 
     def _process_class_template(self, cursor: Any) -> None:
         """Process a C++ class template declaration."""
@@ -1666,8 +2150,13 @@ class ClangASTConverter:
                     with contextlib.suppress(Exception):
                         is_virt = any(t.spelling == "virtual" for t in child.get_tokens())
                 bases.append(BaseSpecifier(name=base_name, access=access, is_virtual=is_virt))
-            elif child.kind == CursorKind.TYPEDEF_DECL:
-                # Extract inner typedefs (e.g., typedef Iterator<T, PT> iterator)
+            elif child.kind in (CursorKind.TYPEDEF_DECL, CursorKind.TYPE_ALIAS_DECL):
+                # Inner aliases, in both spellings C++ offers: the classic
+                # ``typedef Iterator<T, PT> iterator`` (TYPEDEF_DECL) and the
+                # C++11 ``using type = T;`` (TYPE_ALIAS_DECL).  They mean the
+                # same thing and both expose ``underlying_typedef_type``, but
+                # clang reports them as distinct cursor kinds, so matching only
+                # the first silently loses every ``using`` alias.
                 typedef_name = child.spelling
                 underlying = child.underlying_typedef_type.spelling
                 if typedef_name and underlying:
@@ -1676,7 +2165,7 @@ class ClangASTConverter:
                 field = self._convert_field(child)
                 if field:
                     fields.append(field)
-                else:
+                elif not self._is_padding_bitfield(child):
                     notes.append(f"Field '{child.spelling}' skipped: unable to represent type '{child.type.spelling}'")
             elif child.kind == CursorKind.VAR_DECL:
                 field = self._convert_field(child)
@@ -1790,27 +2279,92 @@ class ClangASTConverter:
         )
         self.declarations.append(comment)
 
+    def _enum_is_typedef_only(self, cursor: Any) -> bool:
+        """Return True when the enum has no C tag and exists only under a typedef name.
+
+        ``typedef enum { ... } Name;`` introduces no ``enum Name`` tag, so Cython must
+        emit ``ctypedef enum Name`` -- ``cdef enum Name`` would reference a tag that
+        does not exist and yield an incomplete type in the generated C.
+
+        clang spells the cursor's type as ``enum <tag>`` exactly when a real tag
+        exists, and as the bare name when the enum is tag-less. C++ has no separate
+        tag namespace and never spells the ``enum`` prefix, so the check applies to C
+        only; C++ enums keep their existing ``cdef enum`` form.
+        """
+        if self.is_cplus:
+            return False
+        return not str(cursor.type.spelling).startswith("enum ")
+
+    def _enum_cpp_name(self, cursor: Any, name: str | None) -> str | None:
+        """Return the tag's full C++ spelling when a record encloses it, else None.
+
+        A member enum is hoisted to the top level, which drops the record from
+        its spelling: ``class C { enum M; }`` reaches the writer as a bare ``M``
+        that names no type.  ``namespace`` cannot carry the record, so the
+        qualification is recorded separately.  When no record encloses the tag,
+        ``namespace`` plus ``name`` is already the whole spelling and this
+        returns None so the existing output is unchanged.
+        """
+        if not name:
+            return None
+        record_kinds = (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_TEMPLATE)
+        records: list[str] = []
+        parent = cursor.semantic_parent
+        while parent is not None and parent.kind in record_kinds:
+            if not parent.spelling:
+                return None
+            records.append(parent.spelling)
+            parent = parent.semantic_parent
+        if not records:
+            return None
+        scopes = [*records[::-1], name]
+        if self._current_namespace:
+            scopes.insert(0, self._current_namespace)
+        return "::".join(scopes)
+
     def _process_enum(self, cursor: Any) -> None:
         """Process an enum declaration."""
-        name = cursor.spelling or None
+        name = self._normalize_anon_name(cursor)
 
-        # Skip forward declarations
-        if not cursor.is_definition():
+        # A forward declaration is redundant when the tag is also defined in this
+        # translation unit -- the definition carries the values, so it alone is
+        # emitted and both source orderings collapse to one declaration.
+        #
+        # When the tag is never defined, the forward declaration is the *only*
+        # mention of the type, and dropping it loses the type entirely: a
+        # `void use(enum E *p);` alongside it renders as `void use(E* p)` with `E`
+        # undeclared, which Cython rejects with "'E' is not a type identifier".
+        # The opaque record path above already keeps such declarations, so
+        # dropping them here made enums inconsistent with structs and unions.
+        if not cursor.is_definition() and cursor.get_definition() is not None:
             return
 
-        # Skip if already processed
-        if name:
-            key = f"enum:{name}"
-            if key in self._seen:
-                return
-            self._seen.add(key)
+        # Skip if already processed. Unnamed enums are keyed by declaration
+        # identity so that a nested enum reached from both the record body and
+        # the field that uses it is still emitted once.
+        # A member enum is keyed by its record-qualified spelling, so a
+        # ``C1::E`` beside a ``C2::E`` are two tags rather than one that
+        # silently discards the second class's enumerators.
+        cpp_name = self._enum_cpp_name(cursor, name) if self.is_cplus else None
+        key = self._record_key("enum", cpp_name or (name if name else self._anon_key(cursor)))
+        if key in self._seen:
+            return
+        self._seen.add(key)
 
         values: list[EnumValue] = []
         for child in cursor.get_children():
             if child.kind == CursorKind.ENUM_CONSTANT_DECL:
                 values.append(EnumValue(name=child.spelling, value=child.enum_value))
 
-        enum = Enum(name=name, values=values, location=self._get_location(cursor))
+        enum = Enum(
+            name=name,
+            values=values,
+            is_typedef=self._enum_is_typedef_only(cursor),
+            namespace=self._current_namespace,
+            location=self._get_location(cursor),
+            is_scoped=bool(self.is_cplus and cursor.is_scoped_enum()),
+            cpp_name=cpp_name,
+        )
         self.declarations.append(enum)
 
     def _process_function(self, cursor: Any) -> None:
@@ -1852,6 +2406,7 @@ class ClangASTConverter:
                 # Skip void parameter
                 if isinstance(param_type, CType) and param_type.name == "void":
                     continue
+                self._apply_param_names(param_type, arg)
                 default_val = self._get_default_argument(arg)
                 parameters.append(Parameter(name=arg.spelling or None, type=param_type, default_value=default_val))
 
@@ -1918,6 +2473,7 @@ class ClangASTConverter:
                 # Skip void parameter
                 if isinstance(param_type, CType) and param_type.name == "void":
                     continue
+                self._apply_param_names(param_type, arg)
                 default_val = self._get_default_argument(arg)
                 parameters.append(Parameter(name=arg.spelling or None, type=param_type, default_value=default_val))
             else:
@@ -1982,7 +2538,7 @@ class ClangASTConverter:
             return
 
         # Skip if already processed
-        key = f"typedef:{name}"
+        key = self._record_key("typedef", name)
         if key in self._seen:
             return
         self._seen.add(key)
@@ -2011,7 +2567,7 @@ class ClangASTConverter:
                     struct_name = decl.spelling
                     # Only emit the struct if we haven't emitted a definition
                     key_prefix = "union" if decl.kind == CursorKind.UNION_DECL else "struct"
-                    struct_key = f"{key_prefix}:{struct_name}"
+                    struct_key = self._record_key(key_prefix, struct_name)
                     definition_key = f"{struct_key}:definition"
 
                     # Check if this is typedef struct Foo {...} Foo; pattern
@@ -2023,7 +2579,11 @@ class ClangASTConverter:
                         if is_typedef_pattern:
                             # Find and update the existing struct
                             for i, existing_decl in enumerate(self.declarations):
-                                if isinstance(existing_decl, Struct) and existing_decl.name == struct_name:
+                                if (
+                                    isinstance(existing_decl, Struct)
+                                    and existing_decl.name == struct_name
+                                    and existing_decl.namespace == self._current_namespace
+                                ):
                                     # Replace with typedef'd version
                                     self.declarations[i] = replace(existing_decl, is_typedef=True)
                                     break
@@ -2098,6 +2658,10 @@ class ClangASTConverter:
         if not standard_underlying_type:
             return
 
+        # A typedef's declarator carries the PARM_DECL children that clang's
+        # FUNCTIONPROTO type omits, exactly as a field or variable declarator does.
+        self._apply_param_names(standard_underlying_type, cursor)
+
         typedef = Typedef(
             name=name,
             underlying_type=standard_underlying_type,
@@ -2115,7 +2679,7 @@ class ClangASTConverter:
             return
 
         # Skip if already processed
-        key = f"var:{name}"
+        key = self._record_key("var", name)
         if key in self._seen:
             return
         self._seen.add(key)
@@ -2123,6 +2687,8 @@ class ClangASTConverter:
         var_type = self._convert_type(cursor.type)
         if not var_type:
             return
+
+        self._apply_param_names(var_type, cursor)
 
         attrs, is_deprecated = self._get_attributes(cursor)
         alignment = self._get_alignment(cursor)
@@ -2143,15 +2709,25 @@ class ClangASTConverter:
         name = cursor.spelling
         is_transparent = False
 
-        # Skip unnamed bitfields (padding-only, e.g., ``int : 4;``)
-        if not name and cursor.is_bitfield():
-            return None
+        # An unnamed bitfield (``int : 4;``) is padding, not a member. It is
+        # still carried in the IR: a consumer that reconstructs layout cannot
+        # place the following fields without it.
+        if self._is_padding_bitfield(cursor):
+            pad_type = self._convert_type(cursor.type)
+            if not pad_type:
+                return None
+            return Field(
+                name="",
+                type=pad_type,
+                bit_width=self._get_bitfield_width(cursor),
+                access=self._get_access_specifier(cursor),
+                is_padding=True,
+            )
 
-        is_anon = False
-        with contextlib.suppress(Exception):
-            is_anon = bool(cursor.is_anonymous())
-
-        if is_anon or not name or name.startswith("(unnamed") or "(anonymous" in name:
+        # Only a field with no name of its own is transparent. ``cursor.is_anonymous()``
+        # is also True for a *named* field whose type happens to be an anonymous
+        # record or enum (``enum { X } e;``), which is an ordinary named member.
+        if not name or name.startswith("(unnamed") or "(anonymous" in name:
             is_transparent = True
             name = ""
 
@@ -2159,8 +2735,184 @@ class ClangASTConverter:
         if not field_type:
             return None
 
+        self._apply_param_names(field_type, cursor)
+
         access = self._get_access_specifier(cursor)
-        return Field(name=name, type=field_type, is_anonymous_transparent=is_transparent, access=access)
+        return Field(
+            name=name,
+            type=field_type,
+            bit_width=self._get_bitfield_width(cursor),
+            is_anonymous_transparent=is_transparent,
+            access=access,
+        )
+
+    @staticmethod
+    def _is_padding_bitfield(cursor: Any) -> bool:
+        """True for an unnamed bitfield (``int : 3;``), which is padding, not a member.
+
+        C17 6.7.2.1p13 gives such a declarator no member name, so it is not
+        addressable. The Field carries ``is_padding=True`` so that writers
+        emitting C source skip it -- a nameless member in their output would
+        be wrong -- while the ctypes writer, which must reproduce the layout
+        itself, can name the bits it has to reserve.
+        """
+        if cursor.spelling:
+            return False
+        with contextlib.suppress(Exception):
+            return bool(cursor.is_bitfield())
+        return False
+
+    @staticmethod
+    def _get_bitfield_width(cursor: Any) -> int | None:
+        """Bit width of a bitfield member, or None when the field is not a bitfield.
+
+        ``clang_getFieldDeclBitWidth`` answers -1 for a non-bitfield cursor rather
+        than failing, so the sign is the discriminator. Pairing it with an
+        ``is_bitfield()`` pre-check would add a branch that can never decide the
+        outcome, hiding a regression in either one behind the other.
+        """
+        with contextlib.suppress(Exception):
+            width = int(cursor.get_bitfield_width())
+            return width if width >= 0 else None
+        return None
+
+    def _apply_param_names(self, type_expr: TypeExpr | None, cursor: Any) -> None:
+        """Recover function-pointer parameter names from a declarator's PARM_DECL children.
+
+        Clang's FUNCTIONPROTO *type* carries no argument names, so a function
+        pointer built from the type alone renders as ``(int, char)``. The
+        declaring cursor does carry them, as PARM_DECL children.
+        """
+        func_ptr = type_expr
+        if isinstance(func_ptr, Pointer):
+            func_ptr = func_ptr.pointee
+        if not isinstance(func_ptr, FunctionPointer):
+            return
+
+        names: list[str] = []
+        with contextlib.suppress(Exception):
+            names = [child.spelling for child in cursor.get_children() if child.kind == CursorKind.PARM_DECL]
+
+        # A mismatch means the PARM_DECL children do not belong to this
+        # signature (for example a function pointer returning a function
+        # pointer, whose children are flattened). Leave the names unset rather
+        # than pairing them wrongly.
+        if len(names) != len(func_ptr.parameters):
+            return
+
+        for param, param_name in zip(func_ptr.parameters, names, strict=True):
+            if param_name and not param.name:
+                param.name = param_name
+
+    def _build_anonymous_record(self, cursor: Any) -> Struct | None:
+        """Build the IR Struct for an anonymous record nested inside another record.
+
+        The result is carried on ``Field.anonymous_struct`` so that writers can
+        flatten its members into the enclosing record, which is what C11
+        transparent members mean.
+        """
+        fields: list[Field] = []
+        for child in cursor.get_children():
+            if child.kind == CursorKind.FIELD_DECL:
+                field = self._convert_field(child)
+                if field:
+                    fields.append(field)
+            elif (
+                child.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL)
+                and self._is_anonymous_decl(child)
+                and self._normalize_anon_name(child) is None
+            ):
+                nested = self._build_anonymous_record(child)
+                if nested is not None:
+                    fields.append(self._make_anonymous_field(nested))
+            elif child.kind == CursorKind.ENUM_DECL:
+                self._process_enum(child)
+
+        if not fields:
+            return None
+        return Struct(name=None, fields=fields, is_union=cursor.kind == CursorKind.UNION_DECL)
+
+    @staticmethod
+    def _make_anonymous_field(nested: Struct) -> Field:
+        return Field(name="", type=CType(name="void"), is_anonymous_transparent=True, anonymous_struct=nested)
+
+    @staticmethod
+    def _extract_quals(clang_type: Any) -> list[str]:
+        """Extract cv-qualifiers carried directly by a clang type.
+
+        Only ``const`` and ``volatile`` are reported. The qualifiers the Cython
+        writer deliberately drops (``_Atomic``, ``__restrict``, ``_Noreturn``)
+        are not clang cv-qualifiers and are unaffected by this.
+        """
+        quals: list[str] = []
+        with contextlib.suppress(Exception):
+            if clang_type.is_const_qualified():
+                quals.append("const")
+        with contextlib.suppress(Exception):
+            if clang_type.is_volatile_qualified():
+                quals.append("volatile")
+        return quals
+
+    @staticmethod
+    def _merge_quals(type_expr: TypeExpr, quals: list[str]) -> None:
+        """Add qualifiers to an already-built type expression, without duplicating."""
+        existing = getattr(type_expr, "qualifiers", None)
+        if existing is None:
+            return
+        for qual in quals:
+            if qual not in existing:
+                existing.append(qual)
+
+    def _resolve_member_alias(self, clang_type: Any, decl: Any) -> TypeExpr | None:
+        """Resolve ``Owner<int>::type`` to the type it actually names.
+
+        A ``typedef`` or C++11 ``using`` alias declared *inside* a class is
+        reached from the outside through a qualified name, but libclang reports
+        its declaration cursor's spelling as the bare member name -- ``type``.
+        Emitting that bare name loses the owner entirely and produces a
+        dangling identifier that names nothing at the output's top level.
+
+        The qualified spelling is not usable either: ``types::remove_reference<int>::type``
+        has no valid spelling in a Cython declaration.  For a *concrete*
+        instantiation the canonical type is exact and fully resolved -- clang has
+        already done the substitution -- so it carries the same meaning with a
+        name the writer can emit.  That is what this returns.
+
+        Returns ``None`` (leaving the caller's bare-name behaviour intact) when
+        the alias is not a class member, or when the canonical type is still
+        dependent, which is the case inside an uninstantiated template where the
+        bare member name is the correct thing to emit.
+        """
+        # Cursor kinds whose members are reached through a qualified name
+        # (``Owner::member``) rather than by the bare member name.  Built here
+        # rather than at class scope because ``CursorKind`` is bound lazily,
+        # after the libclang shared library is located.
+        record_parent_kinds = (
+            CursorKind.STRUCT_DECL,
+            CursorKind.UNION_DECL,
+            CursorKind.CLASS_DECL,
+            CursorKind.CLASS_TEMPLATE,
+            CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION,
+        )
+        parent = decl.semantic_parent
+        if parent is None or parent.kind not in record_parent_kinds:
+            return None
+
+        canonical = clang_type.get_canonical()
+        # A canonical type that is still unexposed/dependent has not been
+        # substituted, so it carries no more information than the bare name.
+        if canonical.kind in (TypeKind.UNEXPOSED, TypeKind.INVALID, TypeKind.DEPENDENT):
+            return None
+        # Guard against a canonical type that loops straight back to this same
+        # typedef; converting it would recurse without making progress.
+        if canonical.kind == TypeKind.TYPEDEF:
+            return None
+
+        resolved = self._convert_type(canonical)
+        if resolved is None:
+            return None
+        self._merge_quals(resolved, self._extract_quals(clang_type))
+        return resolved
 
     def _convert_type(self, clang_type: Any) -> TypeExpr | None:
         """Convert a libclang Type to our IR type expression."""
@@ -2170,17 +2922,20 @@ class ClangASTConverter:
         # Handle pointer types
         if kind == TypeKind.POINTER:
             pointee = clang_type.get_pointee()
+            ptr_quals = self._extract_quals(clang_type)
 
-            # Check for function pointer
-            if pointee.kind == TypeKind.FUNCTIONPROTO:
+            # Check for function pointer. FUNCTIONNOPROTO covers unprototyped
+            # ``()`` functions, which are legal C and must not fall through to
+            # the opaque basic-type tail.
+            if pointee.kind in (TypeKind.FUNCTIONPROTO, TypeKind.FUNCTIONNOPROTO):
                 func_ptr = self._convert_function_type(pointee)
                 if func_ptr:
-                    return Pointer(pointee=func_ptr)
+                    return Pointer(pointee=func_ptr, qualifiers=ptr_quals)
                 return None
 
             pointee_type = self._convert_type(pointee)
             if pointee_type:
-                return Pointer(pointee=pointee_type)
+                return Pointer(pointee=pointee_type, qualifiers=ptr_quals)
             return None
 
         # Handle array types
@@ -2213,28 +2968,38 @@ class ClangASTConverter:
 
         # Handle elaborated types (struct X, enum Y, etc.)
         if kind == TypeKind.ELABORATED:
-            # Get the underlying named type
+            # Read qualifiers off the elaborated type first: get_named_type()
+            # drops them.
+            quals = self._extract_quals(clang_type)
             named_type = clang_type.get_named_type()
-            return self._convert_type(named_type)
+            result = self._convert_type(named_type)
+            if result is not None:
+                self._merge_quals(result, quals)
+            return result
 
         # Handle record (struct/union) types
         if kind == TypeKind.RECORD:
             decl = clang_type.get_declaration()
-            name = decl.spelling
+            quals = self._extract_quals(clang_type)
+            name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
             if decl.kind == CursorKind.UNION_DECL:
-                return CType(name=f"union {name}" if name else "union")
-            return CType(name=f"struct {name}" if name else "struct")
+                return CType(name=f"union {name}", qualifiers=quals)
+            return CType(name=f"struct {name}", qualifiers=quals)
 
         # Handle enum types
         if kind == TypeKind.ENUM:
             decl = clang_type.get_declaration()
-            name = decl.spelling
-            return CType(name=f"enum {name}" if name else "enum")
+            quals = self._extract_quals(clang_type)
+            name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
+            return CType(name=f"enum {name}", qualifiers=quals)
 
         # Handle typedef types
         if kind == TypeKind.TYPEDEF:
             decl = clang_type.get_declaration()
-            return CType(name=decl.spelling)
+            member_alias = self._resolve_member_alias(clang_type, decl)
+            if member_alias is not None:
+                return member_alias
+            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type))
 
         # Handle C++ reference types
         if kind == TypeKind.LVALUEREFERENCE:
@@ -2258,11 +3023,7 @@ class ClangASTConverter:
         spelling = clang_type.spelling
 
         # Extract qualifiers
-        qualifiers: list[str] = []
-        if clang_type.is_const_qualified():
-            qualifiers.append("const")
-        if clang_type.is_volatile_qualified():
-            qualifiers.append("volatile")
+        qualifiers = self._extract_quals(clang_type)
 
         # Clean up the spelling to get base type
         base_type = spelling
@@ -2280,12 +3041,21 @@ class ClangASTConverter:
             return None
 
         parameters: list[Parameter] = []
-        is_variadic = clang_type.is_function_variadic()
+        # An unprototyped ``()`` function (FUNCTIONNOPROTO) has neither a
+        # variadic flag nor an argument list.
+        is_variadic = False
+        with contextlib.suppress(Exception):
+            is_variadic = clang_type.is_function_variadic()
 
-        for arg_type in clang_type.argument_types():
+        arg_types: list[Any] = []
+        with contextlib.suppress(Exception):
+            arg_types = list(clang_type.argument_types())
+
+        for arg_type in arg_types:
             param_type = self._convert_type(arg_type)
             if param_type:
-                # Function pointer params don't have names
+                # Clang's function *type* carries no argument names; they are
+                # recovered from the declaring cursor by _apply_param_names().
                 parameters.append(Parameter(name=None, type=param_type))
 
         return FunctionPointer(
@@ -2342,6 +3112,28 @@ class LibclangBackend:
         self._parse_cache: dict[str, Header] = {}
         # Visited set to prevent circular includes
         self._visited: set[str] = set()
+        # Normalized paths clang itself classified as system headers, accumulated
+        # across every translation unit this backend has parsed.
+        self._clang_system_headers: set[str] = set()
+
+    def _is_system_include(self, header_path: str, project_prefixes: tuple[str, ...] | None) -> bool:
+        """Decide whether an included header is a system header.
+
+        clang's answer is authoritative: it knows which search paths it treated
+        as system (``-isystem``, its resource directory, the platform defaults),
+        which no path heuristic can track across platforms. The heuristic in
+        :func:`_is_system_header` remains as the fallback for paths clang has
+        not classified in this process.
+
+        :param header_path: Path to the included header.
+        :param project_prefixes: Path prefixes that override every system classification.
+        :returns: True if the header must not be descended into.
+        """
+        if _matches_project_prefix(header_path, project_prefixes):
+            return False
+        if normalize_path(str(header_path)) in self._clang_system_headers:
+            return True
+        return _is_system_header(header_path, project_prefixes)
 
     @property
     def name(self) -> str:
@@ -2447,6 +3239,8 @@ class LibclangBackend:
         max_depth: int,
         current_depth: int = 0,
         project_prefixes: tuple[str, ...] | None = None,
+        allowlist_paths: _PathSet | None = None,
+        denylist_paths: _PathSet | None = None,
     ) -> Header:
         """Recursively parse included headers and combine declarations.
 
@@ -2458,6 +3252,10 @@ class LibclangBackend:
         :param max_depth: Maximum recursion depth
         :param current_depth: Current recursion depth
         :param project_prefixes: Optional tuple of path prefixes to treat as project (not system)
+        :param allowlist_paths: Resolved allowlist entries, or None when the caller supplied
+            none. Included headers not named here are not descended into.
+        :param denylist_paths: Resolved denylist entries, or None. Named headers are not
+            descended into even when the allowlist names them -- deny wins over allow.
         :returns: Combined Header with declarations from all includes
         """
         if current_depth >= max_depth:
@@ -2468,8 +3266,8 @@ class LibclangBackend:
 
         # Process each included header
         for include_path in main_header.included_headers:
-            # Skip system headers (unless whitelisted via project_prefixes)
-            if _is_system_header(include_path, project_prefixes):
+            # Skip system headers (unless allowlisted via project_prefixes)
+            if self._is_system_include(include_path, project_prefixes):
                 continue
 
             # Get absolute path
@@ -2485,6 +3283,16 @@ class LibclangBackend:
 
             # Check if already visited (circular include)
             if abs_path in self._visited:
+                continue
+
+            # The allowlist and denylist narrow the *merged* result, not only the
+            # main translation unit: an included header the caller did not allow,
+            # or explicitly denied, is never descended into and so contributes
+            # nothing to the merge.  Deny wins over allow.
+            resolved_include = _resolve_path(abs_path)
+            if denylist_paths is not None and denylist_paths.matches(resolved_include):
+                continue
+            if allowlist_paths is not None and not allowlist_paths.matches(resolved_include):
                 continue
 
             self._visited.add(abs_path)
@@ -2508,6 +3316,8 @@ class LibclangBackend:
                     max_depth,
                     current_depth + 1,
                     project_prefixes,
+                    allowlist_paths,
+                    denylist_paths,
                 )
 
                 # Add declarations from sub-header
@@ -2540,14 +3350,40 @@ class LibclangBackend:
         recursive_includes: bool = True,
         max_depth: int = 10,
         project_prefixes: tuple[str, ...] | None = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
     ) -> Header:
         """Parse C/C++ code using libclang.
 
         Handles raw (unpreprocessed) code and performs preprocessing internally.
 
-        Umbrella header support: If the header has few/no declarations but many
-        includes (umbrella header pattern), this method can recursively parse the
-        included headers and combine their declarations.
+        Traversal and filtering
+        -----------------------
+        ``recursive_includes`` (True by default) governs *traversal*: it descends
+        into each non-system header named by an ``#include``, parses it as its own
+        translation unit, and merges what it declares.  ``project_prefixes``
+        (through :func:`_is_system_header`) decides which paths count as project
+        rather than system headers, ``max_depth`` bounds the descent, and an
+        internal visited set stops mutually including headers from recursing
+        forever.
+
+        ``allowlist`` and ``denylist`` govern *filtering*, and they narrow the
+        merged result in **both** modes.  A header the allowlist does not name is
+        neither descended into nor admitted out of ``filename``'s own translation
+        unit; a header the denylist names is excluded by both routes as well.
+
+        * ``recursive_includes=True`` with no ``allowlist`` emits the declarations
+          of every non-system included header.
+        * ``recursive_includes=True`` with ``allowlist=["other.h"]`` emits
+          ``filename``'s own declarations and ``other.h``'s, and nothing else.
+        * An allowlist naming nothing that is actually included yields
+          ``filename``'s declarations alone.  This is not an error.
+        * ``recursive_includes=False`` with no ``allowlist`` yields ``filename``'s
+          declarations alone.
+        * **Deny wins over allow.**  A file named by both lists is excluded.
+        * The main file is never denied.  ``filename`` always contributes its own
+          declarations, because returning an empty result for the file the caller
+          asked to parse is a silent failure with nothing to explain it.
 
         :param code: C/C++ source code to parse (raw, not preprocessed).
         :param filename: Source filename for error messages and location tracking.
@@ -2556,14 +3392,30 @@ class LibclangBackend:
         :param use_default_includes: If True (default), automatically detect and add
             system include directories by querying the system clang compiler.
             Set to False to disable this behavior.
-        :param recursive_includes: If True (default), detect umbrella headers and
-            recursively parse included project headers. System headers are always
-            skipped. Set to False to only parse the main file.
+        :param recursive_includes: If True (default), descend into every non-system
+            included header and merge its declarations into the result. System
+            headers are always skipped. Set to False to parse only the main file,
+            which is the only way to keep included declarations out entirely.
         :param max_depth: Maximum recursion depth for include processing (default 10).
             Prevents infinite recursion from circular includes.
         :param project_prefixes: Optional tuple of path prefixes to treat as project
             headers (not system). Use this for umbrella headers of libraries installed
             in system locations (e.g., ``("/opt/homebrew/include/sodium",)``).
+        :param allowlist: Files whose declarations are kept, alongside ``filename``'s
+            own.  ``None`` keeps every non-system file reached by traversal; a list
+            narrows the result to exactly ``filename`` plus the files it names, in
+            both ``recursive_includes`` modes.  An absolute entry is used as-is; a
+            relative entry (including a bare basename) is resolved against the
+            directory of ``filename`` first, then each of ``include_dirs``, then the
+            current working directory.  An entry containing ``*``, ``?`` or ``[`` is
+            an :mod:`fnmatch` pattern whose directory part is resolved the same way.
+            Matching is on whole absolute, symlink-resolved paths -- never on
+            substrings, so ``er.h`` does not match ``other.h``.
+        :param denylist: Files whose declarations are dropped, using the same
+            resolution and glob rules as ``allowlist``.  Deny wins over allow: a
+            file named by both lists is excluded.  A denylist with no allowlist
+            means "everything except these".  An entry matching nothing is not an
+            error.  ``filename`` itself cannot be denied.
         :returns: :class:`~headerkit.ir.Header` containing parsed declarations.
         :raises RuntimeError: If parsing fails with errors.
 
@@ -2579,12 +3431,29 @@ class LibclangBackend:
                 extra_args=["-std=c++17", "-DNDEBUG"]
             )
 
-            # Umbrella header (all-includes) pattern
+            # Umbrella header (all-includes) pattern: descend into the includes
+            # and keep everything they declare.  This is the default.
             header = backend.parse(
                 code,
                 "LibraryAll.h",
                 include_dirs=["./include"],
-                recursive_includes=True  # Auto-detect and expand includes
+                recursive_includes=True
+            )
+
+            # Keep only one included header's declarations: no descent, and
+            # exactly one file admitted from the main translation unit.
+            header = backend.parse(
+                code,
+                "main.h",
+                recursive_includes=False,
+                allowlist=["other.h"]
+            )
+
+            # Main file only -- nothing reached through #include survives
+            header = backend.parse(
+                code,
+                "main.h",
+                recursive_includes=False
             )
 
             # Umbrella header in system location
@@ -2592,7 +3461,7 @@ class LibclangBackend:
                 code,
                 "sodium.h",
                 include_dirs=["/opt/homebrew/include"],
-                project_prefixes=("/opt/homebrew/include/sodium",)  # Whitelist sodium/*
+                project_prefixes=("/opt/homebrew/include/sodium",)  # Allowlist sodium/*
             )
         """
         # Ensure libclang is configured before parsing.  This is a no-op
@@ -2606,16 +3475,7 @@ class LibclangBackend:
 
         args: list[str] = []
 
-        # Detect C++ mode from extra_args
-        is_cplus = False
-        if extra_args:
-            for i, arg in enumerate(extra_args):
-                if arg.startswith("-std=c++"):
-                    is_cplus = True
-                    break
-                if arg == "-x" and i + 1 < len(extra_args) and extra_args[i + 1] == "c++":
-                    is_cplus = True
-                    break
+        is_cplus = _detect_cplus(filename, extra_args)
 
         # Add user-specified include directories FIRST
         # This is important for C++ where user headers may need to come before system libc++
@@ -2653,16 +3513,35 @@ class LibclangBackend:
             header_path = str(inclusion.include.name)
             # Store full path - caller can extract basename if needed
             included_headers.add(header_path)
+            # Ask clang whether it treated this file as a system header. This is the
+            # authoritative answer -- clang knows its own resource directory and
+            # -isystem search paths, which vary per platform and per toolchain
+            # version, so the path heuristic alone leaks libc internals on Linux.
+            if _location_is_in_system_header(tu, inclusion.include):
+                self._clang_system_headers.add(normalize_path(header_path))
 
         # Convert to IR
-        converter = ClangASTConverter(filename, project_prefixes=project_prefixes)
+        search_dirs = _filter_search_dirs(filename, include_dirs)
+        allowlist_paths = None if allowlist is None else _PathSet(allowlist, search_dirs)
+        denylist_paths = None if denylist is None else _PathSet(denylist, search_dirs)
+        converter = ClangASTConverter(
+            filename,
+            project_prefixes=project_prefixes,
+            is_cplus=is_cplus,
+            allowlist_paths=allowlist_paths,
+            denylist_paths=denylist_paths,
+        )
         header = converter.convert(tu)
 
         # Attach included headers to the IR
         header.included_headers = included_headers
 
         # Check if we should do recursive include processing
-        if recursive_includes and _is_umbrella_header(header, project_prefixes=project_prefixes):
+        # ``recursive_includes`` is the caller's answer, so nothing here second-guesses
+        # it from the header's shape. Scope is bounded by _is_system_header /
+        # project_prefixes, allowlist, max_depth, and self._visited.
+        has_project_include = any(not self._is_system_include(h, project_prefixes) for h in header.included_headers)
+        if recursive_includes and has_project_include:
             # Reset visited set for each top-level parse
             self._visited = set()
             # Add current file to visited
@@ -2682,9 +3561,107 @@ class LibclangBackend:
                 use_default_includes,
                 max_depth,
                 project_prefixes=project_prefixes,
+                allowlist_paths=allowlist_paths,
+                denylist_paths=denylist_paths,
             )
 
+        # Included headers are parsed in isolation, so a macro that a *later*
+        # header redefines is otherwise emitted with the stale value it had in
+        # the header that first defined it. The main translation unit's
+        # preprocessing record is the only place the real, ordered macro history
+        # is visible, so it decides the final state.
+        self._apply_final_macro_state(header, tu, converter)
+        self._drop_undefined_macros(header, filename, code, args)
+
         return header
+
+    def _drop_undefined_macros(self, header: Header, filename: str, code: str, args: list[str]) -> None:
+        """Remove macro Constants for names that are no longer defined at end of translation.
+
+        libclang's preprocessing record carries no entry for ``#undef``, so a
+        macro a header undefines is still reported as defined and would be
+        emitted as a declaration of a symbol the compiler cannot see. Re-parsing
+        the same source with an ``#ifdef`` probe appended per candidate asks the
+        preprocessor itself which names survive, so the answer cannot disagree
+        with the compiler.
+        """
+        candidates = [d.name for d in header.declarations if isinstance(d, Constant) and d.is_macro]
+        if not candidates:
+            return
+
+        probe = [code, "\n"]
+        probe.extend(
+            f"#ifdef {name}\nint {_MACRO_PROBE_PREFIX}{index};\n#endif\n" for index, name in enumerate(candidates)
+        )
+
+        try:
+            probe_tu = self._get_index().parse(
+                filename,
+                args=args,
+                unsaved_files=[(filename, "".join(probe))],
+                options=_cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
+            )
+        except _cindex.TranslationUnitLoadError:
+            return
+
+        if any(diag.severity >= _cindex.Diagnostic.Error for diag in probe_tu.diagnostics):
+            # The probe did not compile; its silence is not evidence of an #undef.
+            return
+
+        defined: set[str] = set()
+        for cur in probe_tu.cursor.get_children():
+            if cur.kind != CursorKind.VAR_DECL:
+                continue
+            spelling = cur.spelling
+            if spelling.startswith(_MACRO_PROBE_PREFIX):
+                index = spelling[len(_MACRO_PROBE_PREFIX) :]
+                if index.isdigit():
+                    defined.add(candidates[int(index)])
+
+        header.declarations = [
+            d for d in header.declarations if not (isinstance(d, Constant) and d.is_macro and d.name not in defined)
+        ]
+
+    @staticmethod
+    def _final_macro_state(tu: Any, converter: ClangASTConverter) -> dict[str, Constant | None]:
+        """Map each macro name to the Constant its LAST ``#define`` yields, or None.
+
+        The preprocessing record lists ``#define`` directives in the order the
+        preprocessor met them and omits directives in branches it did not take,
+        so iterating it and letting later entries win reproduces the macro table
+        as it stands at the end of the translation unit.
+        """
+        state: dict[str, Constant | None] = {}
+        for cur in tu.cursor.get_children():
+            if cur.kind != CursorKind.MACRO_DEFINITION:
+                continue
+            if cur.location.file is None:
+                # Compiler builtin, not written in any source file.
+                continue
+            name = cur.spelling
+            if name:
+                state[name] = converter._build_macro_constant(cur, name)
+        return state
+
+    @classmethod
+    def _apply_final_macro_state(cls, header: Header, tu: Any, converter: ClangASTConverter) -> None:
+        """Drop or correct macro Constants that the final macro table contradicts."""
+        state = cls._final_macro_state(tu, converter)
+        if not state:
+            return
+
+        kept: list[Declaration] = []
+        for decl in header.declarations:
+            if isinstance(decl, Constant) and decl.is_macro and decl.name in state:
+                final = state[decl.name]
+                if final is None:
+                    # Last definition has no value - emitting it would not compile.
+                    continue
+                if not _same_macro_value(decl, final):
+                    kept.append(final)
+                    continue
+            kept.append(decl)
+        header.declarations = kept
 
 
 @hook("parse_unit", backend="libclang", priority=Priority.STANDARD)
@@ -2698,6 +3675,8 @@ def _libclang_parse_hook(
     recursive_includes: bool = True,
     max_depth: int = 10,
     project_prefixes: tuple[str, ...] | None = None,
+    allowlist: list[str] | None = None,
+    denylist: list[str] | None = None,
     context: PipelineContext | None = None,
     **kwargs: Any,
 ) -> SourceUnit | None:
@@ -2712,6 +3691,8 @@ def _libclang_parse_hook(
         recursive_includes=recursive_includes,
         max_depth=max_depth,
         project_prefixes=project_prefixes,
+        allowlist=allowlist,
+        denylist=denylist,
     )
 
 

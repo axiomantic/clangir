@@ -158,15 +158,33 @@ class TestCythonEnumRoundtrip:
         """)
 
     def test_typedef_enum(self, backend):
-        """typedef enum -- libclang may separate the enum body and typedef alias.
+        """Tag-less typedef enum produces 'ctypedef enum Switch'.
 
-        The typedef enum produces a 'cdef enum Switch' block (not 'ctypedef enum').
+        `typedef enum { ... } Switch;` introduces no `enum Switch` tag in C, so the
+        pxd must spell it `ctypedef enum`. Emitting `cdef enum` makes Cython generate
+        `enum Switch x;`, which fails to compile against the header with
+        "tentative definition has type 'enum Switch' that is never completed".
+
         The writer emits blank lines between the phases due to cycle-detection layout.
         """
         output = parse_and_cython(backend, "typedef enum { OFF = 0, ON = 1 } Switch;")
-        # The typedef enum passes through the cycle-detection path in PxdWriter,
-        # which emits blank separators between phases. The exact output has been
-        # verified empirically by running the writer.
+        assert output == textwrap.dedent("""\
+            cdef extern from "test.h":
+
+
+
+                ctypedef enum Switch:
+                    OFF
+                    ON
+        """)
+
+    def test_typedef_enum_with_tag(self, backend):
+        """A TAGGED typedef enum keeps 'cdef enum' -- the `enum Switch` tag exists.
+
+        Sibling of :meth:`test_typedef_enum`: pins the discriminator from both sides so
+        that marking every enum as a typedef would fail here.
+        """
+        output = parse_and_cython(backend, "typedef enum Switch { OFF = 0, ON = 1 } Switch;")
         assert output == textwrap.dedent("""\
             cdef extern from "test.h":
 
@@ -206,14 +224,12 @@ class TestCythonTypedefRoundtrip:
         """)
 
     def test_function_pointer_typedef(self, backend):
-        """Function pointer typedef -- parameter name may be stripped by libclang."""
+        """Function pointer typedef keeps its parameter name."""
         output = parse_and_cython(backend, "typedef void (*Callback)(int status);")
-        # libclang strips parameter names from function pointer typedefs in some versions.
-        # The writer emits the parameter type only ("int") without name ("status").
         assert output == textwrap.dedent("""\
             cdef extern from "test.h":
 
-                ctypedef void (*Callback)(int)
+                ctypedef void (*Callback)(int status)
         """)
 
 

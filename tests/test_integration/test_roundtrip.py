@@ -173,9 +173,9 @@ class TestTypedefRoundtrip:
     def test_function_pointer_typedef(self, backend):
         code = "typedef void (*callback_fn)(int status);"
         cdef = parse_and_convert(backend, code)
-        # libclang does not preserve parameter names in function pointer typedefs;
-        # the parameter name "status" is dropped and only the type "int" is kept.
-        assert cdef == "typedef void (*callback_fn)(int);"
+        # The parameter name comes from the typedef declarator's PARM_DECL children,
+        # which clang's FUNCTIONPROTO type alone does not carry.
+        assert cdef == "typedef void (*callback_fn)(int status);"
 
 
 class TestUnionRoundtrip:
@@ -219,9 +219,8 @@ class TestFunctionPointerTypedefRoundtrip:
     def test_function_pointer_typedef(self, backend):
         code = "typedef int (*comparator_fn)(const void *a, const void *b);"
         cdef = parse_and_convert(backend, code)
-        # libclang does not preserve parameter names in function pointer typedefs;
-        # only the types (const void *) are retained.
-        assert cdef == "typedef int (*comparator_fn)(const void *, const void *);"
+        # Both the qualified pointer types and the declarator's parameter names survive.
+        assert cdef == "typedef int (*comparator_fn)(const void * a, const void * b);"
 
 
 class TestMultipleDeclarations:
@@ -627,13 +626,12 @@ class TestComplexPatternRoundtrip:
     def test_bitfield_struct(self, backend):
         code = "struct Flags { unsigned int a : 3; unsigned int b : 5; };"
         cdef = parse_and_convert(backend, code)
-        # The libclang backend does not extract bitfield widths (Field.bit_width
-        # is never populated in _convert_field), so bitfield annotations are
-        # absent from the CFFI output.
+        # cffi needs the widths: without them it declares two full-width members
+        # and the layout it computes no longer matches the C compiler's.
         assert cdef == textwrap.dedent("""\
             struct Flags {
-                unsigned int a;
-                unsigned int b;
+                unsigned int a : 3;
+                unsigned int b : 5;
             };""")
 
     def test_array_in_struct_field(self, backend):
@@ -648,9 +646,12 @@ class TestComplexPatternRoundtrip:
     def test_nested_struct_field(self, backend):
         code = "struct Outer { struct Inner { int x; } inner; };"
         cdef = parse_and_convert(backend, code)
-        # Inner is a nested type definition; the libclang backend does not hoist it
-        # to a separate top-level declaration, so only Outer is emitted.
+        # Inner is hoisted ahead of Outer. Emitting only Outer would leave the
+        # by-value ``inner`` member naming an incomplete type.
         assert cdef == textwrap.dedent("""\
+            struct Inner {
+                int x;
+            };
             struct Outer {
                 struct Inner inner;
             };""")

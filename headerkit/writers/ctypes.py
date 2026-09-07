@@ -10,6 +10,8 @@ The IR types come from ``headerkit.ir`` and represent parsed C headers.
 
 from __future__ import annotations
 
+import ctypes
+import math
 import textwrap
 from typing import ClassVar
 
@@ -63,6 +65,52 @@ CTYPES_TYPE_MAP: dict[str, str] = {
     "uint32_t": "ctypes.c_uint32",
     "uint64_t": "ctypes.c_uint64",
 }
+
+
+#: Name of the host-ABI flag the generated module defines when it needs one.
+_ABI_FLAG = "_HK_UNNAMED_BITFIELD_ALIGNS"
+
+#: Names of the zero-length arrays that carry an alignment a respelled field
+#: would otherwise have lost. A zero-length ctypes array occupies no bytes and
+#: still imposes its element type's alignment on the record, identically on
+#: every CPython measured (3.10 through 3.14) -- which is what lets the field
+#: spellings be chosen for position alone.
+_ALIGN_FIELD = "_hk_align"
+_PAD_ALIGN_FIELD = "_hk_pad_align"
+
+#: Name of the flag saying this host's ctypes already reproduces this host's C
+#: compiler for bit-fields, so the declared types can be emitted as written.
+_NATIVE_FLAG = "_HK_CTYPES_MATCHES_C_NATIVELY"
+
+#: Definition emitted into a generated module that contains an all-padding
+#: record. ``platform.machine`` is consulted at import time on purpose: ctypes
+#: lays a record out for the ABI of the host running Python, which need not be
+#: the host that generated the module.
+ABI_ALIGNMENT_NOTE = """\
+# Does a C unnamed bit-field contribute its declared type's alignment to the
+# record that contains it? That is an ABI choice. Measured with compiled C
+# probes: AAPCS64 (Linux aarch64, gcc 14.2 and clang 19.1) and Windows x86-64
+# impose the alignment; x86-64 System V (Linux x86_64, gcc 14.2 and clang
+# 19.1) and Darwin arm64 (Apple clang 21) do not. On Windows every toolchain
+# on the runner -- MinGW cc, gcc, clang, and clang targeting MSVC -- agreed,
+# so this is not a MinGW-versus-MSVC split. Other ABIs were not measured and
+# are assumed to follow System V. Resolved on import because ctypes follows
+# the ABI of the host running this module, which need not be the host that
+# generated it.
+_HK_UNNAMED_BITFIELD_ALIGNS = sys.platform.startswith("win") or (
+    not sys.platform.startswith(("darwin", "ios"))
+    and platform.machine().lower().startswith(("aarch64", "arm"))
+)
+
+# Windows is a third layout rule, not a second: MSVC opens a fresh storage
+# unit whenever a bit-field's declared type differs from the unit in play, so
+# `struct { unsigned char a; unsigned int : 8; }` is 8 bytes there against 4
+# under AAPCS64 and 2 under System V. ctypes implements that same MSVC
+# algorithm on Windows, so there the declared types can be written out as they
+# stand and ctypes reproduces the C compiler on its own. Everywhere else its
+# engine changed in 3.14, so the spellings below are chosen for position and
+# the alignment is supplied separately.
+_HK_CTYPES_MATCHES_C_NATIVELY = sys.platform.startswith("win")"""
 
 
 def _is_anonymous_name(name: str | None) -> bool:
@@ -169,30 +217,494 @@ def _field_to_ctypes_tuple(f: Field) -> str:
     return f'("{f.name}", {field_type})'
 
 
+def _ctypes_scalar_bits(expr: str) -> tuple[int, int] | None:
+    """Size and alignment, in bits, of the ctypes scalar named by ``expr``.
+
+    ``expr`` is a rendered writer expression such as ``"ctypes.c_uint"``. The
+    figures come from the ctypes runtime that will lay the generated class out,
+    so this reads the answer rather than assuming an ABI. Anything that is not a
+    plain ctypes scalar -- a user struct, an array, a function pointer -- yields
+    None, which makes the running bit offset unknown.
+    """
+    if not expr.startswith("ctypes."):
+        return None
+    obj = getattr(ctypes, expr[len("ctypes.") :], None)
+    if not isinstance(obj, type):
+        return None
+    try:
+        return ctypes.sizeof(obj) * 8, ctypes.alignment(obj) * 8
+    except TypeError:
+        return None
+
+
+#: ctypes scalars that hold an unsigned bit-field, and so narrow to
+#: ``c_ubyte`` rather than ``c_byte``. Signedness is the one property of a
+#: bit-field's declared type that narrowing must preserve: it decides whether
+#: ctypes sign-extends the stored value on read.
+_UNSIGNED_CTYPES: frozenset[str] = frozenset(
+    {
+        "ctypes.c_bool",
+        "ctypes.c_ubyte",
+        "ctypes.c_ushort",
+        "ctypes.c_uint",
+        "ctypes.c_ulong",
+        "ctypes.c_ulonglong",
+        "ctypes.c_size_t",
+        "ctypes.c_uint8",
+        "ctypes.c_uint16",
+        "ctypes.c_uint32",
+        "ctypes.c_uint64",
+    }
+)
+
+
+def _narrow_carrier(expr: str) -> str | None:
+    """The one-byte carrier that stores the same values as ``expr``."""
+    if not expr.startswith("ctypes.") or _ctypes_scalar_bits(expr) is None:
+        return None
+    return "ctypes.c_ubyte" if expr in _UNSIGNED_CTYPES else "ctypes.c_byte"
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
+
+
+def _byte_split(start: int, end: int) -> list[int]:
+    """Bit widths that fill ``[start, end)`` with no width crossing a byte.
+
+    Each width is what remains of the current byte, capped by what is left to
+    fill. A ``c_ubyte`` bitfield of such a width always lands in the byte the
+    running offset is already in, so ctypes never inserts a skip and the chain
+    ends at exactly ``end``. One wide entry cannot promise that: ctypes moves a
+    bitfield to the next storage unit whenever it would straddle one.
+    """
+    widths: list[int] = []
+    pos = start
+    while pos < end:
+        width = min(8 - pos % 8, end - pos)
+        widths.append(width)
+        pos += width
+    return widths
+
+
+class _StructBody:
+    """Accumulates the ctypes class body for one record.
+
+    Tracks the running bit offset so that a zero-width bitfield (``int : 0;``)
+    can be turned into the explicit padding that reaches the next storage-unit
+    boundary. ctypes rejects a zero-width entry outright, so the boundary has to
+    be reached by reserving the remaining bits of the current unit instead.
+    """
+
+    def __init__(self, is_union: bool) -> None:
+        self.is_union = is_union
+        self.nested: list[str] = []
+        self.anonymous: list[str] = []
+        self.entries: list[str] = []
+        #: The same members with every ``: 0`` respelled as a zero-length
+        #: array. Emitted where ctypes already reproduces the host's C
+        #: compiler; see ``add_padding``.
+        self.native_entries: list[str] = []
+        #: The same members, with every padding carrier respelled so it cannot
+        #: raise the record's alignment. Identical to ``entries`` until a
+        #: padding field whose declared type aligns wider than a byte arrives.
+        self.flat_entries: list[str] = []
+        self.bit_pos: int | None = 0
+        self.pad_index = 0
+        self.flat_pad_index = 0
+        self.padding_bits = 0
+        self.has_member = False
+        #: Widest alignment, in bits, any padding carrier would impose.
+        self.pad_align_bits = 0
+        #: The widest-aligning padding carrier, as ``(expression, alignment
+        #: bits, storage-unit bits)`` -- ordered so the widest compares
+        #: greatest. An all-padding record is respelled entirely in this one
+        #: type; see ``aligned_padding_entries``.
+        self.pad_carrier: tuple[str, int, int] | None = None
+        #: Widest alignment, in bits, that narrowing a named bit-field's
+        #: carrier gave up, with the expression that carried it. A zero-length
+        #: array of that type puts the alignment back.
+        self.narrowed_carrier: tuple[str, int] | None = None
+        #: Widest alignment, in bits, the real members impose on their own.
+        #: None once a member arrives whose alignment the writer cannot read,
+        #: which forces the conservative answer below.
+        self.member_align_bits: int | None = 0
+        #: Why no alignment-neutral carrier could be built, if that happened.
+        self.diagnostic: str | None = None
+
+    @property
+    def abi_dependent(self) -> bool:
+        """Whether the padding carrier decides the record's alignment.
+
+        Only then do the two ABIs disagree and only then is a branch worth
+        emitting. A carrier no wider than a byte can never raise anything, and
+        a carrier no wider than what the real members already impose is
+        invisible -- ``struct { unsigned a : 3; unsigned : 0; unsigned b : 5; }``
+        is aligned to 4 by ``a`` whatever the padding does.
+        """
+        if self.pad_align_bits <= 8:
+            return False
+        return self.member_align_bits is None or self.pad_align_bits > self.member_align_bits
+
+    def _note_member_align(self, expr: str) -> None:
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.member_align_bits is None:
+            self.member_align_bits = None
+            return
+        self.member_align_bits = max(self.member_align_bits, info[1])
+
+    def _next_pad(self) -> str:
+        name = f"_pad{self.pad_index}"
+        self.pad_index += 1
+        return name
+
+    def _next_flat_pad(self) -> str:
+        name = f"_pad{self.flat_pad_index}"
+        self.flat_pad_index += 1
+        return name
+
+    def _add_both(self, entry: str) -> None:
+        self.entries.append(entry)
+        self.native_entries.append(entry)
+        self.flat_entries.append(entry)
+
+    def _advance_bitfield(self, expr: str, width: int) -> None:
+        if self.is_union:
+            return
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.bit_pos is None:
+            self.bit_pos = None
+            return
+        unit = info[0]
+        if self.bit_pos % unit + width > unit:
+            self.bit_pos = _round_up(self.bit_pos, unit)
+        self.bit_pos += width
+
+    def _advance_plain(self, expr: str) -> None:
+        if self.is_union:
+            return
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.bit_pos is None:
+            self.bit_pos = None
+            return
+        size, align = info
+        self.bit_pos = _round_up(self.bit_pos, align) + size
+
+    def add_padding(self, f: Field) -> bool:
+        """Reserve the bits of an unnamed bitfield. False if it cannot be placed."""
+        expr = type_to_ctypes(f.type)
+        width = f.bit_width or 0
+        is_zero_width = width == 0
+        info = _ctypes_scalar_bits(expr)
+        if width == 0:
+            # ``int : 0`` reserves no bits; it moves the next member to a fresh
+            # storage unit. Reaching that boundary needs the current offset.
+            if info is None or self.bit_pos is None:
+                return False
+            unit = info[0]
+            fill = (unit - self.bit_pos % unit) % unit
+            if fill == 0:
+                return True
+            width = fill
+
+        if info is not None:
+            unit_bits, align_bits = info
+            if self.pad_carrier is None or (align_bits, unit_bits) > self.pad_carrier[1:]:
+                self.pad_carrier = (expr, align_bits, unit_bits)
+
+        start = self.bit_pos
+        pad_name = self._next_pad()
+        self.entries.append(f'("{pad_name}", {expr}, {width})')
+        # ``: 0`` reserves nothing in C; it only ends the current storage unit
+        # and moves the next member to a fresh one. Reaching that boundary with
+        # a *fill bit-field* is faithful under the GCC rule, where the fill
+        # sits in the unit that is being closed. It is not faithful under the
+        # MSVC rule, which gives the fill a unit of its own and then gives the
+        # next member yet another: measured on Windows, ``struct { unsigned
+        # char a : 3; unsigned int : 0; unsigned char b : 5; }`` is 8 bytes and
+        # the fill spelling produced 12. A zero-length array closes the unit
+        # and imposes the boundary's alignment while occupying nothing, which
+        # is what ``: 0`` actually means.
+        if is_zero_width:
+            self.native_entries.append(f'("{pad_name}", {expr} * 0)')
+        else:
+            self.native_entries.append(f'("{pad_name}", {expr}, {width})')
+        self._advance_bitfield(expr, width)
+        self.padding_bits += width
+
+        # A named bitfield is the only way ctypes can reserve bits, and a named
+        # bitfield of ``unsigned int`` aligns its record to 4 -- which C does
+        # only under AAPCS64 (see ABI_ALIGNMENT_NOTE). Everywhere else the bits
+        # must be reserved without the alignment, so the same span is respelled
+        # as byte-granular ``c_ubyte`` bitfields. They occupy the identical bit
+        # range, including any storage unit the wide carrier skipped past, so
+        # every following member keeps its offset while the record stays
+        # byte-alignable.
+        if info is None or info[1] <= 8:
+            self.flat_entries.append(f'("{self._next_flat_pad()}", {expr}, {width})')
+            return True
+
+        self.pad_align_bits = max(self.pad_align_bits, info[1])
+        if self.is_union:
+            # Union members all start at bit 0, so only the span matters.
+            span = _byte_split(0, width)
+        elif start is None or self.bit_pos is None:
+            self.diagnostic = (
+                f"an unnamed bitfield of {width} bits follows a member whose bit offset "
+                "the writer cannot track, so the reserved bits cannot be respelled "
+                "without the alignment their declared type carries"
+            )
+            return True
+        else:
+            span = _byte_split(start, self.bit_pos)
+        self.flat_entries.extend(f'("{self._next_flat_pad()}", ctypes.c_ubyte, {w})' for w in span)
+        return True
+
+    def aligned_padding_entries(self) -> list[str]:
+        """The all-padding carrier, respelled as one chain in the widest type.
+
+        An all-padding record has no addressable member, so only its ``sizeof``
+        and alignment are observable; the individual carriers' bit positions
+        are not. That freedom is what makes this respelling safe -- and it is
+        needed because CPython before 3.14 derives a record's alignment only
+        from bit-fields that open a storage unit. ``struct { unsigned char : 4;
+        unsigned int : 4; }`` therefore aligned to 1 on 3.10 through 3.13 and
+        to 4 on 3.14, while C (AAPCS64) says 4 on every one of them. Laying the
+        whole span in the widest carrier makes that carrier open the first unit
+        on every Python, so one spelling is right across all of them.
+
+        The chain reproduces C's size as well as its alignment: ``n`` bits in a
+        carrier of ``u``-bit units occupy ``ceil(n / u)`` units, which is
+        ``round_up(ceil(n / 8), u / 8)`` bytes -- C's rule for a record whose
+        alignment is ``u / 8``.
+        """
+        if self.pad_carrier is None:
+            return []
+        expr, _align_bits, unit_bits = self.pad_carrier
+        total = self.total_padding_bits
+        entries = []
+        index = 0
+        while index * unit_bits < total:
+            width = min(unit_bits, total - index * unit_bits)
+            entries.append(f'("_pad{index}", {expr}, {width})')
+            index += 1
+        return entries
+
+    @property
+    def total_padding_bits(self) -> int:
+        """Bits the padding spans, counting units a carrier skipped past.
+
+        ``bit_pos`` accounts for a carrier that could not fit in the storage
+        unit it started in and so moved to the next one; the running sum of
+        declared widths does not. The sum is the fallback for the case where
+        the offset became untrackable.
+        """
+        return self.bit_pos if self.bit_pos is not None else self.padding_bits
+
+    def add_anonymous(self, f: Field, index: int) -> bool:
+        """Emit a C11 transparent member as a nested class plus an _anonymous_ entry."""
+        inner = f.anonymous_struct
+        if inner is None:
+            return False
+        cls_name = f"_Anon{index}"
+        field_name = f"_anon{index}"
+        body = _record_body(inner, cls_name)
+        if body is None:
+            return False
+        self.nested.extend(body)
+        self.anonymous.append(field_name)
+        self._add_both(f'("{field_name}", {cls_name})')
+        self.has_member = True
+        self.member_align_bits = None
+        # The nested record carries its own alignment, so the offset past it is
+        # not derivable from the scalar table.
+        self.bit_pos = None
+        return True
+
+    def _portable_bitfield_carrier(self, expr: str, width: int) -> str:
+        """``expr`` narrowed to one byte where that makes the field portable.
+
+        CPython before 3.14 opens a fresh storage unit whenever a bit-field's
+        declared type differs in size from the unit it would otherwise land
+        in, and aligns that unit to the new type. C does not: it keeps packing
+        as long as the field fits the unit it is already in. ``struct {
+        unsigned char a; unsigned short b : 5; }`` therefore puts ``b`` at bit
+        8 in C and on Python 3.14, and at bit 16 on 3.10 through 3.13.
+
+        A carrier of one byte removes the disagreement, because then no
+        declared type ever differs from the unit in play. Narrowing is sound
+        only when the field already fits in the byte the running offset is in
+        -- otherwise C itself would move the field on, and the byte carrier
+        would not follow. The declared type is kept in that case, which is the
+        faithful spelling on 3.14 and under the MSVC algorithm ctypes uses on
+        Windows.
+        """
+        info = _ctypes_scalar_bits(expr)
+        if info is None or self.is_union or self.bit_pos is None:
+            return expr
+        _unit_bits, align_bits = info
+        if align_bits <= 8 or self.bit_pos % 8 + width > 8:
+            return expr
+        narrow = _narrow_carrier(expr)
+        if narrow is None:
+            return expr
+        if self.narrowed_carrier is None or align_bits > self.narrowed_carrier[1]:
+            self.narrowed_carrier = (expr, align_bits)
+        return narrow
+
+    def add_member(self, f: Field) -> None:
+        expr = type_to_ctypes(f.type)
+        self.has_member = True
+        self._note_member_align(expr)
+        if f.bit_width is None:
+            self._add_both(_field_to_ctypes_tuple(f))
+            self._advance_plain(expr)
+            return
+        # Only the byte-granular spelling narrows. ``entries`` stays faithful
+        # to the declared types, and mixing a narrowed member into it would
+        # change the layout it exists to reproduce.
+        self.entries.append(_field_to_ctypes_tuple(f))
+        self.native_entries.append(_field_to_ctypes_tuple(f))
+        carrier = self._portable_bitfield_carrier(expr, f.bit_width)
+        self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
+        # The running offset tracks C, so it advances by the *declared* type.
+        self._advance_bitfield(expr, f.bit_width)
+
+
+def _alignment_entries(body: _StructBody, *, include_padding: bool) -> list[str]:
+    """Zero-length arrays restoring alignments the byte-granular spelling gave up.
+
+    Only the ``flat_entries`` spelling gives any alignment up, so this belongs
+    to that spelling alone; the faithful ``entries`` list carries its
+    alignments in the declared types themselves.
+    """
+    entries = []
+    if body.narrowed_carrier is not None:
+        entries.append(f'("{_ALIGN_FIELD}", {body.narrowed_carrier[0]} * 0)')
+    if include_padding and body.pad_carrier is not None:
+        entries.append(f'("{_PAD_ALIGN_FIELD}", {body.pad_carrier[0]} * 0)')
+    return entries
+
+
+def _record_body(decl: Struct, class_name: str) -> list[str] | None:
+    """Render a ctypes class for ``decl``, or None when it cannot be represented."""
+    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
+
+    if not decl.fields:
+        return [f"class {class_name}({base_class}):", "    pass"]
+
+    body = _StructBody(decl.is_union)
+    for index, f in enumerate(decl.fields):
+        if f.is_padding:
+            if not body.add_padding(f):
+                return None
+        elif f.anonymous_struct is not None and f.is_anonymous_transparent:
+            if not body.add_anonymous(f, index):
+                return None
+        elif not f.name:
+            return None
+        else:
+            body.add_member(f)
+
+    if not body.entries:
+        return [f"class {class_name}({base_class}):", "    pass"]
+
+    lines = [f"class {class_name}({base_class}):"]
+
+    if not body.has_member:
+        # Whether an unnamed bit-field contributes its declared type's alignment
+        # to the enclosing record is an ABI choice, not a universal rule. It is
+        # imposed under AAPCS64 and not under x86-64 System V or Darwin (see
+        # ABI_ALIGNMENT_NOTE). With no member to pin the record down, that
+        # choice is the whole layout, and ctypes cannot express an unnamed
+        # bit-field to let its own engine decide. So both carriers are emitted
+        # and the host resolves the branch when the module is imported: a named
+        # bit-field of the same storage type reproduces the imposed alignment,
+        # and a byte array reserves the same bits while staying byte-aligned.
+        nbytes = math.ceil(body.total_padding_bits / 8)
+        aligned_entries = body.aligned_padding_entries()
+        if nbytes == 0 or not aligned_entries:
+            return [f"class {class_name}({base_class}):", "    pass"]
+        lines.append(f"    if {_NATIVE_FLAG}:")
+        lines.append("        _fields_ = [")
+        lines.extend(f"            {entry}," for entry in body.native_entries)
+        lines.append("        ]")
+        lines.append(f"    elif {_ABI_FLAG}:")
+        lines.append("        _fields_ = [")
+        lines.extend(f"            {entry}," for entry in aligned_entries)
+        lines.append("        ]")
+        lines.append("    else:")
+        lines.append("        _fields_ = [")
+        lines.append(f'            ("_pad0", ctypes.c_ubyte * {nbytes}),')
+        lines.append("        ]")
+        return lines
+
+    if decl.is_packed:
+        lines.append("    _pack_ = 1")
+
+    for nested_line in body.nested:
+        lines.append(f"    {nested_line}" if nested_line else "")
+
+    if body.anonymous:
+        joined = ", ".join(f'"{n}"' for n in body.anonymous)
+        suffix = "," if len(body.anonymous) == 1 else ""
+        lines.append(f"    _anonymous_ = ({joined}{suffix})")
+
+    # ``_pack_ = 1`` already pins the record to byte alignment, so the wide
+    # carrier cannot raise it and the two spellings agree. Branching would only
+    # duplicate the field list.
+    if not body.abi_dependent or decl.is_packed:
+        lines.append("    _fields_ = [")
+        lines.extend(f"        {entry}," for entry in body.entries)
+        lines.append("    ]")
+        return lines
+
+    if body.diagnostic is not None:
+        lines.append(f"    # HEADERKIT: {class_name} may be over-aligned where C does not")
+        lines.append("    # align it, because " + body.diagnostic + ".")
+        lines.append("    # Verify this record against your C compiler before relying on it.")
+        lines.append("    _fields_ = [")
+        lines.extend(f"        {entry}," for entry in body.entries)
+        lines.append("    ]")
+        return lines
+
+    # Both branches reserve the padding with byte-granular carriers, which is
+    # what makes one spelling correct everywhere: a chain of one-byte
+    # bit-fields lays out identically under every ctypes engine -- CPython
+    # before 3.14, CPython 3.14 and later, and the MSVC algorithm ctypes uses
+    # on Windows -- because the three disagree only about what to do when a
+    # bit-field's declared type differs from the unit it would land in, and
+    # with a single one-byte carrier that case never arises. The branches
+    # therefore differ only in alignment, which a zero-length array of the
+    # padding's declared type supplies without occupying a byte. That
+    # separation is required, not stylistic: before 3.14 ctypes derives a
+    # record's alignment only from bit-fields that open a storage unit, so a
+    # wide carrier that lands mid-unit raises nothing.
+    lines.append(f"    if {_NATIVE_FLAG}:")
+    lines.append("        _fields_ = [")
+    lines.extend(f"            {entry}," for entry in body.native_entries)
+    lines.append("        ]")
+    lines.append(f"    elif {_ABI_FLAG}:")
+    lines.append("        _fields_ = [")
+    lines.extend(f"            {entry}," for entry in _alignment_entries(body, include_padding=True))
+    lines.extend(f"            {entry}," for entry in body.flat_entries)
+    lines.append("        ]")
+    lines.append("    else:")
+    lines.append("        _fields_ = [")
+    lines.extend(f"            {entry}," for entry in _alignment_entries(body, include_padding=False))
+    lines.extend(f"            {entry}," for entry in body.flat_entries)
+    lines.append("        ]")
+    return lines
+
+
 def _struct_to_ctypes(decl: Struct) -> str | None:
     """Convert a Struct/Union IR node to a ctypes class definition."""
     if decl.name is None or _is_anonymous_name(decl.name):
         return None
 
-    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
-
-    if not decl.fields:
-        # Opaque type
-        return f"class {decl.name}({base_class}):\n    pass"
-
-    lines = [f"class {decl.name}({base_class}):"]
-
-    if decl.is_packed:
-        lines.append("    _pack_ = 1")
-
-    field_lines = []
-    for f in decl.fields:
-        field_lines.append(f"        {_field_to_ctypes_tuple(f)},")
-
-    lines.append("    _fields_ = [")
-    lines.extend(field_lines)
-    lines.append("    ]")
-
+    lines = _record_body(decl, decl.name)
+    if lines is None:
+        return None
     return "\n".join(lines)
 
 
@@ -353,10 +865,17 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
     output_lines.append("")
 
     # Imports
+    needs_abi_flag = any(_ABI_FLAG in item for item in sections["structs"])
+
     output_lines.append("import ctypes")
     output_lines.append("import ctypes.util")
+    if needs_abi_flag:
+        output_lines.append("import platform")
     output_lines.append("import sys")
     output_lines.append("")
+    if needs_abi_flag:
+        output_lines.append(ABI_ALIGNMENT_NOTE)
+        output_lines.append("")
 
     # Sections
     section_order = ["constants", "enums", "structs", "typedefs", "functions", "variables"]
@@ -413,6 +932,9 @@ class CtypesWriter(BaseWriter):
     default_output_pattern: str = "{dir}/{stem}_ctypes.py"
     default_extension: str = ".py"
     supported_layouts: ClassVar[tuple[str, ...]] = ("file", "package", "project")
+    #: This writer reconstructs record layout rather than deferring to a C
+    #: compiler, so it is the one consumer that needs the padding entries.
+    consumes_padding_fields: ClassVar[bool] = True
     supported_options: ClassVar[tuple[WriterOption, ...]] = (
         WriterOption(
             name="test_type",

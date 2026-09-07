@@ -452,7 +452,7 @@ class TestBitfield:
             cdef extern from "test.h":
 
                 cdef struct Flags:
-                    unsigned int active  # bitfield: 1 bits
+                    unsigned int active  # bitfield: 1 bit
                     unsigned int mode  # bitfield: 3 bits
                     int normal
             """)
@@ -1183,3 +1183,75 @@ class TestStubCimportPrefix:
             'from my.pkg.stubs.stdarg cimport va_list\n\ncdef extern from "test.h":\n\n    void fn(va_list args)\n'
         )
         assert result == expected
+
+
+class TestNamespaceStrippingTermination:
+    """Namespace stripping terminates on C++ dependent names.
+
+    ``_format_ctype`` strips ``ns::`` prefixes by repeated regex substitution.
+    A dependent name such as ``types::remove_reference<T>::type`` keeps a
+    ``>::`` that no ``\\w+::`` match can consume, so a loop conditioned on
+    ``"::" in name`` never exits. These tests pin the fixpoint condition by
+    counting substitution passes rather than by measuring wall-clock time.
+    """
+
+    MAX_PASSES = 8
+
+    def _bounded_writer(self, monkeypatch) -> tuple[PxdWriter, list[int]]:
+        """Return a writer whose namespace-stripping regex is pass-bounded."""
+        import re as _re
+
+        from headerkit.writers import cython as cython_mod
+
+        calls = [0]
+
+        class BoundedRe:
+            @staticmethod
+            def sub(pattern: str, repl: str, string: str) -> str:
+                calls[0] += 1
+                if calls[0] > TestNamespaceStrippingTermination.MAX_PASSES:
+                    raise RuntimeError(
+                        f"namespace stripping exceeded {TestNamespaceStrippingTermination.MAX_PASSES} "
+                        f"passes on {string!r}; the loop is not converging"
+                    )
+                return _re.sub(pattern, repl, string)
+
+        monkeypatch.setattr(cython_mod, "re", BoundedRe)
+        return PxdWriter(Header("test.h", [])), calls
+
+    def test_dependent_name_converges(self, monkeypatch) -> None:
+        """A dependent name reaches a fixpoint in a bounded number of passes."""
+        writer, calls = self._bounded_writer(monkeypatch)
+        writer._template_members["remove_reference"] = {"type"}
+        result = writer._format_ctype(CType("typename types::remove_reference<T>::type"))
+        assert result == "remove_reference[T].type"
+        assert calls[0] <= self.MAX_PASSES
+
+    def test_nested_dependent_name_converges(self, monkeypatch) -> None:
+        """A template argument namespace plus a trailing ``>::`` converges."""
+        writer, calls = self._bounded_writer(monkeypatch)
+        assert writer._format_ctype(CType("A<B::C>::D")) == "A[C]::D"
+        assert calls[0] <= self.MAX_PASSES
+
+    def test_plain_namespace_chain_fully_stripped(self, monkeypatch) -> None:
+        """An ordinary namespace chain still loses every qualifier."""
+        writer, calls = self._bounded_writer(monkeypatch)
+        assert writer._format_ctype(CType("a::b::c")) == "c"
+        assert calls[0] <= self.MAX_PASSES
+
+    def test_unqualified_name_needs_no_passes(self, monkeypatch) -> None:
+        """A name without ``::`` is returned without any substitution pass."""
+        writer, calls = self._bounded_writer(monkeypatch)
+        assert writer._format_ctype(CType("plain_int")) == "plain_int"
+        assert calls[0] <= 1
+
+    def test_dependent_name_in_full_header_write(self, monkeypatch) -> None:
+        """A dependent name reached through a full write does not spin."""
+        writer, calls = self._bounded_writer(monkeypatch)
+        writer._template_members["remove_reference"] = {"type"}
+        writer.header = Header(
+            "test.h",
+            [Function("fn", CType("void"), [Parameter("v", CType("types::remove_reference<T>::type"))])],
+        )
+        assert "remove_reference[T].type v" in writer.write()
+        assert calls[0] <= self.MAX_PASSES

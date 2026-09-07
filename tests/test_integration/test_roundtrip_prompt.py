@@ -77,15 +77,11 @@ class TestPromptCompact:
         """)
 
     def test_function_pointer_typedef(self, backend):
-        """Function pointer typedef renders as CALLBACK line, not TYPEDEF.
-
-        libclang does not preserve parameter names in function pointer typedef
-        parameters, so the param appears as bare type (int) without a name.
-        """
+        """Function pointer typedef renders as CALLBACK line, not TYPEDEF."""
         output = parse_and_prompt(backend, "typedef void (*Callback)(int status);", verbosity="compact")
         assert output == textwrap.dedent("""\
             // test.h (headerkit compact)
-            CALLBACK Callback(int) -> void
+            CALLBACK Callback(status:int) -> void
         """)
 
     def test_empty_header(self, backend):
@@ -129,17 +125,13 @@ class TestPromptStandard:
         """)
 
     def test_callback(self, backend):
-        """Function pointer typedef renders under callbacks section.
-
-        libclang does not preserve parameter names in function pointer typedef
-        parameters, so the param appears as bare type (int) without a name.
-        """
+        """Function pointer typedef renders under callbacks section."""
         output = parse_and_prompt(backend, "typedef void (*on_event_fn)(int code);", verbosity="standard")
         assert output == textwrap.dedent("""\
             # test.h (headerkit standard)
 
             callbacks:
-              on_event_fn: (int) -> void
+              on_event_fn: (code: int) -> void
         """)
 
     def test_empty_header(self, backend):

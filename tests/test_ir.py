@@ -50,10 +50,24 @@ class TestPointer:
         assert str(p) == "int**"
 
     def test_pointer_with_qualifiers(self):
-        """Pointer with qualifiers ['const'] prepends qualifiers: 'const int*'."""
+        """Qualifiers on the pointer itself follow the '*': 'int* const'."""
         p = Pointer(CType("int"), ["const"])
-        assert str(p) == "const int*"
+        assert str(p) == "int* const"
         assert p.qualifiers == ["const"]
+
+    def test_const_pointer_to_const(self):
+        """A qualified pointee precedes the base type; a qualified pointer follows the '*'."""
+        p = Pointer(CType("char", ["const"]), ["const"])
+        assert str(p) == "const char* const"
+
+    def test_multi_level_qualified_pointer(self):
+        """Each level renders its own qualifiers after its own '*'."""
+        p = Pointer(Pointer(CType("char", ["const"]), ["const"]), ["const"])
+        assert str(p) == "const char* const* const"
+
+    def test_pointer_with_multiple_qualifiers(self):
+        p = Pointer(CType("int"), ["const", "volatile"])
+        assert str(p) == "int* const volatile"
 
     def test_pointer_qualifier_data_model(self):
         # const pointer to int (pointer itself is const)
@@ -466,4 +480,6 @@ class TestParserBackendProtocol:
             "recursive_includes",
             "max_depth",
             "project_prefixes",
+            "allowlist",
+            "denylist",
         ]

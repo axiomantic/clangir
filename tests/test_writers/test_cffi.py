@@ -232,11 +232,20 @@ class TestHeaderToCffi:
         assert result == "typedef struct nng_socket nng_socket;"
 
     def test_enum_typedef_pair_combined(self):
-        """Enum + matching typedef should be combined into typedef enum."""
+        """A TAG-LESS enum + matching typedef combine into `typedef enum { ... } name;`.
+
+        `is_typedef=True` marks the `typedef enum { ... } nng_pipe_ev;` source form,
+        which declares no `enum nng_pipe_ev` tag. Emitting one would name a type the
+        real header does not define.
+        """
         header = Header(
             "test.h",
             [
-                Enum("nng_pipe_ev", [EnumValue("NNG_PIPE_EV_ADD", 0), EnumValue("NNG_PIPE_EV_REM", 1)]),
+                Enum(
+                    "nng_pipe_ev",
+                    [EnumValue("NNG_PIPE_EV_ADD", 0), EnumValue("NNG_PIPE_EV_REM", 1)],
+                    is_typedef=True,
+                ),
                 Typedef("nng_pipe_ev", CType("enum nng_pipe_ev")),
             ],
         )
@@ -246,6 +255,28 @@ class TestHeaderToCffi:
                 NNG_PIPE_EV_ADD = 0,
                 NNG_PIPE_EV_REM = 1,
             } nng_pipe_ev;""")
+
+    def test_enum_typedef_pair_with_tag_kept_separate(self):
+        """A TAGGED enum + matching typedef stay separate, preserving the tag.
+
+        Sibling of :meth:`test_enum_typedef_pair_combined`: pins the `is_typedef`
+        discriminator from both sides, so collapsing every enum+typedef pair into the
+        tag-less form would fail here.
+        """
+        header = Header(
+            "test.h",
+            [
+                Enum("nng_pipe_ev", [EnumValue("NNG_PIPE_EV_ADD", 0), EnumValue("NNG_PIPE_EV_REM", 1)]),
+                Typedef("nng_pipe_ev", CType("enum nng_pipe_ev")),
+            ],
+        )
+        result = header_to_cffi(header)
+        assert result == textwrap.dedent("""\
+            enum nng_pipe_ev {
+                NNG_PIPE_EV_ADD = 0,
+                NNG_PIPE_EV_REM = 1,
+            };
+            typedef enum nng_pipe_ev nng_pipe_ev;""")
 
     def test_tag_kind_qualification(self):
         """Bare struct name in typedef should get 'struct' prefix."""

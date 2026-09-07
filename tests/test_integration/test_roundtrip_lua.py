@@ -403,10 +403,10 @@ class TestLuaTypedefRoundtrip:
     def test_function_pointer_typedef(self, backend):
         # ESCAPE: test_function_pointer_typedef
         # CLAIM: A function pointer typedef emits the correct typedef form in Callback typedefs
-        #        section. Note: libclang does not preserve parameter names in fp typedefs.
+        #        section, keeping the declarator's parameter names.
         # PATH:  libclang parses 'typedef void (*Callback)(int status);' ->
         #        Typedef(underlying=Pointer(FunctionPointer)) ->
-        #        _typedef_to_cdef -> "typedef void (*Callback)(int);" in callbacks section
+        #        _typedef_to_cdef -> "typedef void (*Callback)(int status);" in callbacks section
         # CHECK: Exact output equality verifies the typedef form, name, return type, and section.
         # MUTATION: Emitting in Structs section instead of Callback typedefs would fail.
         # ESCAPE: Nothing reasonable -- full equality covers section and declaration form.
@@ -421,7 +421,7 @@ class TestLuaTypedefRoundtrip:
             ffi.cdef[[
 
             /* Callback typedefs */
-            typedef void (*Callback)(int);
+            typedef void (*Callback)(int status);
 
             ]]
 

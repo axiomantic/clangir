@@ -248,7 +248,9 @@ def _enum_to_cffi(decl: Enum) -> str | None:
 
     lines = []
     if decl.is_typedef and not is_anon:
-        lines.append(f"typedef enum {decl.name} {{")
+        # Tag-less `typedef enum { ... } Name;` -- emitting `enum Name` here
+        # would invent a tag the real header does not declare.
+        lines.append("typedef enum {")
     elif not is_anon:
         lines.append(f"enum {decl.name} {{")
     else:
@@ -397,10 +399,15 @@ def _find_typedef_enum_pairs(declarations: list[Declaration]) -> set[str]:
     """Find enum names that also appear as typedefs.
 
     When the original C header uses ``typedef enum { ... } name;`` (anonymous
-    tag), libclang creates both ``Enum(name='name')`` and
-    ``Typedef(name='name', underlying=CType('enum name'))``.  We need to
-    combine these back into a single ``typedef enum { ... } name;`` to avoid
-    introducing a tag name that doesn't exist in the real header.
+    tag), libclang creates both ``Enum(name='name', is_typedef=True)`` and
+    ``Typedef(name='name', underlying=CType('enum name'))``.  We combine these
+    back into a single ``typedef enum { ... } name;`` to avoid introducing a tag
+    name that doesn't exist in the real header.
+
+    ``is_typedef`` is the discriminator: it is True exactly for the tag-less
+    form.  A TAGGED ``typedef enum Foo { ... } Foo;`` really does declare an
+    ``enum Foo`` tag, so its Enum and Typedef are emitted separately and the tag
+    is preserved.
 
     This only applies to enums. Structs/unions always have real tags in C
     (you can't forward-declare an anonymous struct), so struct+typedef pairs
@@ -409,11 +416,11 @@ def _find_typedef_enum_pairs(declarations: list[Declaration]) -> set[str]:
     Returns a set of enum names that should be emitted as combined
     ``typedef enum { ... } name;`` declarations.
     """
-    # Collect non-typedef enum names
+    # Collect tag-less (typedef-only) enum names
     enum_names: set[str] = set()
     for decl in declarations:
         if isinstance(decl, Enum) and decl.name and not _is_anonymous_name(decl.name):
-            if not decl.is_typedef:
+            if decl.is_typedef:
                 enum_names.add(decl.name)
 
     # Collect typedef names
@@ -592,7 +599,7 @@ class CffiWriter(BaseWriter):
 
     def write(self, header: Header) -> str:
         """Convert header IR to CFFI cdef string."""
-        return self._render(header)
+        return self._render(self._prepare(header))
 
     def _write_package_layout(
         self,
