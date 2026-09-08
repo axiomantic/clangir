@@ -766,15 +766,37 @@ _EXPR_BINARY_OPERATORS = frozenset({"+", "-", "*", "/", "%", "&", "|", "^", "<<"
 # keyword -- ``static``, ``extern``, ``inline``, ``__cdecl``, ``true`` -- marks a
 # declaration or a value this backend cannot type.
 _TYPE_SPECIFIER_KEYWORDS = frozenset(
-    {"void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool"}
+    {
+        "void",
+        "char",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "signed",
+        "unsigned",
+        "_Bool",
+        # C++ spells these as keywords where C leaves them identifiers or macros.
+        "bool",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+    }
 )
-_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile"})
+_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile", "restrict", "__restrict", "__restrict__"})
+# ``_Complex`` modifies a floating specifier rather than joining the multiset, so
+# it is stripped before the combination is looked up.
+_COMPLEX_KEYWORDS = frozenset({"_Complex", "_Imaginary", "__complex__"})
 _TAG_KEYWORDS = frozenset({"struct", "union", "enum"})
-_TYPE_NAME_KEYWORDS = _TYPE_SPECIFIER_KEYWORDS | _TYPE_QUALIFIER_KEYWORDS | _TAG_KEYWORDS
+_TYPE_NAME_KEYWORDS = _TYPE_SPECIFIER_KEYWORDS | _TYPE_QUALIFIER_KEYWORDS | _COMPLEX_KEYWORDS | _TAG_KEYWORDS
 # ``sizeof``/``alignof`` yield an integer constant, so they are operators here
 # rather than declaration specifiers.
 _SIZEOF_KEYWORDS = frozenset({"sizeof", "alignof", "_Alignof", "__alignof__"})
 _EXPRESSION_KEYWORDS = _TYPE_NAME_KEYWORDS | _SIZEOF_KEYWORDS
+# The floating specifiers ``_Complex`` may modify.
+_COMPLEX_BASE_MULTISETS = frozenset({("float",), ("double",), ("double", "long")})
 
 # The complete set of type-specifier combinations C admits, as sorted multisets.
 # ``int char`` and ``int void`` are each built from admissible keywords but name
@@ -785,6 +807,12 @@ _VALID_TYPE_SPECIFIER_MULTISETS = frozenset(
     for combination in (
         ("void",),
         ("_Bool",),
+        # C++ only; each stands alone and admits no signedness or width modifier.
+        ("bool",),
+        ("wchar_t",),
+        ("char8_t",),
+        ("char16_t",),
+        ("char32_t",),
         ("float",),
         ("double",),
         ("long", "double"),
@@ -855,35 +883,67 @@ def _matching_paren(spellings: list[str], open_index: int) -> int | None:
     return None
 
 
-def _is_type_name(spellings: list[str]) -> bool:
+def _is_type_name(spellings: list[str], *, as_cast: bool) -> bool:
     """Report whether the spellings form a type name -- a cast or ``sizeof`` operand.
 
-    Only spellings that are unambiguously a type are admitted.  A parenthesised
-    lone identifier is deliberately *not* one: ``(A)`` is grouping far more often
-    than it is a cast to a typedef, and reading it as a cast would change the
-    meaning of every ``#define B (A)``.  A tag keyword removes the ambiguity, so
-    ``struct S`` is admitted while ``S`` alone is not.
+    A lone identifier counts.  ``size_t``, ``uint32_t`` and every project typedef
+    reach this function as one identifier, and they are commoner in real headers
+    than the spellings built from keywords, so refusing them would drop
+    ``((size_t)1)`` and ``((uint32_t)0x1F)``.  Reading a parenthesised identifier
+    as a cast is safe in the position this is asked from, and safe for two
+    independent reasons:
 
-    The specifiers must also *combine* into a type: ``int char`` and ``int void``
-    are each built from admissible keywords and name nothing.  Two more shapes are
-    excluded because they are not values: qualifiers alone (``( const ) A`` is
-    implicit int, which C99 removed) and ``void`` with no pointer declarator
-    (``( void ) A`` discards its operand rather than yielding one).  All three were
-    found by differential fuzzing against the C compiler.
+    * the caller only treats a parenthesised run as a cast when a token follows
+      it, so ``#define B (A)`` -- nothing after the ``)`` -- is grouping and
+      keeps its value;
+    * where a token does follow, grouping is not a possible reading. ``(A) B``
+      would be two adjacent operands, which C has no rule for, so a cast is the
+      only interpretation that parses.
+
+    The specifiers must *combine* into a type: ``int char`` and ``int void`` are
+    each built from admissible keywords and name nothing.  Two further shapes are
+    excluded: qualifiers alone (``( const ) A`` is implicit int, which C99
+    removed) and, for a cast only, ``void`` with no pointer declarator, because
+    ``( void ) A`` discards its operand rather than yielding one.  ``sizeof(void)``
+    is a different question and is admitted -- it is a GNU extension the compiler
+    accepts, and it yields 1.  All of these were found by differential fuzzing
+    against the C compiler.
     """
     if not spellings:
         return False
-    if spellings[0] in _TAG_KEYWORDS:
-        rest = spellings[1:]
-        if not rest or rest[0] in _EXPRESSION_KEYWORDS or not rest[0].isidentifier():
+    core = list(spellings)
+    pointer = False
+    while core and core[-1] == "*":
+        core.pop()
+        pointer = True
+    tag = next((i for i, s in enumerate(core) if s in _TAG_KEYWORDS), None)
+    if tag is not None:
+        # The tag keyword and its name are adjacent; a qualifier may precede or
+        # follow the pair but never sit between them (``struct const S`` is not C).
+        name = core[tag + 1] if tag + 1 < len(core) else None
+        if name is None or name in _EXPRESSION_KEYWORDS or not name.isidentifier():
             return False
-        return all(s == "*" for s in rest[1:])
-    if not all(s in _TYPE_SPECIFIER_KEYWORDS or s in _TYPE_QUALIFIER_KEYWORDS or s == "*" for s in spellings):
+        if any(s not in _TYPE_QUALIFIER_KEYWORDS for i, s in enumerate(core) if i not in (tag, tag + 1)):
+            return False
+        # C has no cast to a struct, union or enum type, only to a pointer to one.
+        # ``sizeof ( struct S )`` is unaffected, which is why the caller says which
+        # it is asking about.
+        return pointer or not as_cast
+    core = [s for s in core if s not in _TYPE_QUALIFIER_KEYWORDS]
+    if not core:
         return False
-    specifiers = tuple(sorted(s for s in spellings if s in _TYPE_SPECIFIER_KEYWORDS))
+    if len(core) == 1 and core[0] not in _EXPRESSION_KEYWORDS and core[0].isidentifier():
+        return True
+    is_complex = any(s in _COMPLEX_KEYWORDS for s in core)
+    rest = [s for s in core if s not in _COMPLEX_KEYWORDS]
+    if not all(s in _TYPE_SPECIFIER_KEYWORDS for s in rest):
+        return False
+    specifiers = tuple(sorted(rest))
+    if is_complex:
+        return specifiers in _COMPLEX_BASE_MULTISETS
     if specifiers not in _VALID_TYPE_SPECIFIER_MULTISETS:
         return False
-    return specifiers != ("void",) or "*" in spellings
+    return specifiers != ("void",) or pointer or not as_cast
 
 
 def _is_constant_expression_shape(spellings: list[str]) -> bool:
@@ -920,7 +980,7 @@ def _is_constant_expression_shape(spellings: list[str]) -> bool:
         if expect_operand:
             if spelling in _SIZEOF_KEYWORDS:
                 close = _matching_paren(spellings, index + 1) if spellings[index + 1 : index + 2] == ["("] else None
-                if close is not None and _is_type_name(spellings[index + 2 : close]):
+                if close is not None and _is_type_name(spellings[index + 2 : close], as_cast=False):
                     # ``sizeof ( int )`` is a complete operand.
                     expect_operand = False
                     index = close + 1
@@ -930,7 +990,11 @@ def _is_constant_expression_shape(spellings: list[str]) -> bool:
                 continue
             if spelling == "(":
                 close = _matching_paren(spellings, index)
-                if close is not None and close + 1 < count and _is_type_name(spellings[index + 1 : close]):
+                if (
+                    close is not None
+                    and close + 1 < count
+                    and _is_type_name(spellings[index + 1 : close], as_cast=True)
+                ):
                     # A cast: it yields no operand, so one is still expected.
                     index = close + 1
                     continue
