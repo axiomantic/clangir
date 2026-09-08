@@ -798,27 +798,135 @@ def _detect_cplus(filename: str, extra_args: Sequence[str] | None) -> bool:
 
 # Operator spellings admissible in a C constant expression.  ``(`` and ``)`` are
 # handled structurally by :func:`_is_constant_expression_shape` rather than being
-# listed here, because their meaning depends on position: grouping in operand
-# position, a function call in operator position.
+# listed here, because their meaning depends on position: grouping or a cast in
+# operand position, a function call in operator position.
 _EXPR_UNARY_OPERATORS = frozenset({"+", "-", "~", "!"})
 _EXPR_BINARY_OPERATORS = frozenset({"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", ">", "?", ":"})
 
+# Keywords that may legitimately appear inside a constant expression.  A cast
+# operand and a ``sizeof`` operand are type names, so the type specifiers and the
+# three tag keywords belong to the expression grammar even though every other
+# keyword -- ``static``, ``extern``, ``inline``, ``__cdecl``, ``true`` -- marks a
+# declaration or a value this backend cannot type.
+_TYPE_SPECIFIER_KEYWORDS = frozenset(
+    {"void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool"}
+)
+_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile"})
+_TAG_KEYWORDS = frozenset({"struct", "union", "enum"})
+_TYPE_NAME_KEYWORDS = _TYPE_SPECIFIER_KEYWORDS | _TYPE_QUALIFIER_KEYWORDS | _TAG_KEYWORDS
+# ``sizeof``/``alignof`` yield an integer constant, so they are operators here
+# rather than declaration specifiers.
+_SIZEOF_KEYWORDS = frozenset({"sizeof", "alignof", "_Alignof", "__alignof__"})
+_EXPRESSION_KEYWORDS = _TYPE_NAME_KEYWORDS | _SIZEOF_KEYWORDS
 
-def _has_keyword_token(tokens: list[Any]) -> bool:
-    """Report whether any token is a C/C++ keyword.
+# The complete set of type-specifier combinations C admits, as sorted multisets.
+# ``int char`` and ``int void`` are each built from admissible keywords but name
+# no type, and differential fuzzing against the C compiler reached them; the
+# grammar is closed and fixed, so enumerating it is exact rather than a heuristic.
+_VALID_TYPE_SPECIFIER_MULTISETS = frozenset(
+    tuple(sorted(combination))
+    for combination in (
+        ("void",),
+        ("_Bool",),
+        ("float",),
+        ("double",),
+        ("long", "double"),
+        ("char",),
+        ("signed", "char"),
+        ("unsigned", "char"),
+        ("short",),
+        ("signed", "short"),
+        ("unsigned", "short"),
+        ("short", "int"),
+        ("signed", "short", "int"),
+        ("unsigned", "short", "int"),
+        ("int",),
+        ("signed",),
+        ("unsigned",),
+        ("signed", "int"),
+        ("unsigned", "int"),
+        ("long",),
+        ("signed", "long"),
+        ("unsigned", "long"),
+        ("long", "int"),
+        ("signed", "long", "int"),
+        ("unsigned", "long", "int"),
+        ("long", "long"),
+        ("signed", "long", "long"),
+        ("unsigned", "long", "long"),
+        ("long", "long", "int"),
+        ("signed", "long", "long", "int"),
+        ("unsigned", "long", "long", "int"),
+    )
+)
 
-    A constant expression is built from literals, identifiers and operators; it
-    contains no keywords.  Declaration specifiers -- ``static``, ``extern``,
-    ``inline``, ``const``, ``unsigned``, ``struct``, and the calling-convention
-    keywords ``__cdecl`` / ``__stdcall`` / ``__fastcall`` -- are keywords, so
-    clang's own token classification separates them from constants without a
-    denylist of spellings that would forever trail the next compiler extension.
+
+def _has_non_expression_keyword(tokens: list[Any]) -> bool:
+    """Report whether any token is a keyword that cannot occur in a constant expression.
+
+    Declaration specifiers -- ``static``, ``extern``, ``inline``, ``struct`` used
+    as a declaration head, and the calling-convention keywords ``__cdecl`` /
+    ``__stdcall`` / ``__fastcall`` -- are keywords, so clang's own token
+    classification separates them from constants without a denylist of spellings
+    that would forever trail the next compiler extension.
+
+    The gate is narrowed to keywords outside :data:`_EXPRESSION_KEYWORDS` because
+    a cast and a ``sizeof`` are ordinary constant expressions: ``((int)0x1F)``,
+    ``((unsigned long)-1)`` and ``sizeof(int)`` are values, and rejecting every
+    keyword outright deleted them.  A type keyword that is *not* part of a cast or
+    a ``sizeof`` -- ``const char *``, ``unsigned int`` -- is rejected structurally
+    by :func:`_is_constant_expression_shape` instead, which is where the
+    distinction actually lives.
     """
     for token in tokens:
         kind = getattr(getattr(token, "kind", None), "name", None)
-        if kind == "KEYWORD":
+        if kind == "KEYWORD" and getattr(token, "spelling", None) not in _EXPRESSION_KEYWORDS:
             return True
     return False
+
+
+def _matching_paren(spellings: list[str], open_index: int) -> int | None:
+    """Return the index of the ``)`` closing the ``(`` at ``open_index``, or None."""
+    depth = 0
+    for index in range(open_index, len(spellings)):
+        if spellings[index] == "(":
+            depth += 1
+        elif spellings[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _is_type_name(spellings: list[str]) -> bool:
+    """Report whether the spellings form a type name -- a cast or ``sizeof`` operand.
+
+    Only spellings that are unambiguously a type are admitted.  A parenthesised
+    lone identifier is deliberately *not* one: ``(A)`` is grouping far more often
+    than it is a cast to a typedef, and reading it as a cast would change the
+    meaning of every ``#define B (A)``.  A tag keyword removes the ambiguity, so
+    ``struct S`` is admitted while ``S`` alone is not.
+
+    The specifiers must also *combine* into a type: ``int char`` and ``int void``
+    are each built from admissible keywords and name nothing.  Two more shapes are
+    excluded because they are not values: qualifiers alone (``( const ) A`` is
+    implicit int, which C99 removed) and ``void`` with no pointer declarator
+    (``( void ) A`` discards its operand rather than yielding one).  All three were
+    found by differential fuzzing against the C compiler.
+    """
+    if not spellings:
+        return False
+    if spellings[0] in _TAG_KEYWORDS:
+        rest = spellings[1:]
+        if not rest or rest[0] in _EXPRESSION_KEYWORDS or not rest[0].isidentifier():
+            return False
+        return all(s == "*" for s in rest[1:])
+    if not all(s in _TYPE_SPECIFIER_KEYWORDS or s in _TYPE_QUALIFIER_KEYWORDS or s == "*" for s in spellings):
+        return False
+    specifiers = tuple(sorted(s for s in spellings if s in _TYPE_SPECIFIER_KEYWORDS))
+    if specifiers not in _VALID_TYPE_SPECIFIER_MULTISETS:
+        return False
+    return specifiers != ("void",) or "*" in spellings
 
 
 def _is_constant_expression_shape(spellings: list[str]) -> bool:
@@ -835,35 +943,67 @@ def _is_constant_expression_shape(spellings: list[str]) -> bool:
       reference declarator, not a value;
     * call syntax (``__declspec ( dllimport )``) -- a ``(`` in operator position.
       A constant expression contains no function calls.
+    * a type name outside a cast or a ``sizeof`` (``const char *``,
+      ``unsigned int``, ``struct PyObject``) -- declaration specifiers.
+
+    A parenthesised type name in *operand* position with something after it is a
+    cast, which consumes no operand and so leaves the walker still expecting one.
+    ``sizeof`` and ``alignof`` take either a parenthesised type name, which is a
+    complete operand, or an ordinary expression operand.
 
     Caller has already established that every non-operator token is a numeric
     literal or an identifier, so operands need no further validation here.
     """
     expect_operand = True
     depth = 0
-    for spelling in spellings:
+    index = 0
+    count = len(spellings)
+    while index < count:
+        spelling = spellings[index]
         if expect_operand:
-            if spelling == "(":
-                depth += 1
+            if spelling in _SIZEOF_KEYWORDS:
+                close = _matching_paren(spellings, index + 1) if spellings[index + 1 : index + 2] == ["("] else None
+                if close is not None and _is_type_name(spellings[index + 2 : close]):
+                    # ``sizeof ( int )`` is a complete operand.
+                    expect_operand = False
+                    index = close + 1
+                    continue
+                # ``sizeof X`` / ``sizeof ( X + 1 )``: a unary operator.
+                index += 1
                 continue
+            if spelling == "(":
+                close = _matching_paren(spellings, index)
+                if close is not None and close + 1 < count and _is_type_name(spellings[index + 1 : close]):
+                    # A cast: it yields no operand, so one is still expected.
+                    index = close + 1
+                    continue
+                depth += 1
+                index += 1
+                continue
+            if spelling in _TYPE_NAME_KEYWORDS:
+                return False
             if spelling in _EXPR_UNARY_OPERATORS:
+                index += 1
                 continue
             if spelling == ")" or spelling in _EXPR_BINARY_OPERATORS:
                 return False
             expect_operand = False
+            index += 1
             continue
         if spelling == ")":
             depth -= 1
             if depth < 0:
                 return False
+            index += 1
             continue
         if spelling == "(":
             # Call syntax: an operand immediately followed by an argument list.
             return False
         if spelling in _EXPR_BINARY_OPERATORS:
             expect_operand = True
+            index += 1
             continue
-        # Two adjacent operands.
+        # Two adjacent operands, or a type name where an operator belongs.
         return False
     return depth == 0 and not expect_operand
 
@@ -1593,8 +1733,8 @@ class ClangASTConverter:
                     has_float = True
                     break
 
-        # A keyword in the replacement list means declaration specifiers, not a value.
-        if _has_keyword_token(tokens):
+        # A keyword that cannot occur in an expression means declaration specifiers.
+        if _has_non_expression_keyword(tokens):
             return None, None, None, None
 
         # Valid expression tokens for integer/float expressions

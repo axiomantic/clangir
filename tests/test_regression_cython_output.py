@@ -3232,3 +3232,163 @@ class TestCppModeFollowsTheFileExtension:
         """Only the file's own suffix decides; a ``.hpp`` parent directory does not."""
         assert _detect_cplus("/tmp/proj.hpp/m.h", None) is False
         assert _detect_cplus("/tmp/proj.h/m.hpp", None) is True
+
+
+# ---------------------------------------------------------------------------
+# Macro classification -- compile, import and execute
+# ---------------------------------------------------------------------------
+
+requires_toolchain_and_run = pytest.mark.skipif(
+    not _HAS_CYTHON or _CC is None,
+    reason=f"needs Cython (present={_HAS_CYTHON}) and a C compiler (found={_CC})",
+)
+
+
+def build_and_run_c(tmp_path: Path, header: str, pxd: str, pyx: str) -> Any:
+    """Cythonize, compile, link, import and call a C extension.
+
+    The C counterpart of :func:`build_and_run_cpp`.  Compiling alone would not
+    settle a macro's classification: Cython emits no C for a constant nothing
+    reads, so the ``.pyx`` must return the values and this helper returns what
+    ``run()`` actually produced.
+    """
+    (tmp_path / "test.h").write_text(header)
+    (tmp_path / "m.pxd").write_text(pxd)
+    (tmp_path / "use.pyx").write_text(pyx)
+
+    cython = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "cython", "-3", "use.pyx", "-o", "use.c"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if cython.returncode != 0:
+        raise ToolchainError(f"cython failed:\n{cython.stdout}\n{cython.stderr}")
+
+    assert _CC is not None
+    build = subprocess.run(  # noqa: S603
+        link_extension_command(_CC, ["use.c"], "use", includes=[PYTHON_INCLUDE_DIR, tmp_path]),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if build.returncode != 0:
+        raise ToolchainError(f"C build failed:\n{build.stdout}\n{build.stderr}")
+
+    probe = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", "import use; print(repr(use.run()))"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        detail = describe_load_dependencies(tmp_path / extension_filename("use"))
+        raise ToolchainError(f"import/execute failed:\n{probe.stdout}\n{probe.stderr}{detail}")
+    return probe.stdout.strip()
+
+
+# The macros carry an ``HK_`` prefix because the generated extension includes
+# ``Python.h``, which defines ``PyMODINIT_FUNC``, ``SIZEOF_INT`` and ``PyObject``
+# itself; a collision would make the C step fail for a reason that has nothing to
+# do with the classification under test.
+_MACRO_HEADER = textwrap.dedent("""\
+    typedef struct HKObject HKObject;
+    #define HK_MODINIT __declspec(dllexport) HKObject *  /* PyMODINIT_FUNC, renamed */
+    #define HK_REAL_CONST 42
+    #define HK_CAST_CONST ((int)0x1F)
+    #define HK_SIZEOF_INT sizeof(int)
+    #define HK_MASKED ((unsigned)1)
+    static int answer(void) { return 41; }
+""")
+
+_MACRO_PYX = textwrap.dedent("""\
+    from m cimport HK_CAST_CONST, HK_MASKED, HK_REAL_CONST, HK_SIZEOF_INT, answer
+
+    def run():
+        return (HK_CAST_CONST, HK_SIZEOF_INT, HK_MASKED, HK_REAL_CONST, answer())
+""")
+
+
+class TestMacroClassificationCompiles:
+    """The macro classification is settled by the C compiler, not by the IR.
+
+    A declaration-specifier macro emitted as an ``int`` constant makes Cython
+    generate ``__Pyx_PyLong_From_int(HK_MODINIT)``, which expands to
+    ``__declspec(dllexport) HKObject *`` in expression position and the C
+    compiler rejects.  A cast or ``sizeof`` macro emitted the same way compiles
+    and yields the right value, so the two cannot be told apart by "contains a
+    keyword" -- only by whether the tokens form an expression.
+    """
+
+    @requires_toolchain_and_run
+    def test_cast_and_sizeof_macros_reach_python_with_correct_values(self, tmp_path: Path) -> None:
+        """``((int)0x1F)``, ``sizeof(int)`` and ``((unsigned)1)`` survive and are right.
+
+        Executing is the point: the values come from the compiled C, so a macro
+        that had been dropped from the ``.pxd`` would fail to cimport, and one
+        emitted with a wrong spelling would fail to compile.
+        """
+        pxd = render(get_backend("libclang"), _MACRO_HEADER)
+        assert "HK_MODINIT" not in pxd
+        assert build_and_run_c(tmp_path, _MACRO_HEADER, pxd, _MACRO_PYX) == "(31, 4, 1, 42, 41)"
+
+    @requires_toolchain_and_run
+    def test_declaration_specifier_macro_would_fail_to_compile(self, tmp_path: Path) -> None:
+        """The planted failure: declaring the macro breaks the build.
+
+        Without this the passing test above would prove only that the toolchain
+        runs.  The ``.pxd`` is hand-written precisely because the backend no
+        longer produces this line -- that is what makes it a control.
+        """
+        pxd = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                int HK_MODINIT
+        """)
+        pyx = textwrap.dedent("""\
+            from m cimport HK_MODINIT
+
+            def run():
+                return HK_MODINIT
+        """)
+        with pytest.raises(ToolchainError) as exc:
+            build_and_run_c(tmp_path, _MACRO_HEADER, pxd, pyx)
+        # The diagnostic is named so the control cannot pass for an unrelated
+        # reason -- a header collision, a missing symbol, a broken toolchain.
+        assert "use of undeclared identifier 'dllexport'" in str(exc.value)
+
+    @requires_toolchain_and_run
+    def test_generated_c_reads_the_macro_as_an_int_not_a_sizeof(self, tmp_path: Path) -> None:
+        """Names the mechanism exactly, so the docstrings above cannot drift.
+
+        Cython lowers a ``cdef extern`` int constant through
+        ``__Pyx_PyLong_From_int``; it emits no ``sizeof`` of the macro at all.
+        """
+        pxd = textwrap.dedent("""\
+            cdef extern from "test.h":
+
+                int HK_MODINIT
+        """)
+        pyx = textwrap.dedent("""\
+            from m cimport HK_MODINIT
+
+            def run():
+                return HK_MODINIT
+        """)
+        (tmp_path / "test.h").write_text(_MACRO_HEADER)
+        (tmp_path / "m.pxd").write_text(pxd)
+        (tmp_path / "use.pyx").write_text(pyx)
+        cython = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "cython", "-3", "use.pyx", "-o", "use.c"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cython.returncode == 0, cython.stderr
+        generated = (tmp_path / "use.c").read_text()
+        assert "__Pyx_PyLong_From_int(HK_MODINIT)" in generated
+        assert "sizeof(HK_MODINIT)" not in generated
