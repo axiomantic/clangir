@@ -159,6 +159,24 @@ class _TypeTable:
 _EMPTY_TYPES = _TypeTable()
 
 
+def _module_docstring(path: object) -> str:
+    """The generated module's docstring, with ``path`` safe to embed in it.
+
+    A header path goes into the source verbatim, and on Windows it is full of
+    backslashes: ``C:\\Users\\runner\\...`` puts ``\\U`` in a string literal,
+    which Python reads as the start of a 32-bit unicode escape and rejects
+    before anything in the module runs. The failure is a ``SyntaxError`` on
+    line 1 pointing at the docstring, so nothing about it names the real cause,
+    and it fires for any path containing ``\\U``, ``\\x``, ``\\N`` or a stray
+    quote -- which is to say, on Windows, most absolute paths.
+
+    Escaping the backslashes and any embedded triple quote keeps the docstring
+    readable while making it a valid literal whatever the path contains.
+    """
+    text = str(path).replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    return f'"""ctypes bindings generated from {text}."""'
+
+
 def _library_loader(library: str, lib_name: str) -> str:
     """Return the source that binds ``lib_name`` to the native library.
 
@@ -1287,7 +1305,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     output_lines: list[str] = []
 
     # Module docstring
-    output_lines.append(f'"""ctypes bindings generated from {header.path}."""')
+    output_lines.append(_module_docstring(header.path))
     output_lines.append("")
 
     # Imports

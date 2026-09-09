@@ -1189,6 +1189,33 @@ class TestScaffoldedCtypesPackageRuns:
                 f"the tree-sitter failure is not the expected unbound name:\n{result.stderr}"
             )
 
+    def test_a_windows_style_header_path_does_not_break_the_module(self, tmp_path: Path, backend_name: str) -> None:
+        """The header's path is embedded in the module docstring, so it must be escaped.
+
+        A Windows path is full of backslashes, and ``C:\\Users\\...`` puts
+        ``\\U`` inside a string literal, which Python reads as the start of a
+        32-bit unicode escape and rejects. The whole module dies with a
+        ``SyntaxError`` on line 1 pointing at its own docstring, which names
+        nothing about the real cause. ``\\x`` and ``\\N`` do the same.
+
+        The path is only ever a string here, so this reproduces on every host
+        rather than only on the one where such paths occur naturally. It is
+        checked through the generated package, not by inspecting the docstring:
+        the property is that the module imports.
+        """
+        library = _build_c_library(tmp_path, "probe")
+        hostile = "C:\\Users\\nope\\x41\\N{}\\probe.h"
+        root = _scaffold_to("ctypes", tmp_path, "probe", backend_name=backend_name, filename=hostile)
+        result = _run_python(
+            "import probe; assert probe.thing_add(2, 3) == 5; print('PATH-OK')",
+            cwd=tmp_path,
+            env={"PYTHONPATH": str(root / "src"), "PROBE_LIBRARY": str(library)},
+        )
+        assert result.returncode == 0, (
+            f"a header path with backslash escapes broke the generated module:\n{result.stderr}"
+        )
+        assert "PATH-OK" in result.stdout
+
     def test_a_record_reached_through_an_include_fails_loudly(self, tmp_path: Path, backend_name: str) -> None:
         """An included record resolves by name and still cannot import -- loudly.
 
