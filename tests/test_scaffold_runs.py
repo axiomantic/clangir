@@ -73,7 +73,7 @@ from pathlib import Path
 import pytest
 
 from headerkit.backends import get_backend, is_backend_available
-from headerkit.ir import SourceUnit
+from headerkit.ir import Enum, SourceUnit
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from tests.native_build import IS_WINDOWS, shared_library_command, shared_library_filename
 
@@ -706,6 +706,32 @@ def _scaffold_to(
     return root
 
 
+def _widest_enumerator(backend_name: str, header: str, filename: str) -> int:
+    """The largest absolute enumerator value this backend reports for ``header``.
+
+    The refusal gates rest on a premise that is not true everywhere: that the
+    parser and the C compiler agree an enum is too wide for an ``int``. On a host
+    where libclang targets a different ABI than the ``cc`` compiling the fixture
+    -- Windows, where the runner's ``cc`` is MinGW -- libclang reports an
+    enumerator already truncated into ``int`` range while the compiler widens the
+    enum to 8 bytes. The writer sees only the IR, so it cannot know about a
+    widening its own parser never reported, and the gate would be demanding
+    something no writer code could deliver. Reading the value back is what lets
+    that host be named and passed over instead of failing for the wrong reason.
+    """
+    unit = _parse(backend_name, header, filename)
+    headers = unit.headers if hasattr(unit, "headers") else [unit]
+    values = [
+        v.value
+        for h in headers
+        for d in h.declarations
+        if isinstance(d, Enum)
+        for v in d.values
+        if isinstance(v.value, int)
+    ]
+    return max((abs(v) for v in values), default=0)
+
+
 def _run_python(script: str, *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run ``script`` in a fresh interpreter so an import failure is observable."""
     return subprocess.run(  # noqa: S603
@@ -1001,6 +1027,8 @@ class TestScaffoldedCtypesPackageRuns:
             ("bigenum", _build_c_library, BIG_HEADER, BIG_SOURCE, "bigenum", "bigenum.h", "big_size"),
             ("bigtenum", _build_c_library, BIGT_HEADER, BIGT_SOURCE, "bigtenum", "bigtenum.h", "bigt_size"),
         )
+        exercised: list[str] = []
+        skipped: list[str] = []
         for pkg, build, header, source, basename, filename, size_fn in cases:
             work = tmp_path / pkg
             work.mkdir()
@@ -1026,6 +1054,16 @@ class TestScaffoldedCtypesPackageRuns:
                 f"which is what resolving to c_int would also give"
             )
 
+            # A value-based case is only meaningful where the parser agrees with
+            # the compiler that the enum is over-wide; see ``_widest_enumerator``.
+            if pkg != "scoped" and _widest_enumerator(backend_name, header, filename) <= 2**31 - 1:
+                skipped.append(
+                    f"{pkg}: {backend_name} reports every enumerator inside int range while this host's "
+                    f"C compiler lays out {real} bytes"
+                )
+                continue
+            exercised.append(pkg)
+
             root = _scaffold_to("ctypes", work, pkg, backend_name=backend_name, header=header, filename=filename)
             result = _run_python(
                 f"import {pkg}",
@@ -1039,6 +1077,11 @@ class TestScaffoldedCtypesPackageRuns:
             assert "SyntaxError" in result.stderr or "NameError" in result.stderr, (
                 f"{pkg}: the import failed for some reason other than the refused enum:\n{result.stderr}"
             )
+
+        # A gate that passed over every case would report green having asserted
+        # nothing. The scoped case is structural rather than value-based, so it
+        # is never passed over and this cannot be vacuous on any host.
+        assert "scoped" in exercised, f"no refusal case ran; passed over: {skipped}"
 
     def test_an_implicit_enumerator_past_int_range_is_refused(self, tmp_path: Path, backend_name: str) -> None:
         """An enumerator with no initialiser still has a value, and it can overflow.
@@ -1071,6 +1114,12 @@ class TestScaffoldedCtypesPackageRuns:
             f"fixture no longer discriminates: the C compiler gave ROLL_NEXT {value}, "
             f"which a signed 32-bit member could hold after all"
         )
+
+        if _widest_enumerator(backend_name, IMPLICIT_HEADER, "implenum.h") <= 2**31 - 1:
+            pytest.skip(
+                f"this host's {backend_name} reports ROLL_NEXT inside int range while its C compiler gives "
+                f"it {value} -- parser and compiler disagree, so the writer cannot see the overflow"
+            )
 
         root = _scaffold_to(
             "ctypes",
