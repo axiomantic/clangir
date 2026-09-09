@@ -14,6 +14,7 @@ sizes are the same on every platform the project supports.
 """
 
 import ctypes
+import platform
 import re
 import sys
 
@@ -29,6 +30,17 @@ from headerkit.writers import get_writer
 #: covers the shapes it can, but a record mixing a narrow bit-field, an
 #: anonymous padding bit-field and a wider bit-field is not one of them.
 _BITFIELD_UNIT_RULE_MATCHES_C = sys.version_info >= (3, 14)
+
+#: Whether the *host's C ABI* gives an unnamed bit-field's declared type
+#: alignment to the record containing it. The figures in the layout corpus
+#: below were measured under the Itanium C++ ABI, where it does not; on a
+#: target where it does, C itself lays those records out differently and the
+#: corpus is measuring a different language. Mirrors the reasoning recorded in
+#: ``headerkit.writers.ctypes.ABI_ALIGNMENT_NOTE``, which the generated modules
+#: resolve at import for the same reason.
+_UNNAMED_BITFIELDS_ALIGN_HERE = sys.platform.startswith("win") or (
+    not sys.platform.startswith(("darwin", "ios")) and platform.machine().lower().startswith(("aarch64", "arm"))
+)
 
 BACKENDS = ["libclang", "tree-sitter"]
 
@@ -584,13 +596,20 @@ _LAYOUT_CASES = [
         4,
         {"a": (0, 7, 8), "b": (8, 12, 5), "c": (16, 24, 9), "d": (32, 63, 32), "e": (64, 71, 8)},
         marks=pytest.mark.xfail(
-            not _BITFIELD_UNIT_RULE_MATCHES_C,
+            not _BITFIELD_UNIT_RULE_MATCHES_C or _UNNAMED_BITFIELDS_ALIGN_HERE,
             reason=(
                 "Pre-existing and unrelated to packing: this record is not packed. "
                 "On CPython 3.10 the generated class measures 16 bytes where C measures "
                 "12, because ctypes gives the unsigned short bit-field a fresh storage "
                 "unit. Verified against the writer as it stood before packed-record "
-                "support was added, which produces the same 16 on 3.10."
+                "support was added, which produces the same 16 on 3.10. "
+                "The row is also inapplicable wherever an unnamed bit-field contributes "
+                "its type's alignment -- Windows and AAPCS64 -- because there C lays "
+                "this record out differently from the 12 bytes measured for it under "
+                "the Itanium C++ ABI, so the expectation is not the host's C at all. "
+                "Every other row of this corpus is fixed across those ABIs; this is "
+                "the only one carrying an unnamed bit-field in an unpacked record, "
+                "which is exactly the case they disagree on."
             ),
             strict=True,
         ),
