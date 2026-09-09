@@ -706,30 +706,34 @@ def _scaffold_to(
     return root
 
 
-def _widest_enumerator(backend_name: str, header: str, filename: str) -> int:
-    """The largest absolute enumerator value this backend reports for ``header``.
+def _parser_reports_over_wide_enumerator(backend_name: str, header: str, filename: str) -> bool:
+    """Does this backend report an enumerator outside signed 32-bit range?
 
     The refusal gates rest on a premise that is not true everywhere: that the
     parser and the C compiler agree an enum is too wide for an ``int``. On a host
     where libclang targets a different ABI than the ``cc`` compiling the fixture
     -- Windows, where the runner's ``cc`` is MinGW -- libclang reports an
-    enumerator already truncated into ``int`` range while the compiler widens the
-    enum to 8 bytes. The writer sees only the IR, so it cannot know about a
-    widening its own parser never reported, and the gate would be demanding
-    something no writer code could deliver. Reading the value back is what lets
-    that host be named and passed over instead of failing for the wrong reason.
+    enumerator already wrapped into ``int`` range (``0x80000000`` arrives as
+    -2147483648) while the compiler widens the enum or makes it unsigned. The
+    writer sees only the IR, so it cannot know about a widening its own parser
+    never reported, and the gate would be demanding something no writer code
+    could deliver. Asking the parser directly is what lets that host be named and
+    passed over instead of failing for the wrong reason.
+
+    The range test is the same one :func:`headerkit.writers.ctypes._enum_fits_int`
+    applies, and deliberately so: a *signed* comparison, not an absolute value.
+    -2147483648 is inside the range and 2147483648 is outside it, and conflating
+    the two is exactly how this check first failed to fire on Windows.
     """
     unit = _parse(backend_name, header, filename)
     headers = unit.headers if hasattr(unit, "headers") else [unit]
-    values = [
-        v.value
+    return any(
+        isinstance(v.value, int) and not -(2**31) <= v.value <= 2**31 - 1
         for h in headers
         for d in h.declarations
         if isinstance(d, Enum)
         for v in d.values
-        if isinstance(v.value, int)
-    ]
-    return max((abs(v) for v in values), default=0)
+    )
 
 
 def _run_python(script: str, *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -1055,8 +1059,8 @@ class TestScaffoldedCtypesPackageRuns:
             )
 
             # A value-based case is only meaningful where the parser agrees with
-            # the compiler that the enum is over-wide; see ``_widest_enumerator``.
-            if pkg != "scoped" and _widest_enumerator(backend_name, header, filename) <= 2**31 - 1:
+            # the compiler that the enum is over-wide; see ``_parser_reports_over_wide_enumerator``.
+            if pkg != "scoped" and not _parser_reports_over_wide_enumerator(backend_name, header, filename):
                 skipped.append(
                     f"{pkg}: {backend_name} reports every enumerator inside int range while this host's "
                     f"C compiler lays out {real} bytes"
@@ -1115,7 +1119,7 @@ class TestScaffoldedCtypesPackageRuns:
             f"which a signed 32-bit member could hold after all"
         )
 
-        if _widest_enumerator(backend_name, IMPLICIT_HEADER, "implenum.h") <= 2**31 - 1:
+        if not _parser_reports_over_wide_enumerator(backend_name, IMPLICIT_HEADER, "implenum.h"):
             pytest.skip(
                 f"this host's {backend_name} reports ROLL_NEXT inside int range while its C compiler gives "
                 f"it {value} -- parser and compiler disagree, so the writer cannot see the overflow"
