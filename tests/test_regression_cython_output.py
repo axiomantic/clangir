@@ -3244,6 +3244,23 @@ requires_toolchain_and_run = pytest.mark.skipif(
 )
 
 
+def _cc_is_clang() -> bool:
+    """Whether ``_CC`` is clang, so a clang-specific diagnostic may be asserted.
+
+    ``cc`` is clang on macOS and real GCC on the Linux runners, and the two word
+    the same error differently. A test that pins one compiler's sentence fails --
+    it does not skip -- everywhere the wording differs, so the wording is only
+    asserted where it is known to apply.
+    """
+    if _CC is None:
+        return False
+    probe = subprocess.run([_CC, "--version"], capture_output=True, text=True, check=False)  # noqa: S603
+    return probe.returncode == 0 and "clang" in probe.stdout.lower()
+
+
+_CC_IS_CLANG = _cc_is_clang()
+
+
 def build_and_run_c(tmp_path: Path, header: str, pxd: str, pyx: str) -> Any:
     """Cythonize, compile, link, import and call a C extension.
 
@@ -3356,9 +3373,20 @@ class TestMacroClassificationCompiles:
         """)
         with pytest.raises(ToolchainError) as exc:
             build_and_run_c(tmp_path, _MACRO_HEADER, pxd, pyx)
-        # The diagnostic is named so the control cannot pass for an unrelated
-        # reason -- a header collision, a missing symbol, a broken toolchain.
-        assert "use of undeclared identifier 'dllexport'" in str(exc.value)
+        message = str(exc.value)
+        # The cause is named, so the control cannot pass for an unrelated reason --
+        # a header collision, a missing symbol, a broken toolchain. The *cause* is
+        # portable; the sentence is not. Measured on the same source: Apple clang 21
+        # says "use of undeclared identifier 'dllexport'"; the same clang under
+        # -fms-extensions says "expected expression" and never names the identifier
+        # in the error line; GCC 16.2 says "'dllexport' undeclared here (not in a
+        # function)". `cc` is clang on macOS and real GCC on the Linux runners, so a
+        # test pinning one of those sentences fails -- it does not skip -- on the
+        # other. All three do name `dllexport` somewhere in the expansion context.
+        assert "C build failed" in message
+        assert "dllexport" in message
+        if _CC_IS_CLANG:
+            assert "use of undeclared identifier 'dllexport'" in message
 
     @requires_toolchain_and_run
     def test_generated_c_reads_the_macro_as_an_int_not_a_sizeof(self, tmp_path: Path) -> None:

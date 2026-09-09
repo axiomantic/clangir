@@ -1325,6 +1325,63 @@ class TestCastAndSizeofMacrosAreConstants:
     def test_type_shaped_but_not_a_value_is_rejected(self, name: str, body: str):
         assert self._classify(name, body) == [], f"#define {name} {body} was wrongly accepted"
 
+    _TYPEDEF_PRELUDE = textwrap.dedent("""\
+        #include <stddef.h>
+        #include <stdint.h>
+        struct mystruct_t { int x; };
+        typedef struct mystruct_t mystruct_t;
+        typedef int myint_t;
+        """)
+
+    def _classify_with_typedefs(self, name: str, body: str, lang: str = "c"):
+        code = self._TYPEDEF_PRELUDE + f"#define {name} {body}\nvoid f(void);\n"
+        if lang == "cpp":
+            header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", "-std=c++17"])
+        else:
+            header = self.backend.parse(code, "test.h")
+        return [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+
+    @pytest.mark.parametrize(
+        ("name", "body", "raw", "lang"),
+        [
+            ("SIZE_T_ONE", "((size_t)1)", "( ( size_t ) 1 )", "c"),
+            ("U32_MASK", "((uint32_t)0x1F)", "( ( uint32_t ) 0x1F )", "c"),
+            ("TYPEDEFD", "((myint_t)1)", "( ( myint_t ) 1 )", "c"),
+            ("STRUCT_PTR", "((mystruct_t *)0)", "( ( mystruct_t * ) 0 )", "c"),
+            ("TAG_PTR", "((const struct mystruct_t *)0)", "( ( const struct mystruct_t * ) 0 )", "c"),
+            ("COMPLEX", "((float _Complex)1)", "( ( float _Complex ) 1 )", "c"),
+            ("SIZE_T_NEG", "((size_t)-1)", "( ( size_t ) - 1 )", "c"),
+            ("SIZEOF_VOID", "sizeof(void)", "sizeof ( void )", "c"),
+            ("SIZEOF_TYPEDEF", "sizeof(size_t)", "sizeof ( size_t )", "c"),
+            ("CPP_BOOL", "((bool)1)", "( ( bool ) 1 )", "cpp"),
+        ],
+    )
+    def test_cast_to_a_typedef_or_tag_is_a_constant(self, name: str, body: str, raw: str, lang: str):
+        """``size_t`` and ``uint32_t`` reach the walker as a lone identifier.
+
+        A typedef name is commoner in real headers than a cast spelled out of
+        keywords, so a rule that admitted only keyword spellings would drop most
+        real casts.
+        """
+        matches = self._classify_with_typedefs(name, body, lang)
+        assert len(matches) == 1, f"#define {name} {body} was dropped"
+        assert matches[0].raw_expression == raw
+
+    @pytest.mark.parametrize(
+        ("name", "body"),
+        [
+            # C has no cast to a struct type, only to a pointer to one.
+            ("CAST_TO_TAG", "((struct mystruct_t)0)"),
+            # A qualifier cannot sit between the tag keyword and its name.
+            ("QUALIFIER_INSIDE_TAG", "sizeof(struct const mystruct_t)"),
+            # Nothing but a qualifier may join a tag and its name.
+            ("TAG_PLUS_SPECIFIER", "sizeof(struct mystruct_t int)"),
+            ("SPECIFIER_BEFORE_TAG", "sizeof(int struct mystruct_t)"),
+        ],
+    )
+    def test_type_name_that_is_not_valid_c_is_rejected(self, name: str, body: str):
+        assert self._classify_with_typedefs(name, body) == [], f"#define {name} {body} was wrongly accepted"
+
     def test_parenthesised_identifier_is_grouping_not_a_cast(self):
         """``(A)`` must keep meaning ``A``, or every ``#define B (A)`` changes.
 
@@ -1367,6 +1424,13 @@ class TestConstantExpressionShape:
             # sizeof over an expression is a unary operator.
             ["sizeof", "A"],
             ["sizeof", "(", "A", "+", "1", ")"],
+            # A lone identifier is a type name: size_t, uint32_t, project typedefs.
+            ["(", "T", ")", "1"],
+            ["(", "T", "*", ")", "0"],
+            ["(", "struct", "S", "*", ")", "0"],
+            ["sizeof", "(", "T", ")"],
+            ["sizeof", "(", "void", ")"],
+            ["sizeof", "(", "struct", "S", "const", ")"],  # a trailing qualifier is fine
         ],
     )
     def test_accepts_constant_expressions(self, spellings: list[str]):
@@ -1393,6 +1457,10 @@ class TestConstantExpressionShape:
             ["(", "int", "char", ")", "1"],  # admissible keywords, no such type
             ["sizeof", "(", "int", "void", ")"],
             ["1", "sizeof", "(", "int", ")"],  # sizeof where an operator belongs
+            ["(", "struct", "S", ")", "1"],  # no cast to a struct type, only to a pointer
+            ["sizeof", "(", "struct", "const", "S", ")"],  # qualifier between tag and name
+            ["sizeof", "(", "struct", "S", "int", ")"],  # a specifier is not a qualifier
+            ["sizeof", "(", "int", "struct", "S", ")"],
         ],
     )
     def test_rejects_non_expressions(self, spellings: list[str]):
