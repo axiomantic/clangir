@@ -16,7 +16,7 @@
         <link rel="prev" href="../prompt/">
       
       
-        <link rel="next" href="../generate/">
+        <link rel="next" href="../workorder/">
       
       
         
@@ -810,6 +810,34 @@
     
   
     Project Scaffolding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/work-orders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Work Orders
   
 
     
@@ -1765,6 +1793,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../workorder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work Order API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generate/" class="md-nav__link">
         
   
@@ -2064,7 +2120,7 @@
   </span>
 
 <a href="#headerkit.scaffold.OutputFile" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">OutputFile</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">content</span><span class="p">,</span> <span class="n">is_executable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">OutputFile</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">content</span><span class="p">,</span> <span class="n">is_executable</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">preserve_existing</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -2163,17 +2219,17 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-29">29</a></span>
-<span class="normal"><a href="#__codelineno-0-30">30</a></span>
-<span class="normal"><a href="#__codelineno-0-31">31</a></span>
-<span class="normal"><a href="#__codelineno-0-32">32</a></span>
-<span class="normal"><a href="#__codelineno-0-33">33</a></span>
-<span class="normal"><a href="#__codelineno-0-34">34</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-29" name="__codelineno-0-29"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OutputFile</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-30" name="__codelineno-0-30"></a><span class="w">    </span><span class="sd">"""Find an output file by its relative project path."""</span>
-<a id="__codelineno-0-31" name="__codelineno-0-31"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
-<a id="__codelineno-0-32" name="__codelineno-0-32"></a>        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">path</span> <span class="o">==</span> <span class="n">path</span><span class="p">:</span>
-<a id="__codelineno-0-33" name="__codelineno-0-33"></a>            <span class="k">return</span> <span class="n">f</span>
-<a id="__codelineno-0-34" name="__codelineno-0-34"></a>    <span class="k">return</span> <span class="kc">None</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-33">33</a></span>
+<span class="normal"><a href="#__codelineno-0-34">34</a></span>
+<span class="normal"><a href="#__codelineno-0-35">35</a></span>
+<span class="normal"><a href="#__codelineno-0-36">36</a></span>
+<span class="normal"><a href="#__codelineno-0-37">37</a></span>
+<span class="normal"><a href="#__codelineno-0-38">38</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-33" name="__codelineno-0-33"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OutputFile</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34"></a><span class="w">    </span><span class="sd">"""Find an output file by its relative project path."""</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36"></a>        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">path</span> <span class="o">==</span> <span class="n">path</span><span class="p">:</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37"></a>            <span class="k">return</span> <span class="n">f</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38"></a>    <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2198,11 +2254,7 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-36">36</a></span>
-<span class="normal"><a href="#__codelineno-0-37">37</a></span>
-<span class="normal"><a href="#__codelineno-0-38">38</a></span>
-<span class="normal"><a href="#__codelineno-0-39">39</a></span>
-<span class="normal"><a href="#__codelineno-0-40">40</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-40">40</a></span>
 <span class="normal"><a href="#__codelineno-0-41">41</a></span>
 <span class="normal"><a href="#__codelineno-0-42">42</a></span>
 <span class="normal"><a href="#__codelineno-0-43">43</a></span>
@@ -2213,22 +2265,26 @@
 <span class="normal"><a href="#__codelineno-0-48">48</a></span>
 <span class="normal"><a href="#__codelineno-0-49">49</a></span>
 <span class="normal"><a href="#__codelineno-0-50">50</a></span>
-<span class="normal"><a href="#__codelineno-0-51">51</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-36" name="__codelineno-0-36"></a><span class="k">def</span><span class="w"> </span><span class="nf">write_to_disk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">target_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
-<a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="w">    </span><span class="sd">"""Write all files in this layout to the destination directory."""</span>
-<a id="__codelineno-0-38" name="__codelineno-0-38"></a>    <span class="n">written</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-39" name="__codelineno-0-39"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">target_dir</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
-<a id="__codelineno-0-40" name="__codelineno-0-40"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
-<a id="__codelineno-0-41" name="__codelineno-0-41"></a>        <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="n">base</span> <span class="o">/</span> <span class="n">f</span><span class="o">.</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
-<a id="__codelineno-0-42" name="__codelineno-0-42"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="o">.</span><span class="n">is_relative_to</span><span class="p">(</span><span class="n">base</span><span class="p">):</span>
-<a id="__codelineno-0-43" name="__codelineno-0-43"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Path traversal detected: </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<a id="__codelineno-0-44" name="__codelineno-0-44"></a>        <span class="n">p</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-45" name="__codelineno-0-45"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">overwrite</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-<a id="__codelineno-0-46" name="__codelineno-0-46"></a>            <span class="k">continue</span>
-<a id="__codelineno-0-47" name="__codelineno-0-47"></a>        <span class="n">p</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span>
-<a id="__codelineno-0-48" name="__codelineno-0-48"></a>        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">is_executable</span><span class="p">:</span>
-<a id="__codelineno-0-49" name="__codelineno-0-49"></a>            <span class="n">p</span><span class="o">.</span><span class="n">chmod</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mode</span> <span class="o">|</span> <span class="mo">0o111</span><span class="p">)</span>
-<a id="__codelineno-0-50" name="__codelineno-0-50"></a>        <span class="n">written</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
-<a id="__codelineno-0-51" name="__codelineno-0-51"></a>    <span class="k">return</span> <span class="n">written</span>
+<span class="normal"><a href="#__codelineno-0-51">51</a></span>
+<span class="normal"><a href="#__codelineno-0-52">52</a></span>
+<span class="normal"><a href="#__codelineno-0-53">53</a></span>
+<span class="normal"><a href="#__codelineno-0-54">54</a></span>
+<span class="normal"><a href="#__codelineno-0-55">55</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-40" name="__codelineno-0-40"></a><span class="k">def</span><span class="w"> </span><span class="nf">write_to_disk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">target_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+<a id="__codelineno-0-41" name="__codelineno-0-41"></a><span class="w">    </span><span class="sd">"""Write all files in this layout to the destination directory."""</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42"></a>    <span class="n">written</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">target_dir</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45"></a>        <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="n">base</span> <span class="o">/</span> <span class="n">f</span><span class="o">.</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="o">.</span><span class="n">is_relative_to</span><span class="p">(</span><span class="n">base</span><span class="p">):</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Path traversal detected: </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48"></a>        <span class="n">p</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49"></a>        <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="ow">and</span> <span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">preserve_existing</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">overwrite</span><span class="p">):</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50"></a>            <span class="k">continue</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51"></a>        <span class="n">p</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52"></a>        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">is_executable</span><span class="p">:</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53"></a>            <span class="n">p</span><span class="o">.</span><span class="n">chmod</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mode</span> <span class="o">|</span> <span class="mo">0o111</span><span class="p">)</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54"></a>        <span class="n">written</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55"></a>    <span class="k">return</span> <span class="n">written</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2304,19 +2360,19 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-79">79</a></span>
-<span class="normal"><a href="#__codelineno-0-80">80</a></span>
-<span class="normal"><a href="#__codelineno-0-81">81</a></span>
-<span class="normal"><a href="#__codelineno-0-82">82</a></span>
-<span class="normal"><a href="#__codelineno-0-83">83</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-83">83</a></span>
 <span class="normal"><a href="#__codelineno-0-84">84</a></span>
-<span class="normal"><a href="#__codelineno-0-85">85</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-79" name="__codelineno-0-79"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_option</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<a id="__codelineno-0-80" name="__codelineno-0-80"></a><span class="w">    </span><span class="sd">"""Get a writer-specific option value."""</span>
-<a id="__codelineno-0-81" name="__codelineno-0-81"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">options</span><span class="p">:</span>
-<a id="__codelineno-0-82" name="__codelineno-0-82"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">options</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-<a id="__codelineno-0-83" name="__codelineno-0-83"></a>    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
-<a id="__codelineno-0-84" name="__codelineno-0-84"></a>        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
-<a id="__codelineno-0-85" name="__codelineno-0-85"></a>    <span class="k">return</span> <span class="n">default</span>
+<span class="normal"><a href="#__codelineno-0-85">85</a></span>
+<span class="normal"><a href="#__codelineno-0-86">86</a></span>
+<span class="normal"><a href="#__codelineno-0-87">87</a></span>
+<span class="normal"><a href="#__codelineno-0-88">88</a></span>
+<span class="normal"><a href="#__codelineno-0-89">89</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-83" name="__codelineno-0-83"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_option</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<a id="__codelineno-0-84" name="__codelineno-0-84"></a><span class="w">    </span><span class="sd">"""Get a writer-specific option value."""</span>
+<a id="__codelineno-0-85" name="__codelineno-0-85"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">options</span><span class="p">:</span>
+<a id="__codelineno-0-86" name="__codelineno-0-86"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">options</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+<a id="__codelineno-0-87" name="__codelineno-0-87"></a>    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+<a id="__codelineno-0-88" name="__codelineno-0-88"></a>        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-0-89" name="__codelineno-0-89"></a>    <span class="k">return</span> <span class="n">default</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2387,11 +2443,11 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-91">91</a></span>
-<span class="normal"><a href="#__codelineno-0-92">92</a></span>
-<span class="normal"><a href="#__codelineno-0-93">93</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-91" name="__codelineno-0-91"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
-<a id="__codelineno-0-92" name="__codelineno-0-92"></a><span class="w">    </span><span class="sd">"""Generate a ProjectLayout for the given SourceUnit and options."""</span>
-<a id="__codelineno-0-93" name="__codelineno-0-93"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-95">95</a></span>
+<span class="normal"><a href="#__codelineno-0-96">96</a></span>
+<span class="normal"><a href="#__codelineno-0-97">97</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-95" name="__codelineno-0-95"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
+<a id="__codelineno-0-96" name="__codelineno-0-96"></a><span class="w">    </span><span class="sd">"""Generate a ProjectLayout for the given SourceUnit and options."""</span>
+<a id="__codelineno-0-97" name="__codelineno-0-97"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2464,25 +2520,25 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-120">120</a></span>
-<span class="normal"><a href="#__codelineno-0-121">121</a></span>
-<span class="normal"><a href="#__codelineno-0-122">122</a></span>
-<span class="normal"><a href="#__codelineno-0-123">123</a></span>
-<span class="normal"><a href="#__codelineno-0-124">124</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-124">124</a></span>
 <span class="normal"><a href="#__codelineno-0-125">125</a></span>
 <span class="normal"><a href="#__codelineno-0-126">126</a></span>
 <span class="normal"><a href="#__codelineno-0-127">127</a></span>
 <span class="normal"><a href="#__codelineno-0-128">128</a></span>
-<span class="normal"><a href="#__codelineno-0-129">129</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-120" name="__codelineno-0-120"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
-<a id="__codelineno-0-121" name="__codelineno-0-121"></a><span class="w">    </span><span class="sd">"""Generate project layout using built-in templates."""</span>
-<a id="__codelineno-0-122" name="__codelineno-0-122"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.writers</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_writer</span>
-<a id="__codelineno-0-123" name="__codelineno-0-123"></a>
-<a id="__codelineno-0-124" name="__codelineno-0-124"></a>    <span class="n">writer_target</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolve_target</span><span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">)</span>
-<a id="__codelineno-0-125" name="__codelineno-0-125"></a>    <span class="n">writer</span> <span class="o">=</span> <span class="n">get_writer</span><span class="p">(</span><span class="n">writer_target</span><span class="p">)</span>
-<a id="__codelineno-0-126" name="__codelineno-0-126"></a>    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">writer</span><span class="p">,</span> <span class="s2">"write_layout"</span><span class="p">):</span>
-<a id="__codelineno-0-127" name="__codelineno-0-127"></a>        <span class="k">return</span> <span class="n">writer</span><span class="o">.</span><span class="n">write_layout</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
-<a id="__codelineno-0-128" name="__codelineno-0-128"></a>
-<a id="__codelineno-0-129" name="__codelineno-0-129"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scaffold_single_file</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">writer_target</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-129">129</a></span>
+<span class="normal"><a href="#__codelineno-0-130">130</a></span>
+<span class="normal"><a href="#__codelineno-0-131">131</a></span>
+<span class="normal"><a href="#__codelineno-0-132">132</a></span>
+<span class="normal"><a href="#__codelineno-0-133">133</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-124" name="__codelineno-0-124"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
+<a id="__codelineno-0-125" name="__codelineno-0-125"></a><span class="w">    </span><span class="sd">"""Generate project layout using built-in templates."""</span>
+<a id="__codelineno-0-126" name="__codelineno-0-126"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.writers</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_writer</span>
+<a id="__codelineno-0-127" name="__codelineno-0-127"></a>
+<a id="__codelineno-0-128" name="__codelineno-0-128"></a>    <span class="n">writer_target</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolve_target</span><span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">)</span>
+<a id="__codelineno-0-129" name="__codelineno-0-129"></a>    <span class="n">writer</span> <span class="o">=</span> <span class="n">get_writer</span><span class="p">(</span><span class="n">writer_target</span><span class="p">)</span>
+<a id="__codelineno-0-130" name="__codelineno-0-130"></a>    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">writer</span><span class="p">,</span> <span class="s2">"write_layout"</span><span class="p">):</span>
+<a id="__codelineno-0-131" name="__codelineno-0-131"></a>        <span class="k">return</span> <span class="n">writer</span><span class="o">.</span><span class="n">write_layout</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
+<a id="__codelineno-0-132" name="__codelineno-0-132"></a>
+<a id="__codelineno-0-133" name="__codelineno-0-133"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scaffold_single_file</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">writer_target</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2517,11 +2573,7 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-158">158</a></span>
-<span class="normal"><a href="#__codelineno-0-159">159</a></span>
-<span class="normal"><a href="#__codelineno-0-160">160</a></span>
-<span class="normal"><a href="#__codelineno-0-161">161</a></span>
-<span class="normal"><a href="#__codelineno-0-162">162</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-162">162</a></span>
 <span class="normal"><a href="#__codelineno-0-163">163</a></span>
 <span class="normal"><a href="#__codelineno-0-164">164</a></span>
 <span class="normal"><a href="#__codelineno-0-165">165</a></span>
@@ -2552,42 +2604,46 @@
 <span class="normal"><a href="#__codelineno-0-190">190</a></span>
 <span class="normal"><a href="#__codelineno-0-191">191</a></span>
 <span class="normal"><a href="#__codelineno-0-192">192</a></span>
-<span class="normal"><a href="#__codelineno-0-193">193</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-158" name="__codelineno-0-158"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span>
-<a id="__codelineno-0-159" name="__codelineno-0-159"></a>    <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span>
-<a id="__codelineno-0-160" name="__codelineno-0-160"></a>    <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">,</span>
-<a id="__codelineno-0-161" name="__codelineno-0-161"></a>    <span class="n">context</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-162" name="__codelineno-0-162"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
-<a id="__codelineno-0-163" name="__codelineno-0-163"></a><span class="w">    </span><span class="sd">"""Scaffold a project layout for a source unit, dispatching to registered hooks."""</span>
-<a id="__codelineno-0-164" name="__codelineno-0-164"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">PipelineContext</span>
-<a id="__codelineno-0-165" name="__codelineno-0-165"></a>
-<a id="__codelineno-0-166" name="__codelineno-0-166"></a>    <span class="k">if</span> <span class="n">context</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-167" name="__codelineno-0-167"></a>        <span class="n">ctx</span> <span class="o">=</span> <span class="n">PipelineContext</span><span class="p">(</span>
-<a id="__codelineno-0-168" name="__codelineno-0-168"></a>            <span class="n">writer</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
-<a id="__codelineno-0-169" name="__codelineno-0-169"></a>            <span class="n">target</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
-<a id="__codelineno-0-170" name="__codelineno-0-170"></a>            <span class="n">layout</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">layout</span><span class="p">,</span>
-<a id="__codelineno-0-171" name="__codelineno-0-171"></a>            <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
-<a id="__codelineno-0-172" name="__codelineno-0-172"></a>        <span class="p">)</span>
-<a id="__codelineno-0-173" name="__codelineno-0-173"></a>    <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-174" name="__codelineno-0-174"></a>        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"layout"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-175" name="__codelineno-0-175"></a>            <span class="n">ctx</span> <span class="o">=</span> <span class="n">PipelineContext</span><span class="p">(</span>
-<a id="__codelineno-0-176" name="__codelineno-0-176"></a>                <span class="n">backend</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"backend"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-<a id="__codelineno-0-177" name="__codelineno-0-177"></a>                <span class="n">writer</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"writer"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
-<a id="__codelineno-0-178" name="__codelineno-0-178"></a>                <span class="n">target</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"target"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
-<a id="__codelineno-0-179" name="__codelineno-0-179"></a>                <span class="n">layout</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">layout</span><span class="p">,</span>
-<a id="__codelineno-0-180" name="__codelineno-0-180"></a>                <span class="n">language</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"language"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-<a id="__codelineno-0-181" name="__codelineno-0-181"></a>                <span class="n">classification</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"classification"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-<a id="__codelineno-0-182" name="__codelineno-0-182"></a>                <span class="n">runtime</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"runtime"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-<a id="__codelineno-0-183" name="__codelineno-0-183"></a>                <span class="n">options</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"options"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
-<a id="__codelineno-0-184" name="__codelineno-0-184"></a>            <span class="p">)</span>
-<a id="__codelineno-0-185" name="__codelineno-0-185"></a>        <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-186" name="__codelineno-0-186"></a>            <span class="n">ctx</span> <span class="o">=</span> <span class="n">context</span>
-<a id="__codelineno-0-187" name="__codelineno-0-187"></a>
-<a id="__codelineno-0-188" name="__codelineno-0-188"></a>    <span class="n">dispatcher</span> <span class="o">=</span> <span class="n">HookDispatcher</span><span class="p">()</span>
-<a id="__codelineno-0-189" name="__codelineno-0-189"></a>    <span class="n">unit</span> <span class="o">=</span> <span class="n">dispatcher</span><span class="o">.</span><span class="n">waterfall</span><span class="p">(</span><span class="s2">"transform_unit"</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
-<a id="__codelineno-0-190" name="__codelineno-0-190"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">dispatcher</span><span class="o">.</span><span class="n">first_result</span><span class="p">(</span><span class="s2">"scaffold_project"</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
-<a id="__codelineno-0-191" name="__codelineno-0-191"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">ProjectLayout</span><span class="p">):</span>
-<a id="__codelineno-0-192" name="__codelineno-0-192"></a>        <span class="k">return</span> <span class="n">result</span>
-<a id="__codelineno-0-193" name="__codelineno-0-193"></a>    <span class="k">return</span> <span class="n">StdlibScaffolder</span><span class="p">()</span><span class="o">.</span><span class="n">scaffold</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-193">193</a></span>
+<span class="normal"><a href="#__codelineno-0-194">194</a></span>
+<span class="normal"><a href="#__codelineno-0-195">195</a></span>
+<span class="normal"><a href="#__codelineno-0-196">196</a></span>
+<span class="normal"><a href="#__codelineno-0-197">197</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-162" name="__codelineno-0-162"></a><span class="k">def</span><span class="w"> </span><span class="nf">scaffold</span><span class="p">(</span>
+<a id="__codelineno-0-163" name="__codelineno-0-163"></a>    <span class="n">unit</span><span class="p">:</span> <span class="n">SourceUnit</span> <span class="o">|</span> <span class="n">Header</span><span class="p">,</span>
+<a id="__codelineno-0-164" name="__codelineno-0-164"></a>    <span class="n">options</span><span class="p">:</span> <span class="n">ScaffoldOptions</span><span class="p">,</span>
+<a id="__codelineno-0-165" name="__codelineno-0-165"></a>    <span class="n">context</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-166" name="__codelineno-0-166"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProjectLayout</span><span class="p">:</span>
+<a id="__codelineno-0-167" name="__codelineno-0-167"></a><span class="w">    </span><span class="sd">"""Scaffold a project layout for a source unit, dispatching to registered hooks."""</span>
+<a id="__codelineno-0-168" name="__codelineno-0-168"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">headerkit.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">PipelineContext</span>
+<a id="__codelineno-0-169" name="__codelineno-0-169"></a>
+<a id="__codelineno-0-170" name="__codelineno-0-170"></a>    <span class="k">if</span> <span class="n">context</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-171" name="__codelineno-0-171"></a>        <span class="n">ctx</span> <span class="o">=</span> <span class="n">PipelineContext</span><span class="p">(</span>
+<a id="__codelineno-0-172" name="__codelineno-0-172"></a>            <span class="n">writer</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
+<a id="__codelineno-0-173" name="__codelineno-0-173"></a>            <span class="n">target</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
+<a id="__codelineno-0-174" name="__codelineno-0-174"></a>            <span class="n">layout</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">layout</span><span class="p">,</span>
+<a id="__codelineno-0-175" name="__codelineno-0-175"></a>            <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
+<a id="__codelineno-0-176" name="__codelineno-0-176"></a>        <span class="p">)</span>
+<a id="__codelineno-0-177" name="__codelineno-0-177"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-0-178" name="__codelineno-0-178"></a>        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"layout"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-179" name="__codelineno-0-179"></a>            <span class="n">ctx</span> <span class="o">=</span> <span class="n">PipelineContext</span><span class="p">(</span>
+<a id="__codelineno-0-180" name="__codelineno-0-180"></a>                <span class="n">backend</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"backend"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+<a id="__codelineno-0-181" name="__codelineno-0-181"></a>                <span class="n">writer</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"writer"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
+<a id="__codelineno-0-182" name="__codelineno-0-182"></a>                <span class="n">target</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"target"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">target_language</span><span class="p">,</span>
+<a id="__codelineno-0-183" name="__codelineno-0-183"></a>                <span class="n">layout</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">layout</span><span class="p">,</span>
+<a id="__codelineno-0-184" name="__codelineno-0-184"></a>                <span class="n">language</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"language"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+<a id="__codelineno-0-185" name="__codelineno-0-185"></a>                <span class="n">classification</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"classification"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+<a id="__codelineno-0-186" name="__codelineno-0-186"></a>                <span class="n">runtime</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"runtime"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+<a id="__codelineno-0-187" name="__codelineno-0-187"></a>                <span class="n">options</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"options"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
+<a id="__codelineno-0-188" name="__codelineno-0-188"></a>            <span class="p">)</span>
+<a id="__codelineno-0-189" name="__codelineno-0-189"></a>        <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-0-190" name="__codelineno-0-190"></a>            <span class="n">ctx</span> <span class="o">=</span> <span class="n">context</span>
+<a id="__codelineno-0-191" name="__codelineno-0-191"></a>
+<a id="__codelineno-0-192" name="__codelineno-0-192"></a>    <span class="n">dispatcher</span> <span class="o">=</span> <span class="n">HookDispatcher</span><span class="p">()</span>
+<a id="__codelineno-0-193" name="__codelineno-0-193"></a>    <span class="n">unit</span> <span class="o">=</span> <span class="n">dispatcher</span><span class="o">.</span><span class="n">waterfall</span><span class="p">(</span><span class="s2">"transform_unit"</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
+<a id="__codelineno-0-194" name="__codelineno-0-194"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">dispatcher</span><span class="o">.</span><span class="n">first_result</span><span class="p">(</span><span class="s2">"scaffold_project"</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
+<a id="__codelineno-0-195" name="__codelineno-0-195"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">ProjectLayout</span><span class="p">):</span>
+<a id="__codelineno-0-196" name="__codelineno-0-196"></a>        <span class="k">return</span> <span class="n">result</span>
+<a id="__codelineno-0-197" name="__codelineno-0-197"></a>    <span class="k">return</span> <span class="n">StdlibScaffolder</span><span class="p">()</span><span class="o">.</span><span class="n">scaffold</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -2612,11 +2668,7 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>headerkit/scaffold.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-196">196</a></span>
-<span class="normal"><a href="#__codelineno-0-197">197</a></span>
-<span class="normal"><a href="#__codelineno-0-198">198</a></span>
-<span class="normal"><a href="#__codelineno-0-199">199</a></span>
-<span class="normal"><a href="#__codelineno-0-200">200</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-200">200</a></span>
 <span class="normal"><a href="#__codelineno-0-201">201</a></span>
 <span class="normal"><a href="#__codelineno-0-202">202</a></span>
 <span class="normal"><a href="#__codelineno-0-203">203</a></span>
@@ -2648,43 +2700,47 @@
 <span class="normal"><a href="#__codelineno-0-229">229</a></span>
 <span class="normal"><a href="#__codelineno-0-230">230</a></span>
 <span class="normal"><a href="#__codelineno-0-231">231</a></span>
-<span class="normal"><a href="#__codelineno-0-232">232</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-196" name="__codelineno-0-196"></a><span class="k">def</span><span class="w"> </span><span class="nf">prompt_scaffold_options</span><span class="p">(</span>
-<a id="__codelineno-0-197" name="__codelineno-0-197"></a>    <span class="n">defaults</span><span class="p">:</span> <span class="n">ScaffoldOptions</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-198" name="__codelineno-0-198"></a>    <span class="o">*</span><span class="p">,</span>
-<a id="__codelineno-0-199" name="__codelineno-0-199"></a>    <span class="n">is_tty</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-200" name="__codelineno-0-200"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ScaffoldOptions</span><span class="p">:</span>
-<a id="__codelineno-0-201" name="__codelineno-0-201"></a><span class="w">    </span><span class="sd">"""TTY-aware interactive prompt wizard for scaffolding options."""</span>
-<a id="__codelineno-0-202" name="__codelineno-0-202"></a>    <span class="n">opts</span> <span class="o">=</span> <span class="n">defaults</span> <span class="k">if</span> <span class="n">defaults</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">ScaffoldOptions</span><span class="p">()</span>
-<a id="__codelineno-0-203" name="__codelineno-0-203"></a>    <span class="n">tty_active</span> <span class="o">=</span> <span class="n">is_tty</span> <span class="k">if</span> <span class="n">is_tty</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">isatty</span><span class="p">()</span> <span class="ow">and</span> <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">isatty</span><span class="p">())</span>
-<a id="__codelineno-0-204" name="__codelineno-0-204"></a>
-<a id="__codelineno-0-205" name="__codelineno-0-205"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">tty_active</span><span class="p">:</span>
-<a id="__codelineno-0-206" name="__codelineno-0-206"></a>        <span class="k">return</span> <span class="n">opts</span>
-<a id="__codelineno-0-207" name="__codelineno-0-207"></a>
-<a id="__codelineno-0-208" name="__codelineno-0-208"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-209" name="__codelineno-0-209"></a>        <span class="n">raw_pkg</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Package name [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">package_name</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-<a id="__codelineno-0-210" name="__codelineno-0-210"></a>        <span class="n">pkg_name</span> <span class="o">=</span> <span class="n">raw_pkg</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">package_name</span>
+<span class="normal"><a href="#__codelineno-0-232">232</a></span>
+<span class="normal"><a href="#__codelineno-0-233">233</a></span>
+<span class="normal"><a href="#__codelineno-0-234">234</a></span>
+<span class="normal"><a href="#__codelineno-0-235">235</a></span>
+<span class="normal"><a href="#__codelineno-0-236">236</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-200" name="__codelineno-0-200"></a><span class="k">def</span><span class="w"> </span><span class="nf">prompt_scaffold_options</span><span class="p">(</span>
+<a id="__codelineno-0-201" name="__codelineno-0-201"></a>    <span class="n">defaults</span><span class="p">:</span> <span class="n">ScaffoldOptions</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-202" name="__codelineno-0-202"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-0-203" name="__codelineno-0-203"></a>    <span class="n">is_tty</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-204" name="__codelineno-0-204"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ScaffoldOptions</span><span class="p">:</span>
+<a id="__codelineno-0-205" name="__codelineno-0-205"></a><span class="w">    </span><span class="sd">"""TTY-aware interactive prompt wizard for scaffolding options."""</span>
+<a id="__codelineno-0-206" name="__codelineno-0-206"></a>    <span class="n">opts</span> <span class="o">=</span> <span class="n">defaults</span> <span class="k">if</span> <span class="n">defaults</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">ScaffoldOptions</span><span class="p">()</span>
+<a id="__codelineno-0-207" name="__codelineno-0-207"></a>    <span class="n">tty_active</span> <span class="o">=</span> <span class="n">is_tty</span> <span class="k">if</span> <span class="n">is_tty</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">isatty</span><span class="p">()</span> <span class="ow">and</span> <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">isatty</span><span class="p">())</span>
+<a id="__codelineno-0-208" name="__codelineno-0-208"></a>
+<a id="__codelineno-0-209" name="__codelineno-0-209"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">tty_active</span><span class="p">:</span>
+<a id="__codelineno-0-210" name="__codelineno-0-210"></a>        <span class="k">return</span> <span class="n">opts</span>
 <a id="__codelineno-0-211" name="__codelineno-0-211"></a>
-<a id="__codelineno-0-212" name="__codelineno-0-212"></a>        <span class="n">raw_lang</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Target language (nim, mojo, ctypes, cffi) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">target_language</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-<a id="__codelineno-0-213" name="__codelineno-0-213"></a>        <span class="n">target_lang</span> <span class="o">=</span> <span class="n">raw_lang</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">target_language</span>
-<a id="__codelineno-0-214" name="__codelineno-0-214"></a>
-<a id="__codelineno-0-215" name="__codelineno-0-215"></a>        <span class="n">raw_layout</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Layout (file, package) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">layout</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-<a id="__codelineno-0-216" name="__codelineno-0-216"></a>        <span class="n">layout</span> <span class="o">=</span> <span class="n">raw_layout</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">layout</span>
-<a id="__codelineno-0-217" name="__codelineno-0-217"></a>
-<a id="__codelineno-0-218" name="__codelineno-0-218"></a>        <span class="n">raw_test</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Test generation (both, tripwire, unit, none) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">test_type</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-<a id="__codelineno-0-219" name="__codelineno-0-219"></a>        <span class="n">test_type</span> <span class="o">=</span> <span class="n">raw_test</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">test_type</span>
-<a id="__codelineno-0-220" name="__codelineno-0-220"></a>
-<a id="__codelineno-0-221" name="__codelineno-0-221"></a>        <span class="k">return</span> <span class="n">ScaffoldOptions</span><span class="p">(</span>
-<a id="__codelineno-0-222" name="__codelineno-0-222"></a>            <span class="n">package_name</span><span class="o">=</span><span class="n">pkg_name</span><span class="p">,</span>
-<a id="__codelineno-0-223" name="__codelineno-0-223"></a>            <span class="n">target_language</span><span class="o">=</span><span class="n">target_lang</span><span class="p">,</span>
-<a id="__codelineno-0-224" name="__codelineno-0-224"></a>            <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">,</span>
-<a id="__codelineno-0-225" name="__codelineno-0-225"></a>            <span class="n">options</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">opts</span><span class="o">.</span><span class="n">options</span><span class="p">),</span>
-<a id="__codelineno-0-226" name="__codelineno-0-226"></a>            <span class="n">test_type</span><span class="o">=</span><span class="n">test_type</span><span class="p">,</span>
-<a id="__codelineno-0-227" name="__codelineno-0-227"></a>            <span class="n">test_runner</span><span class="o">=</span><span class="n">opts</span><span class="o">.</span><span class="n">test_runner</span><span class="p">,</span>
-<a id="__codelineno-0-228" name="__codelineno-0-228"></a>            <span class="n">interactive</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-0-229" name="__codelineno-0-229"></a>            <span class="n">extra_context</span><span class="o">=</span><span class="n">opts</span><span class="o">.</span><span class="n">extra_context</span><span class="p">,</span>
-<a id="__codelineno-0-230" name="__codelineno-0-230"></a>        <span class="p">)</span>
-<a id="__codelineno-0-231" name="__codelineno-0-231"></a>    <span class="k">except</span> <span class="p">(</span><span class="ne">EOFError</span><span class="p">,</span> <span class="ne">KeyboardInterrupt</span><span class="p">):</span>
-<a id="__codelineno-0-232" name="__codelineno-0-232"></a>        <span class="k">return</span> <span class="n">opts</span>
+<a id="__codelineno-0-212" name="__codelineno-0-212"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-213" name="__codelineno-0-213"></a>        <span class="n">raw_pkg</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Package name [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">package_name</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-0-214" name="__codelineno-0-214"></a>        <span class="n">pkg_name</span> <span class="o">=</span> <span class="n">raw_pkg</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">package_name</span>
+<a id="__codelineno-0-215" name="__codelineno-0-215"></a>
+<a id="__codelineno-0-216" name="__codelineno-0-216"></a>        <span class="n">raw_lang</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Target language (nim, mojo, ctypes, cffi) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">target_language</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-0-217" name="__codelineno-0-217"></a>        <span class="n">target_lang</span> <span class="o">=</span> <span class="n">raw_lang</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">target_language</span>
+<a id="__codelineno-0-218" name="__codelineno-0-218"></a>
+<a id="__codelineno-0-219" name="__codelineno-0-219"></a>        <span class="n">raw_layout</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Layout (file, package) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">layout</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-0-220" name="__codelineno-0-220"></a>        <span class="n">layout</span> <span class="o">=</span> <span class="n">raw_layout</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">layout</span>
+<a id="__codelineno-0-221" name="__codelineno-0-221"></a>
+<a id="__codelineno-0-222" name="__codelineno-0-222"></a>        <span class="n">raw_test</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Test generation (both, tripwire, unit, none) [</span><span class="si">{</span><span class="n">opts</span><span class="o">.</span><span class="n">test_type</span><span class="si">}</span><span class="s2">]: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-0-223" name="__codelineno-0-223"></a>        <span class="n">test_type</span> <span class="o">=</span> <span class="n">raw_test</span> <span class="ow">or</span> <span class="n">opts</span><span class="o">.</span><span class="n">test_type</span>
+<a id="__codelineno-0-224" name="__codelineno-0-224"></a>
+<a id="__codelineno-0-225" name="__codelineno-0-225"></a>        <span class="k">return</span> <span class="n">ScaffoldOptions</span><span class="p">(</span>
+<a id="__codelineno-0-226" name="__codelineno-0-226"></a>            <span class="n">package_name</span><span class="o">=</span><span class="n">pkg_name</span><span class="p">,</span>
+<a id="__codelineno-0-227" name="__codelineno-0-227"></a>            <span class="n">target_language</span><span class="o">=</span><span class="n">target_lang</span><span class="p">,</span>
+<a id="__codelineno-0-228" name="__codelineno-0-228"></a>            <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">,</span>
+<a id="__codelineno-0-229" name="__codelineno-0-229"></a>            <span class="n">options</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">opts</span><span class="o">.</span><span class="n">options</span><span class="p">),</span>
+<a id="__codelineno-0-230" name="__codelineno-0-230"></a>            <span class="n">test_type</span><span class="o">=</span><span class="n">test_type</span><span class="p">,</span>
+<a id="__codelineno-0-231" name="__codelineno-0-231"></a>            <span class="n">test_runner</span><span class="o">=</span><span class="n">opts</span><span class="o">.</span><span class="n">test_runner</span><span class="p">,</span>
+<a id="__codelineno-0-232" name="__codelineno-0-232"></a>            <span class="n">interactive</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-0-233" name="__codelineno-0-233"></a>            <span class="n">extra_context</span><span class="o">=</span><span class="n">opts</span><span class="o">.</span><span class="n">extra_context</span><span class="p">,</span>
+<a id="__codelineno-0-234" name="__codelineno-0-234"></a>        <span class="p">)</span>
+<a id="__codelineno-0-235" name="__codelineno-0-235"></a>    <span class="k">except</span> <span class="p">(</span><span class="ne">EOFError</span><span class="p">,</span> <span class="ne">KeyboardInterrupt</span><span class="p">):</span>
+<a id="__codelineno-0-236" name="__codelineno-0-236"></a>        <span class="k">return</span> <span class="n">opts</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
