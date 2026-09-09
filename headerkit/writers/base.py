@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import textwrap
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -13,6 +14,43 @@ from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
 #: template. See :func:`render_block_template` for why the substitution cannot
 #: be an ordinary f-string interpolation.
 DEDENT_BLOCK = "_HK_BLOCK_"
+
+
+def module_level_bindings(source: str) -> frozenset[str]:
+    """Return every module-level name ``source`` binds.
+
+    A generated Python module's export block is emitted last, so any name the
+    module already binds must be reserved before that block re-exports a C
+    symbol over it. Deriving the set from the emitted text keeps it correct by
+    construction: a preamble that starts binding a new name reserves it without
+    a second list needing to be updated in step.
+
+    Every binding form a preamble can plausibly use is covered, not only the
+    ones present today. Under ``mypy --strict`` an annotated assignment is the
+    likeliest way a new constant arrives, and it is the form a naive
+    ``ast.Assign``-only walk silently misses.
+
+    Nested bindings are deliberately not collected: a name assigned inside a
+    function or a class body is not a module-level name and cannot collide with
+    an export.
+
+    :param source: Python source. Must parse; a generated preamble that does
+        not is a defect worth raising on rather than silently under-reporting.
+    :raises SyntaxError: if ``source`` does not parse.
+    """
+    bound: set[str] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            bound.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                bound.add(node.target.id)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(node.name)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c``.
+            bound.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+    return frozenset(bound)
 
 
 def render_block_template(template: str, *blocks: str) -> str:

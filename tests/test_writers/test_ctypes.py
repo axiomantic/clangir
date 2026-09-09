@@ -1,6 +1,5 @@
 """Tests for the ctypes binding writer."""
 
-import ast
 import textwrap
 
 import pytest
@@ -21,9 +20,10 @@ from headerkit.ir import (
     Typedef,
     Variable,
 )
+from headerkit.writers.base import module_level_bindings
 from headerkit.writers.ctypes import (
+    ABI_ALIGNMENT_NOTE,
     CTYPES_TYPE_MAP,
-    LOADER_BOUND_NAMES,
     CtypesWriter,
     _library_loader,
     header_to_ctypes,
@@ -1236,27 +1236,62 @@ class TestLoaderCollisionSeed:
     re-exported over the thing it collides with.
     """
 
-    def test_loader_bound_names_matches_the_template(self) -> None:
-        """Re-derive the loader's bindings from its own output.
+    def test_the_loader_binds_exactly_these_names(self) -> None:
+        """Pin the loader preamble's module-level bindings.
 
-        ``LOADER_BOUND_NAMES`` is a literal, so it can drift the moment the
-        template binds something new. Parsing the rendered loader is an
-        independent derivation: a name added to the template and not to the
-        constant fails here rather than silently becoming re-exportable.
+        The writer reserves whatever :func:`module_level_bindings` reports, so
+        nothing here can drift out of step with the seeding. What this pins is
+        the *expected* set: a template that starts binding a new name fails here
+        and has to be acknowledged, rather than silently widening what the
+        export block refuses to emit.
         """
-        rendered = _library_loader("probe", "_lib")
-        tree = ast.parse(rendered)
+        assert module_level_bindings(_library_loader("probe", "_lib")) == {
+            "_LIBRARY_NAME",
+            "_LIBRARY_PATH_ENV",
+            "_load_library",
+            "_lib",
+        }
 
-        bound = set()
-        for node in tree.body:
-            if isinstance(node, ast.Assign):
-                bound.update(t.id for t in node.targets if isinstance(t, ast.Name))
-            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                bound.add(node.name)
+    def test_the_abi_note_binds_exactly_these_names(self) -> None:
+        """Pin the ABI-alignment preamble's module-level bindings.
 
-        assert bound == LOADER_BOUND_NAMES | {"_lib"}, (
-            "the loader template binds names the collision set does not reserve"
+        These two flags are read only by struct definitions emitted *above* the
+        export block, so a collision here is milder than one on ``_lib``: the
+        module still imports and every export still works. They are reserved
+        anyway, because ``_HK_UNNAMED_BITFIELD_ALIGNS = _lib.<sym>`` would
+        replace a resolved ABI decision with a function pointer.
+        """
+        assert module_level_bindings(ABI_ALIGNMENT_NOTE) == {
+            "_HK_UNNAMED_BITFIELD_ALIGNS",
+            "_HK_CTYPES_MATCHES_C_NATIVELY",
+        }
+
+    def test_a_function_named_after_an_abi_flag_is_not_re_exported(self) -> None:
+        """The ABI note's names are reachable end to end, so they are gated.
+
+        An unnamed bit-field is what emits the note at all, so the header needs
+        one for this collision to exist.
+        """
+        header = Header(
+            "collide.h",
+            [
+                Struct(
+                    "Packed",
+                    [
+                        Field("c", CType("unsigned char"), bit_width=1),
+                        Field("", CType("unsigned int"), bit_width=0, is_padding=True),
+                        Field("flag", CType("unsigned char"), bit_width=1),
+                    ],
+                ),
+                Function("_HK_UNNAMED_BITFIELD_ALIGNS", CType("int"), []),
+                Function("thing_add", CType("int"), []),
+            ],
         )
+        result = header_to_ctypes(header, library="collide")
+
+        assert "_HK_UNNAMED_BITFIELD_ALIGNS = _lib._HK_UNNAMED_BITFIELD_ALIGNS" not in result
+        assert "'_HK_UNNAMED_BITFIELD_ALIGNS' is not re-exported" in result
+        assert "thing_add = _lib.thing_add" in result, "a later export did not survive"
 
     def test_a_function_named_lib_is_not_re_exported(self) -> None:
         """``int _lib(void);`` must not overwrite the library handle."""

@@ -33,7 +33,13 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
+from headerkit.writers.base import (
+    DEDENT_BLOCK,
+    BaseWriter,
+    WriterOption,
+    module_level_bindings,
+    render_block_template,
+)
 
 # Maps C type names to their ctypes equivalents.
 CTYPES_TYPE_MAP: dict[str, str] = {
@@ -119,14 +125,6 @@ _HK_CTYPES_MATCHES_C_NATIVELY = sys.platform.startswith("win")"""
 #: enumerator; every ABI headerkit targets uses ``int`` for an enum whose
 #: enumerators fit in one.
 ENUM_CTYPE = "ctypes.c_int"
-
-
-#: Module-level names :func:`_library_loader` binds, besides ``lib_name`` itself.
-#: Seeded into the collision set so a C function sharing one of these names is
-#: not re-exported over it. ``test_loader_bound_names_matches_the_template``
-#: re-derives this from the rendered template, so a template that binds a new
-#: name and forgets this constant fails there rather than silently.
-LOADER_BOUND_NAMES = frozenset({"_LIBRARY_NAME", "_LIBRARY_PATH_ENV", "_load_library"})
 
 
 def _library_loader(library: str, lib_name: str) -> str:
@@ -1004,7 +1002,10 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     #: after import. ``int _lib(void);`` is the same collision against the loader
     #: preamble, and destroys the library handle every later export reads from.
     #: Names are added here as they are emitted, so a conditional import is
-    #: reserved only when it is actually written.
+    #: reserved only when it is actually written. The preamble blocks contribute
+    #: via :func:`module_level_bindings`, which reads the text actually emitted
+    #: rather than a hand-kept list, so a block that starts binding a new name
+    #: reserves it without a second list needing to be updated in step.
     taken_names: set[str] = set()
     typedef_names = _typedef_names(header)
 
@@ -1043,6 +1044,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     output_lines.append("")
     if needs_abi_flag:
         output_lines.append(ABI_ALIGNMENT_NOTE)
+        taken_names.update(module_level_bindings(ABI_ALIGNMENT_NOTE))
         output_lines.append("")
 
     if library is not None:
@@ -1050,10 +1052,10 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
         output_lines.append("# Native library")
         output_lines.append(f"# {'=' * 60}")
         output_lines.append("")
-        output_lines.append(_library_loader(library, lib_name))
+        loader = _library_loader(library, lib_name)
+        output_lines.append(loader)
         output_lines.append("")
-        taken_names.update(LOADER_BOUND_NAMES)
-        taken_names.add(lib_name)
+        taken_names.update(module_level_bindings(loader))
 
     # Sections
     section_order = list(_SECTION_ORDER)
