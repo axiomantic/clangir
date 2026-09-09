@@ -468,7 +468,11 @@ def test_a_bitfield_is_narrowed_only_when_it_fits_the_byte_its_c_offset_lies_in(
             if field.bit_width is None or not field.name or field.name not in emitted:
                 continue
             declared = type_to_ctypes(field.type).removeprefix("ctypes.")
-            if emitted[field.name] == declared:
+            # Narrower, not merely spelled differently. ``unsigned int`` renders
+            # as ``c_ulong`` on Windows and ``c_uint`` elsewhere; both are four
+            # bytes, and treating that as narrowing reads a rename as a
+            # decision the writer never made.
+            if ctypes.sizeof(getattr(ctypes, emitted[field.name])) >= ctypes.sizeof(getattr(ctypes, declared)):
                 continue
             narrowed_seen += 1
             first_bit = c_fields[field.name][0]
