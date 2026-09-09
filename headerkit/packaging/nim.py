@@ -17,6 +17,7 @@ from headerkit.ir import (
     TypeExpr,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
+from headerkit.writers.base import DEDENT_BLOCK, render_block_template
 from headerkit.writers.ctypes import CTYPES_TYPE_MAP
 from headerkit.writers.nim import C_TO_NIM_PRIMITIVES
 
@@ -408,7 +409,8 @@ def generate_nim_wheel_layout(
 
         checks_str = "\n".join(tw_checks) if tw_checks else ""
 
-        tripwire = textwrap.dedent(f'''\
+        tripwire = render_block_template(
+            f'''\
             """Tripwire test verifying native dynamic library resolution and ABI entrypoints."""
 
             from __future__ import annotations
@@ -423,8 +425,10 @@ def generate_nim_wheel_layout(
                 assert {pkg}._lib is not None, "Native dynamic library '{pkg}' not found in package directory"
 
 
-            {checks_str}
-        ''')
+            {DEDENT_BLOCK}
+        ''',
+            checks_str,
+        )
         files.append(OutputFile(path="tests/test_tripwire.py", content=tripwire))
 
     if test_type in ("unit", "both"):
@@ -445,7 +449,8 @@ def generate_nim_wheel_layout(
 
         u_checks_str = "\n".join(unit_checks) if unit_checks else ""
 
-        unit_test = textwrap.dedent(f'''\
+        unit_test = render_block_template(
+            f'''\
             """Unit tests for {pkg} Python wrapper."""
 
             from __future__ import annotations
@@ -460,8 +465,10 @@ def generate_nim_wheel_layout(
                 assert callable({pkg}.init_nim)
 
 
-            {u_checks_str}
-        ''')
+            {DEDENT_BLOCK}
+        ''',
+            u_checks_str,
+        )
         files.append(OutputFile(path=f"tests/test_{pkg}.py", content=unit_test))
 
     return ProjectLayout(files=files)
