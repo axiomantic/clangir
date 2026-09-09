@@ -48,6 +48,7 @@ from headerkit.ir import Enum
 from headerkit.writers import get_writer
 from headerkit.writers.cffi import header_to_cffi
 from headerkit.writers.cython import write_pxd
+from headerkit.writers.nim import write_nim
 from tests.native_build import PYTHON_INCLUDE_DIR, compile_object_command, link_extension_command
 
 libclang = pytest.mark.libclang
@@ -926,6 +927,23 @@ PARITY_CASES = [
     pytest.param("struct s { int tag; union { int a; float b; }; };", id="anonymous_union_member"),
     pytest.param("struct s { struct { int x; int y; } p; };", id="anonymous_struct_member"),
     pytest.param("extern unsigned u;", id="extern_unsigned"),
+    pytest.param(
+        "struct S { int a; };\ntypedef struct S S;",
+        id="separate_typedef_repeating_the_tag",
+        marks=_xfail(
+            "DEFECT (tree-sitter), PRE-EXISTING: the opaque-then-typedef idiom "
+            "'struct S {...}; typedef struct S S;' reaches libclang as a single "
+            "Struct with is_typedef=True, and reaches tree-sitter as a Struct with "
+            "is_typedef=False plus a separate Typedef. The Cython outputs have "
+            "diverged since before this branch: libclang emits one "
+            "'ctypedef struct S', tree-sitter emits 'cdef struct S' TWICE -- once "
+            "empty from the typedef, once with the fields. The IR is identical at "
+            "the merge base and at HEAD, so this row pins a tree-sitter defect that "
+            "predates the backend-alignment work, not a regression from it. Fixing "
+            "it means merging a tag-repeating Typedef back onto its record, which "
+            "is the same normalization libclang already performs."
+        ),
+    ),
 ]
 
 
@@ -965,6 +983,36 @@ def test_backends_agree_on_cython_output(source: str) -> None:
     asymmetry introduced on either side surfaces here.
     """
     assert _pxd("libclang", source) == _pxd("tree-sitter", source)
+
+
+@pytest.mark.skipif(
+    not (is_backend_available("libclang") and is_backend_available("tree-sitter")),
+    reason="cross-backend parity needs both the libclang and tree-sitter backends",
+)
+def test_the_tag_repeating_typedef_nim_spellings_are_pinned() -> None:
+    """Pin both sides of the one Nim ``importc`` divergence this branch leaves.
+
+    ``PARITY_CASES`` compares Cython output, so it cannot see the Nim axis at
+    all. Here the two backends disagree because their IR disagrees, not because
+    the writer does: libclang folds ``struct S {...}; typedef struct S S;`` into
+    one record with ``is_typedef=True``, tree-sitter keeps a record with
+    ``is_typedef=False`` and a separate ``Typedef``.
+
+    Both spellings compile -- the header really does declare ``struct S`` and
+    really does alias it to ``S``. This is pinned rather than asserted equal so
+    that a fix to either backend arrives as a red test naming this shape, rather
+    than as a silent change in generated bindings.
+    """
+    source = "struct S { int a; };\ntypedef struct S S;"
+
+    def spelling(backend_name: str) -> str:
+        unit = get_backend(backend_name).parse(source, "test.h")
+        lines = [line for line in write_nim(unit).splitlines() if "importc" in line]
+        assert len(lines) == 1, f"expected one importc line, got {lines}"
+        return lines[0].strip()
+
+    assert spelling("libclang") == 'S* {.importc: "S", header: "test.h", bycopy.} = object'
+    assert spelling("tree-sitter") == 'S* {.importc: "struct S", header: "test.h", bycopy.} = object'
 
 
 # ---------------------------------------------------------------------------

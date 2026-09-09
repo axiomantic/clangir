@@ -121,6 +121,14 @@ _HK_CTYPES_MATCHES_C_NATIVELY = sys.platform.startswith("win")"""
 ENUM_CTYPE = "ctypes.c_int"
 
 
+#: Module-level names :func:`_library_loader` binds, besides ``lib_name`` itself.
+#: Seeded into the collision set so a C function sharing one of these names is
+#: not re-exported over it. ``test_loader_bound_names_matches_the_template``
+#: re-derives this from the rendered template, so a template that binds a new
+#: name and forgets this constant fails there rather than silently.
+LOADER_BOUND_NAMES = frozenset({"_LIBRARY_NAME", "_LIBRARY_PATH_ENV", "_load_library"})
+
+
 def _library_loader(library: str, lib_name: str) -> str:
     """Return the source that binds ``lib_name`` to the native library.
 
@@ -987,11 +995,16 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     #: Functions to re-export as module-level callables. Only populated when a
     #: library is being loaded, since without one there is nothing to bind to.
     bound_symbols: list[str] = []
-    #: Module-level names an earlier section already assigns. C keeps tags and
-    #: ordinary identifiers in separate namespaces, so ``struct Rec { ... };``
-    #: and ``int Rec(void);`` are both legal in one translation unit and both
-    #: reach Python as ``Rec``. Re-exporting the function last would replace the
-    #: struct class with a function pointer, silently, after import.
+    #: Module-level names something earlier in the file already assigns: a
+    #: declaration, an import, or the loader preamble. C keeps tags and ordinary
+    #: identifiers in separate namespaces, so ``struct Rec { ... };`` and
+    #: ``int Rec(void);`` are both legal in one translation unit and both reach
+    #: Python as ``Rec``. The export block is emitted last, so re-exporting the
+    #: function would replace the struct class with a function pointer, silently,
+    #: after import. ``int _lib(void);`` is the same collision against the loader
+    #: preamble, and destroys the library handle every later export reads from.
+    #: Names are added here as they are emitted, so a conditional import is
+    #: reserved only when it is actually written.
     taken_names: set[str] = set()
     typedef_names = _typedef_names(header)
 
@@ -1018,11 +1031,15 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
 
     output_lines.append("import ctypes")
     output_lines.append("import ctypes.util")
+    taken_names.add("ctypes")
     if library is not None:
         output_lines.append("import os")
+        taken_names.add("os")
     if needs_abi_flag:
         output_lines.append("import platform")
+        taken_names.add("platform")
     output_lines.append("import sys")
+    taken_names.add("sys")
     output_lines.append("")
     if needs_abi_flag:
         output_lines.append(ABI_ALIGNMENT_NOTE)
@@ -1035,6 +1052,8 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
         output_lines.append("")
         output_lines.append(_library_loader(library, lib_name))
         output_lines.append("")
+        taken_names.update(LOADER_BOUND_NAMES)
+        taken_names.add(lib_name)
 
     # Sections
     section_order = list(_SECTION_ORDER)

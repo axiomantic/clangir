@@ -357,21 +357,27 @@ class CShimWriter(BaseWriter):
                     # C++ wrapper
                     new_call = f"return reinterpret_cast<{safe_cls_name}_t*>(new (std::nothrow) {cls_full_name}({', '.join(params_call)}));"
                     if self.catch_exceptions:
-                        body = textwrap.dedent(f"""\
+                        body = render_block_template(
+                            f"""\
                             {safe_cls_name}_t* {fn_name}({", ".join(params_c) if params_c else "void"}) {{
                                 try {{
-                                    {new_call}
+                                    {DEDENT_BLOCK}
                                 }} catch (...) {{
                                     return nullptr;
                                 }}
                             }}
-                        """)
+                        """,
+                            new_call,
+                        )
                     else:
-                        body = textwrap.dedent(f"""\
+                        body = render_block_template(
+                            f"""\
                             {safe_cls_name}_t* {fn_name}({", ".join(params_c) if params_c else "void"}) {{
-                                {new_call}
+                                {DEDENT_BLOCK}
                             }}
-                        """)
+                        """,
+                            new_call,
+                        )
                     cpp_lines.append(body)
 
                 # Destructor

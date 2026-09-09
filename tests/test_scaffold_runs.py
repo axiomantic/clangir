@@ -95,12 +95,20 @@ FIXTURE_SOURCE = textwrap.dedent("""\
 
 #: C keeps tags and ordinary identifiers in separate namespaces, so a struct tag
 #: and a function may share a spelling. Both reach Python as ``Dup``.
+#:
+#: ``_lib`` is the second collision axis and the more destructive one: it names
+#: nothing in the header's own namespace, but the generated module binds it to
+#: the loaded library, and every exported symbol is read from it. Re-exporting
+#: a C function of that name replaces the handle with a function pointer, and
+#: the next export line dies on it.
 COLLISION_HEADER = textwrap.dedent("""\
     #ifndef DUP_H
     #define DUP_H
 
     struct Dup { int a; };
     int Dup(void);
+    int _lib(void);
+    int thing_add(int a, int b);
 
     #endif
 """)
@@ -109,6 +117,8 @@ COLLISION_SOURCE = textwrap.dedent("""\
     #include "dup.h"
 
     int Dup(void) { return 11; }
+    int _lib(void) { return 13; }
+    int thing_add(int a, int b) { return a + b; }
 """)
 
 
@@ -195,10 +205,10 @@ def _run_python(script: str, *, cwd: Path, env: dict[str, str]) -> subprocess.Co
     )
 
 
-def _run_pytest(target: str, *, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_pytest(target: str, *extra_args: str, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run the generated test suite at ``target`` inside the scaffolded package."""
     return subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "pytest", target, "-p", "no:cacheprovider", "-q"],
+        [sys.executable, "-m", "pytest", target, "-p", "no:cacheprovider", "-q", *extra_args],
         cwd=root,
         env={**os.environ, "PYTHONPATH": str(root / "src"), **env},
         capture_output=True,
@@ -275,12 +285,18 @@ class TestScaffoldedCtypesPackageRuns:
         assert "BOUND" in result.stdout
 
     def test_a_function_does_not_clobber_a_same_named_struct(self, tmp_path: Path, backend_name: str) -> None:
-        """``struct Dup { ... }; int Dup(void);`` must leave the class intact.
+        """A function must not clobber a same-named struct or the library handle.
 
-        Both land on the module-level name ``Dup``, and the exported-symbol
-        block is emitted last, so re-exporting the function unconditionally
-        replaces the struct class with a function pointer. Nothing raises: the
-        module imports, and ``Dup(a=1)`` fails much later somewhere else.
+        Both ``struct Dup`` and ``int Dup(void)`` land on the module-level name
+        ``Dup``, and the exported-symbol block is emitted last, so re-exporting
+        the function unconditionally replaces the struct class with a function
+        pointer. Nothing raises: the module imports, and ``Dup(a=1)`` fails much
+        later somewhere else.
+
+        ``int _lib(void)`` is the same collision against a name no declaration
+        binds -- the loader preamble binds it -- and it is fatal rather than
+        silent: it overwrites the library handle that every later export reads
+        from, so ``thing_add`` dies with ``AttributeError`` on a ``_FuncPtr``.
         """
         library = _build_c_library(
             tmp_path,
@@ -306,6 +322,13 @@ class TestScaffoldedCtypesPackageRuns:
             assert ctypes.sizeof(_bindings.Dup) == ctypes.sizeof(ctypes.c_int)
             assert _bindings.Dup(a=3).a == 3
             assert _bindings._lib.Dup() == 11, "the C function is unreachable through the library object"
+
+            assert isinstance(_bindings._lib, ctypes.CDLL), "the library handle was replaced"
+            assert _bindings._lib._lib() == 13, "the C function is unreachable through the library object"
+
+            # A function following the collision in the export block still binds.
+            # This is what fails first when the handle is destroyed.
+            assert _bindings.thing_add(2, 3) == 5, "a later export did not survive the collision"
             print("INTACT")
         """)
         result = _run_python(
@@ -350,7 +373,13 @@ class TestScaffoldedCtypesPackageRuns:
             env={"PYTHONPATH": str(defaulted / "src"), "PROBE_BINDINGS_LIBRARY": ""},
         )
         assert fallback.returncode != 0, "the package found a library that is not installed under that name"
-        assert "probe_bindings" in fallback.stderr.split("OSError", 1)[-1], (
+        # ``[1]``, not ``[-1]``: on a one-element split ``[-1]`` is the whole
+        # stderr, which contains the package name in every traceback path, so
+        # the control would pass for a module broken in some unrelated way.
+        # The OSError check is what makes the index safe and the failure
+        # specific to the library lookup.
+        assert "OSError" in fallback.stderr, f"the fallback did not fail on the missing library:\n{fallback.stderr}"
+        assert "probe_bindings" in fallback.stderr.split("OSError", 1)[1], (
             f"the fallback did not look for the package's own name:\n{fallback.stderr}"
         )
 
@@ -392,9 +421,15 @@ class TestScaffoldedCtypesPackageRuns:
 
         result = _run_pytest("tests/", root=root, env={"PROBE_LIBRARY": str(library)})
         assert result.returncode == 0, f"generated tests do not pass:\n{result.stdout}\n{result.stderr}"
-        # Both files have to have been collected. A run that found only the
-        # tripwire would also exit 0.
-        assert "2 passed" in result.stdout, f"the generated suite did not run both files:\n{result.stdout}"
+
+        # Both files have to have been collected -- a run that found only the
+        # tripwire would also exit 0. Asserting the two *filenames* rather than
+        # a test count says what is actually meant: two tests inside one file
+        # would satisfy a count and leave the other file's syntax unexecuted.
+        collected = _run_pytest("tests/", "--collect-only", root=root, env={"PROBE_LIBRARY": str(library)})
+        assert collected.returncode == 0, f"the generated suite did not collect:\n{collected.stdout}"
+        for name in ("test_tripwire.py", "test_bindings.py"):
+            assert name in collected.stdout, f"the generated suite did not collect {name}:\n{collected.stdout}"
 
     def test_generated_tripwire_fails_when_the_native_library_is_absent(
         self, tmp_path: Path, backend_name: str

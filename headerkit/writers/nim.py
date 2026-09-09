@@ -205,11 +205,21 @@ def _c_type_spelling(name: str, is_typedef: bool, tag_keyword: str) -> str:
     of a tag-less ``typedef struct { ... } Rec;``.
 
     ``is_typedef`` is the discriminator the other writers already use for this
-    -- ``headerkit.writers.cffi._find_typedef_enum_pairs`` documents it. It is
-    set exactly when a typedef of the same name exists, which makes the bare
-    name a valid C type spelling whether or not the tag also exists. Without it
-    the tag keyword is required, since a plain ``struct Rec { ... };`` declares
-    no bare ``Rec``.
+    -- ``headerkit.writers.cffi._find_typedef_enum_pairs`` documents it. When it
+    is set, the bare name is a valid C type spelling; without it the tag keyword
+    is required, since a plain ``struct Rec { ... };`` declares no bare ``Rec``.
+
+    It is *not* simply "a typedef of the same name exists", and the rule differs
+    by declaration kind:
+
+    - a **record** sets it when the bare name spells the type -- no tag at all,
+      or an alias repeating the tag;
+    - an **enum** sets it only when there is no tag at all, because a tagged
+      ``typedef enum Switch { ... } Switch;`` really does declare
+      ``enum Switch``, and the cffi and Cython writers re-emit that tag.
+
+    So a tagged typedef'd enum has a same-named typedef and ``is_typedef=False``.
+    ``tests/test_regression_backend_parity.py`` pins both halves of that split.
     """
     return name if is_typedef else f"{tag_keyword} {name}"
 

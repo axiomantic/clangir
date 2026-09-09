@@ -1,6 +1,9 @@
 """Tests for the ctypes binding writer."""
 
+import ast
 import textwrap
+
+import pytest
 
 from headerkit.ir import (
     Array,
@@ -20,7 +23,9 @@ from headerkit.ir import (
 )
 from headerkit.writers.ctypes import (
     CTYPES_TYPE_MAP,
+    LOADER_BOUND_NAMES,
     CtypesWriter,
+    _library_loader,
     header_to_ctypes,
     type_to_ctypes,
 )
@@ -1221,3 +1226,88 @@ class TestVariables:
             # _lib.count: ctypes.c_int
             """)
         assert result == expected
+
+
+class TestLoaderCollisionSeed:
+    """The collision set must know every name the module itself binds.
+
+    A C function may legally be named ``_lib``, ``_load_library`` or ``os``. The
+    export block is emitted last, so any such name that is not reserved gets
+    re-exported over the thing it collides with.
+    """
+
+    def test_loader_bound_names_matches_the_template(self) -> None:
+        """Re-derive the loader's bindings from its own output.
+
+        ``LOADER_BOUND_NAMES`` is a literal, so it can drift the moment the
+        template binds something new. Parsing the rendered loader is an
+        independent derivation: a name added to the template and not to the
+        constant fails here rather than silently becoming re-exportable.
+        """
+        rendered = _library_loader("probe", "_lib")
+        tree = ast.parse(rendered)
+
+        bound = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                bound.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                bound.add(node.name)
+
+        assert bound == LOADER_BOUND_NAMES | {"_lib"}, (
+            "the loader template binds names the collision set does not reserve"
+        )
+
+    def test_a_function_named_lib_is_not_re_exported(self) -> None:
+        """``int _lib(void);`` must not overwrite the library handle."""
+        header = Header("collide.h", [Function("_lib", CType("int"), [])])
+        result = header_to_ctypes(header, library="collide")
+
+        assert "_lib = _lib._lib" not in result
+        assert "_lib = _load_library()" in result
+        assert "'_lib' is not re-exported" in result
+
+    @pytest.mark.parametrize("name", ["ctypes", "os", "sys"])
+    def test_a_function_named_after_an_import_is_not_re_exported(self, name: str) -> None:
+        """``int os(void);`` must not overwrite the imported module.
+
+        Every import the module writes unconditionally is covered, not one
+        representative: each is reserved by its own statement, so a test naming
+        only ``os`` leaves the others' reservations unguarded.
+        """
+        header = Header("collide.h", [Function(name, CType("int"), [])])
+        result = header_to_ctypes(header, library="collide")
+
+        assert f"import {name}" in result, "the import this reservation guards is not written"
+        assert f"{name} = _lib.{name}" not in result
+        assert f"'{name}' is not re-exported" in result
+
+    def test_a_conditional_import_is_reserved_only_when_written(self) -> None:
+        """``platform`` is imported only for a bit-field struct.
+
+        Reserving a name the module never binds would suppress a legitimate
+        export, so the seed follows the same conditionals the emission does.
+        Both halves are asserted here: reserving unconditionally passes the
+        collision half and fails this one.
+        """
+        fn = Function("platform", CType("int"), [])
+        # A zero-width unnamed bit-field on a wider carrier is what pulls in
+        # ``import platform``: whether it raises the record's alignment differs
+        # between the MSVC and Itanium ABIs, so the layout needs a runtime branch.
+        bitfield = Struct(
+            "Packed",
+            [
+                Field("c", CType("unsigned char"), bit_width=1),
+                Field("", CType("unsigned int"), bit_width=0, is_padding=True),
+                Field("flag", CType("unsigned char"), bit_width=1),
+            ],
+        )
+
+        without = header_to_ctypes(Header("plain.h", [fn]), library="probe")
+        assert "import platform" not in without
+        assert "platform = _lib.platform" in without, "a name the module never binds must stay exportable"
+
+        with_abi = header_to_ctypes(Header("packed.h", [bitfield, fn]), library="probe")
+        assert "import platform" in with_abi
+        assert "platform = _lib.platform" not in with_abi
+        assert "'platform' is not re-exported" in with_abi
