@@ -34,6 +34,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
+from headerkit.workorder import build_work_order_files
 from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 NIM_KEYWORDS: set[str] = {
@@ -859,6 +860,9 @@ class NimWriter(BaseWriter):
                 decl_checks,
             )
             files.append(OutputFile(path=f"tests/test_{pkg}.nim", content=unit_test))
+
+        if test_type in ("unit", "both"):
+            files.extend(build_work_order_files(unit, pkg, "nim"))
 
         return ProjectLayout(files=files)
 

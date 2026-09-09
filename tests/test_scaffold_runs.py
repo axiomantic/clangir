@@ -409,27 +409,46 @@ class TestScaffoldedCtypesPackageRuns:
         )
 
     def test_generated_tests_pass_against_the_real_library(self, tmp_path: Path, backend_name: str) -> None:
-        """Both generated test files must themselves run and pass.
+        """Both generated self-checking test files must themselves run and pass.
 
-        The whole ``tests/`` directory is the target, not ``test_tripwire.py``:
-        the tripwire and the unit test are emitted from separate templates, and
-        naming one file leaves the other's syntax unexecuted by anything in the
-        repository.
+        Both are named, not just ``test_tripwire.py``: the tripwire and the unit
+        test are emitted from separate templates, and naming one leaves the
+        other's syntax unexecuted by anything in the repository.
+
+        ``tests/`` as a whole is *not* the target, because the scaffolder also
+        emits ``test_workorder.py``, whose Tier 2 and Tier 3 cases fail on
+        purpose until a human writes the assertions. A directory-wide run would
+        make this gate red for the one reason that means the generator is
+        working. The exclusion is not a blind spot: the work-order suite is
+        asserted below to collect and to be red, so a work-order file that
+        vanished, or that went quietly green, still fails here.
         """
         library = _build_c_library(tmp_path, "probe")
         root = _scaffold_to("ctypes", tmp_path, "probe", backend_name=backend_name)
 
-        result = _run_pytest("tests/", root=root, env={"PROBE_LIBRARY": str(library)})
+        result = _run_pytest(
+            "tests/test_tripwire.py",
+            "tests/test_bindings.py",
+            root=root,
+            env={"PROBE_LIBRARY": str(library)},
+        )
         assert result.returncode == 0, f"generated tests do not pass:\n{result.stdout}\n{result.stderr}"
 
-        # Both files have to have been collected -- a run that found only the
-        # tripwire would also exit 0. Asserting the two *filenames* rather than
-        # a test count says what is actually meant: two tests inside one file
+        # Every file has to have been collected -- a run that found only the
+        # tripwire would also exit 0. Asserting the *filenames* rather than a
+        # test count says what is actually meant: two tests inside one file
         # would satisfy a count and leave the other file's syntax unexecuted.
         collected = _run_pytest("tests/", "--collect-only", root=root, env={"PROBE_LIBRARY": str(library)})
         assert collected.returncode == 0, f"the generated suite did not collect:\n{collected.stdout}"
-        for name in ("test_tripwire.py", "test_bindings.py"):
+        for name in ("test_tripwire.py", "test_bindings.py", "test_workorder.py"):
             assert name in collected.stdout, f"the generated suite did not collect {name}:\n{collected.stdout}"
+
+        # The outstanding work is outstanding. A work-order suite that exits 0
+        # has stopped asking for the assertions it exists to ask for.
+        work_order = _run_pytest("tests/test_workorder.py", root=root, env={"PROBE_LIBRARY": str(library)})
+        assert work_order.returncode != 0, (
+            f"the generated work-order suite passes; its stubs no longer fail:\n{work_order.stdout}"
+        )
 
     def test_generated_tripwire_fails_when_the_native_library_is_absent(
         self, tmp_path: Path, backend_name: str
