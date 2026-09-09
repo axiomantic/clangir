@@ -14,7 +14,8 @@ import ctypes
 import math
 import re
 import textwrap
-from typing import ClassVar
+import warnings
+from typing import Any, ClassVar
 
 from headerkit.ir import (
     Array,
@@ -296,6 +297,59 @@ _UNVERIFIED_NAME = "HEADERKIT_UNVERIFIED_RECORDS"
 #: is the only place the fact is recorded per class, and it names the class.
 _UNVERIFIED_MARKER = re.compile(r"^\s*# HEADERKIT: packed record (\w+) has no faithful ctypes$", re.MULTILINE)
 
+
+def _ctypes_scalar(expr: str) -> type | None:
+    """The ctypes scalar class named by a rendered writer expression."""
+    if not expr.startswith("ctypes."):
+        return None
+    obj = getattr(ctypes, expr[len("ctypes.") :], None)
+    return obj if isinstance(obj, type) else None
+
+
+def _measure_ctypes_layout(
+    layout: list[tuple[str, str, int | None]], *, is_union: bool
+) -> tuple[int, int, dict[str, int]] | None:
+    """Ask ctypes where it will put these fields: ``(size bits, align bits, first bit per name)``.
+
+    The class is created but never instantiated. Creating it runs the layout
+    engine, which is the thing being measured; instantiating it would run the
+    record, and a record ctypes lays out wrongly can write outside its own
+    storage -- measured on CPython 3.10 and 3.13, where assigning to the second
+    bit-field of a union corrupts the heap and the interpreter dies at the next
+    collection. Field descriptors carry everything needed and cost nothing.
+
+    None when the engine rejects the spelling outright, which is itself a
+    reason to flag the record rather than emit it.
+    """
+    fields: list[tuple[Any, ...]] = []
+    for name, expr, width in layout:
+        carrier = _ctypes_scalar(expr)
+        if carrier is None:
+            return None
+        fields.append((name, carrier) if width is None else (name, carrier, width))
+    namespace: dict[str, Any] = {"_pack_": 1, "_fields_": fields}
+    base = ctypes.Union if is_union else ctypes.Structure
+    try:
+        with warnings.catch_warnings():
+            # ``_pack_`` warns from 3.14 that it selects the MSVC layout. The
+            # generated module carries that fact; measuring must not reprint it
+            # once per record at generation time.
+            warnings.simplefilter("ignore")
+            probe = type("_HKProbe", (base,), namespace)
+        starts: dict[str, int] = {}
+        for name, _expr, width in layout:
+            descriptor = getattr(probe, name)
+            if width is None:
+                starts[name] = descriptor.offset * 8
+            else:
+                # ``size`` packs the bit width in its high half and the offset
+                # within the storage unit in its low half.
+                starts[name] = descriptor.offset * 8 + (descriptor.size & 0xFFFF)
+        return ctypes.sizeof(probe) * 8, ctypes.alignment(probe) * 8, starts
+    except Exception:  # noqa: BLE001 -- any refusal means "cannot be reproduced"
+        return None
+
+
 _UNTRACKABLE_PADDING_DIAGNOSTIC = (
     "an unnamed bitfield of {width} bits follows a member whose bit offset "
     "the writer cannot track, so the reserved bits cannot be respelled "
@@ -507,15 +561,35 @@ class _StructBody:
             # unsigned int : 8;`` moves the unpacked offset to 20 by the
             # declared unit but reserves only 8 bits when packed.
             if packed_start is None:
-                self.diagnostic = _UNTRACKABLE_PADDING_DIAGNOSTIC.format(width=width)
-                return True
+                return self._reserve_untrackable_padding(expr, width)
             span = _byte_split(packed_start, packed_start + width)
         elif start is None or self.bit_pos is None:
-            self.diagnostic = _UNTRACKABLE_PADDING_DIAGNOSTIC.format(width=width)
-            return True
+            return self._reserve_untrackable_padding(expr, width)
         else:
             span = _byte_split(start, self.bit_pos)
         for chunk in span:
+            flat_name = self._next_flat_pad()
+            self.flat_entries.append(f'("{flat_name}", ctypes.c_ubyte, {chunk})')
+            self.flat_layout.append((flat_name, "ctypes.c_ubyte", chunk))
+        return True
+
+    def _reserve_untrackable_padding(self, expr: str, width: int) -> bool:
+        """Reserve padding whose bit offset the writer could not follow.
+
+        The offset decides only how the span is *spelled* -- byte-granular
+        chunks need to know which byte they start in. Not knowing it is no
+        reason to reserve nothing: dropping the entry deletes the bits from the
+        record and silently moves every member after them. The declared type
+        reserves the right number of bits whatever the phase, and the record is
+        reported rather than passed off as reproduced.
+        """
+        self.diagnostic = _UNTRACKABLE_PADDING_DIAGNOSTIC.format(width=width)
+        # Byte carriers rather than the declared type: they reserve the same
+        # bits without opening a wide storage unit and without raising the
+        # record's alignment, which is what the phase would have been needed
+        # for. The chunking is what an offset of zero would give, and any
+        # phase error is confined to the padding itself.
+        for chunk in _byte_split(0, width):
             flat_name = self._next_flat_pad()
             self.flat_entries.append(f'("{flat_name}", ctypes.c_ubyte, {chunk})')
             self.flat_layout.append((flat_name, "ctypes.c_ubyte", chunk))
@@ -615,47 +689,80 @@ class _StructBody:
             self.narrowed_carrier = (expr, align_bits)
         return narrow
 
-    def packed_divergence(self) -> tuple[str, int] | None:
-        """The first field a packed spelling misplaces, as ``(name, C bit offset)``.
+    def packed_c_layout(self) -> tuple[int, int, dict[str, int]] | None:
+        """C's layout of the emitted spelling: ``(size bits, align bits, first bit per name)``.
 
-        Two offsets are walked side by side over the tuples that are actually
-        emitted. C's packed offset never rounds for a bit-field and rounds only
-        to a byte for a plain member. ctypes keeps allocating storage units
-        whatever ``_pack_`` says: a bit-field that changes carrier, or that no
-        longer fits the open unit, opens a new unit at the next byte *past the
-        end of the old one*, which is not where C put it.
+        Read off ``flat_layout``, which transcribes the record member for
+        member. Packing removes the storage unit, so a bit-field starts at the
+        very next bit and only a plain member rounds -- to a byte, never to its
+        declared alignment. Every member of a union starts at bit zero and the
+        union is as wide as its widest member.
 
-        Only the first disagreement is reported, and only when the two offsets
-        were still in step immediately before it -- so the reported field is
-        one ctypes provably misplaces, not one this model merely cannot follow.
-        Every field after it is suspect, which the diagnostic says.
+        None when a member's size cannot be read from the scalar table, which
+        makes the record unjudgeable rather than wrong.
         """
-        if self.is_union or not self.is_packed:
-            return None
-        c_pos = 0
-        t_pos = 0
-        unit: tuple[int, int, str] | None = None  # (start, bits, expression)
+        starts: dict[str, int] = {}
+        position = 0
+        widest = 0
         for name, expr, width in self.flat_layout:
             info = _ctypes_scalar_bits(expr)
             if info is None:
                 return None
-            size_bits = info[0]
-            unit_end = unit[0] + unit[1] if unit is not None else t_pos
+            span = info[0] if width is None else width
+            if self.is_union:
+                starts[name] = 0
+                widest = max(widest, span)
+                continue
             if width is None:
-                t_start = _round_up(unit_end, 8)
-                c_start = _round_up(c_pos, 8)
-                unit = None
-            elif unit is not None and expr == unit[2] and t_pos + width <= unit[0] + unit[1]:
-                t_start = t_pos
-                c_start = c_pos
-            else:
-                t_start = _round_up(unit_end, 8)
-                c_start = c_pos
-                unit = (t_start, size_bits, expr)
-            if t_start != c_start:
-                return name, c_start
-            t_pos = t_start + (size_bits if width is None else width)
-            c_pos = c_start + (size_bits if width is None else width)
+                position = _round_up(position, 8)
+            starts[name] = position
+            position += span
+        total = widest if self.is_union else position
+        return _round_up(total, 8), 8, starts
+
+    def packed_divergence(self) -> tuple[str, int] | None:
+        """The first field the emitted spelling misplaces, as ``(name, C bit offset)``.
+
+        The answer is **measured, not modelled**. The class ctypes will build
+        from these very tuples is built here, and its field descriptors are read
+        back: ``offset`` gives the storage unit's byte and the high and low
+        halves of ``size`` give a bit-field's width and its bit offset within
+        that unit. Nothing is instantiated, so this cannot execute generated
+        code or touch memory the layout engine got wrong.
+
+        Modelling the allocator instead is what this replaced, and it could not
+        be made right: ctypes has three bit-field algorithms -- the pre-3.14
+        one, the gcc-sysv and MSVC ones it chooses between from 3.14, and the
+        MSVC one it has always used on Windows -- and a model in the writer
+        encodes exactly one of them. Asking the engine that will lay the record
+        out is correct on all of them by construction, including for unions,
+        whose members ctypes places correctly only from 3.14.
+
+        Reported for the first name that disagrees; the record's own size and
+        alignment count as a disagreement too, attributed to the first field so
+        the diagnostic always names something the reader can look at.
+        """
+        if not self.is_packed:
+            return None
+        if not self.flat_layout:
+            return None
+        expected = self.packed_c_layout()
+        measured = None if expected is None else _measure_ctypes_layout(self.flat_layout, is_union=self.is_union)
+        if expected is None or measured is None:
+            # Unjudgeable is not the same as correct. A member whose size the
+            # scalar table cannot supply -- a nested record, an array -- leaves
+            # the layout unverified, and the tuple this feeds is named for
+            # exactly that.
+            first = self.flat_layout[0][0]
+            return first, -1 if expected is None else expected[2][first]
+        exp_size, exp_align, exp_starts = expected
+        got_size, got_align, got_starts = measured
+        for name, _expr, _width in self.flat_layout:
+            if got_starts.get(name) != exp_starts.get(name):
+                return name, exp_starts[name]
+        if (got_size, got_align) != (exp_size, exp_align):
+            first = self.flat_layout[0][0]
+            return first, exp_starts[first]
         return None
 
     def add_member(self, f: Field) -> None:
@@ -773,10 +880,17 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         if divergence is not None:
             name, c_bit = divergence
             lines.append(f"    # HEADERKIT: packed record {class_name} has no faithful ctypes")
-            lines.append(f"    # spelling. C places '{name}' at bit {c_bit}; ctypes allocates a")
-            lines.append("    # storage unit per bit-field and cannot open one there, so")
-            lines.append(f"    # '{name}' and every field after it may be misplaced. Verify")
-            lines.append("    # this record against your C compiler before relying on it.")
+            if c_bit < 0:
+                lines.append("    # spelling that this writer could verify: a member's size is not")
+                lines.append("    # readable from the ctypes scalar table, so the layout was not")
+                lines.append("    # checked against C at all.")
+            else:
+                lines.append(f"    # spelling. This interpreter's ctypes places '{name}' somewhere")
+                lines.append(f"    # other than bit {c_bit}, where C places it, so '{name}' and every")
+                lines.append("    # field after it may be misplaced.")
+            if body.diagnostic is not None:
+                lines.append("    # The writer also reports: " + body.diagnostic + ".")
+            lines.append("    # Verify this record against your C compiler before relying on it.")
         lines.append("    _fields_ = [")
         lines.extend(f"        {entry}," for entry in body.flat_entries)
         lines.append("    ]")
@@ -1029,6 +1143,8 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
     if unverified:
         output_lines.append("#: Records in this module whose layout ctypes could not reproduce.")
         output_lines.append("#: Each also carries a '# HEADERKIT:' comment on its class.")
+        output_lines.append("#: Defined only when non-empty, so read it as")
+        output_lines.append('#: getattr(mod, "HEADERKIT_UNVERIFIED_RECORDS", ()) -- absent means none.')
         output_lines.append(f"{_UNVERIFIED_NAME} = (")
         output_lines.extend(f'    "{name}",' for name in unverified)
         output_lines.append(")")

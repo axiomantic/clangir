@@ -222,38 +222,44 @@ def _first_conditional_pack(node: Any) -> int | None:
     return None
 
 
-def _pack_regions(root: Any) -> tuple[list[tuple[int, int | None]], int | None]:
+def _pack_regions(root: Any) -> tuple[list[tuple[int, int | None]], list[tuple[int, int | None]]]:
     """Map source positions to the ``#pragma pack`` alignment in force there.
 
     Returns ``(start_byte, alignment)`` pairs in ascending order, where
-    ``alignment`` is ``None`` for the compiler default, together with the offset
-    of the first pack pragma found inside a conditional preprocessor branch (or
-    None if there was none). A record is matched to a region by its own start
-    offset, which is what gives the pragma its scope: ``#pragma pack(1)``
-    applies to records that carry no attribute of their own, and ``#pragma
-    pack()`` or ``pop`` ends that scope.
+    ``alignment`` is ``None`` for the compiler default, together with the byte
+    ranges over which the pack state is unknown. A record is matched to a
+    region by its own start offset, which is what gives the pragma its scope:
+    ``#pragma pack(1)`` applies to records that carry no attribute of their
+    own, and ``#pragma pack()`` or ``pop`` ends that scope.
 
     Conditional branches are not descended into. ``#ifdef _MSC_VER / #pragma
     pack(push, 1) / #else / #pragma pack(4) / #endif`` has two mutually
     exclusive answers, and walking both would leave whichever ``#endif`` came
-    last in force -- an alignment no translation of the header ever has. The
-    offset returned instead lets the record converter say the answer is
-    unknown from there on.
+    last in force -- an alignment no translation of the header ever has.
+
+    The uncertainty such a block creates is bounded, not permanent. It ends at
+    the next pragma that states the pack state outright -- ``pack(N)``,
+    ``pack()`` or ``pack(pop)`` -- because from there the alignment is the same
+    whichever branch the preprocessor took. Running the doubt to end of file
+    instead would put a note on every later record in a header using the
+    ordinary ``#ifdef _MSC_VER`` guard, which is most of them.
     """
     regions: list[tuple[int, int | None]] = []
     stack: list[int | None] = []
     current: int | None = None
-    conditional_pack: int | None = None
+    unknown: list[tuple[int, int | None]] = []
 
     def visit(node: Any) -> None:
-        nonlocal current, conditional_pack
+        nonlocal current
         if node.type in _CONDITIONAL_PREPROC:
             found = _first_conditional_pack(node)
-            if found is not None and (conditional_pack is None or found < conditional_pack):
-                conditional_pack = found
+            if found is not None and (not unknown or unknown[-1][1] is not None):
+                unknown.append((found, None))
             return
         words = _pack_pragma_words(node)
         if words is not None:
+            if unknown and unknown[-1][1] is None:
+                unknown[-1] = (unknown[-1][0], node.end_byte)
             if not words:  # pragma pack() -- reset to default
                 current = None
             elif words[0] == "push":
@@ -276,7 +282,7 @@ def _pack_regions(root: Any) -> tuple[list[tuple[int, int | None]], int | None]:
 
     visit(root)
     regions.sort(key=lambda r: r[0])
-    return regions, conditional_pack
+    return regions, unknown
 
 
 def _pack_at(regions: list[tuple[int, int | None]], offset: int) -> int | None:
@@ -370,10 +376,11 @@ class TreeSitterBackend:
         self._lifted_declarations: list[Declaration] = []
         self._filled_forward: Struct | None = None
         self._pack_regions: list[tuple[int, int | None]] = []
-        #: Offset of the first ``#pragma pack`` seen inside a conditional
-        #: preprocessor branch, whose effect on later records is unknowable
-        #: without evaluating the condition.
-        self._conditional_pack: int | None = None
+        #: Byte ranges over which a ``#pragma pack`` inside a conditional
+        #: preprocessor branch leaves the alignment unknowable. Each ends at the
+        #: next pragma that states the pack state outright, so the doubt covers
+        #: the records it can actually affect rather than the rest of the file.
+        self._unknown_pack_ranges: list[tuple[int, int | None]] = []
 
     def is_available(self) -> bool:
         return _HAS_TREESITTER and (_HAS_TREESITTER_C or _HAS_TREESITTER_CPP)
@@ -398,7 +405,10 @@ class TreeSitterBackend:
                 f"Record is under an intermediate '#pragma pack({pack_alignment})', "
                 "which squeezes the layout without flattening it; is_packed cannot express that."
             )
-        if self._conditional_pack is not None and node.start_byte > self._conditional_pack:
+        if any(
+            start < node.start_byte and (end is None or node.start_byte < end)
+            for start, end in self._unknown_pack_ranges
+        ):
             notes.append(
                 "A '#pragma pack' appears inside a conditional preprocessor branch "
                 "earlier in this file. Which branch applies is not knowable without "
@@ -505,7 +515,7 @@ class TreeSitterBackend:
         self._seen_typedefs = set()
         self._lifted_declarations = []
         self._filled_forward = None
-        self._pack_regions, self._conditional_pack = _pack_regions(tree.root_node)
+        self._pack_regions, self._unknown_pack_ranges = _pack_regions(tree.root_node)
 
         declarations: list[Declaration] = []
         for child in tree.root_node.children:

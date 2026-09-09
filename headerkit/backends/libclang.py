@@ -94,9 +94,21 @@ _NATURAL_ALIGN_MAX_DEPTH = 8
 #: record's own alignment to 1, so anything above 1 came from the bit-field.
 _UNNAMED_BITFIELD_PROBE = "struct _hk_abi_probe { char a; unsigned int : 8; char b; };\n"
 
+#: Index owning every ABI probe translation unit. Held for the life of the
+#: process because clang frees a TU's memory with the index that made it.
+_PROBE_INDEX: Any = None
 
-@functools.lru_cache(maxsize=16)
-def _unnamed_bitfields_impose_alignment(args: tuple[str, ...], is_cplus: bool) -> bool:
+
+def _get_probe_index() -> Any:
+    """The shared index for ABI probes, created on first use."""
+    global _PROBE_INDEX
+    if _PROBE_INDEX is None:
+        _PROBE_INDEX = _cindex.Index.create()
+    return _PROBE_INDEX
+
+
+@functools.lru_cache(maxsize=256)
+def _unnamed_bitfields_impose_alignment(args: tuple[str, ...], is_cplus: bool) -> bool | None:
     """Whether this target gives an unnamed bit-field's alignment to its record.
 
     Measured with clang rather than assumed, because the answer is an ABI
@@ -112,19 +124,31 @@ def _unnamed_bitfields_impose_alignment(args: tuple[str, ...], is_cplus: bool) -
     excluding the bit-field puts the natural figure at 1, hides the packing,
     and emits a binding whose members are at the wrong offsets.
 
-    Falls back to False, the Itanium answer, if the probe cannot be parsed.
+    Returns None when the probe could not be measured -- a parse error, or a
+    clang that will not accept the arguments -- which the caller records rather
+    than silently taking one ABI's answer for the other's. The result is cached
+    per argument set, so a wrong answer would otherwise be pinned for the life
+    of the process.
     """
-    with contextlib.suppress(Exception):
+    try:
         name = "_hk_abi_probe.cpp" if is_cplus else "_hk_abi_probe.c"
-        tu = _cindex.Index.create().parse(
+        # The index must outlive the translation unit it produces: clang frees
+        # a TU's memory with its index, so a temporary one leaves the cursors
+        # below pointing into freed storage. Measured as a segmentation fault
+        # after roughly three subsequent parses in the same process.
+        tu = _get_probe_index().parse(
             name,
             args=list(args),
             unsaved_files=[(name, _UNNAMED_BITFIELD_PROBE)],
         )
+        if any(d.severity >= _cindex.Diagnostic.Error for d in tu.diagnostics):
+            return None
         for cursor in tu.cursor.get_children():
             if cursor.spelling == "_hk_abi_probe":
                 return bool(cursor.type.get_align() > 1)
-    return False
+    except Exception:  # noqa: BLE001 -- any clang failure means "not measured"
+        return None
+    return None
 
 
 def normalize_path(path: str) -> str:
@@ -1077,8 +1101,11 @@ class ClangASTConverter:
         self.allowlist_paths = allowlist_paths
         self.denylist_paths = denylist_paths
         #: Whether this translation unit's target gives an unnamed bit-field's
-        #: alignment to its record. Measured once per argument set.
-        self._unnamed_bitfields_align = _unnamed_bitfields_impose_alignment(parse_args, is_cplus)
+        #: alignment to its record. Measured once per argument set; None when
+        #: the probe could not be measured at all, which is reported on any
+        #: record it could have changed the answer for rather than guessed.
+        self._measured_bitfield_align = _unnamed_bitfields_impose_alignment(parse_args, is_cplus)
+        self._unnamed_bitfields_align = bool(self._measured_bitfield_align)
         self.declarations: list[Declaration] = []
         # Track seen declarations to avoid duplicates
         self._seen: set[str] = set()
@@ -1983,6 +2010,26 @@ class ClangASTConverter:
             )
         return None
 
+    def _unmeasured_bitfield_align_note(self, cursor: Any) -> str | None:
+        """Report a record whose packing turned on an ABI question clang would not answer.
+
+        Only records carrying an unnamed bit-field are affected: for every other
+        record the two ABIs agree, so an unmeasured probe changes nothing and a
+        note would be noise. Where it does matter, saying so is the difference
+        between a wrong answer and a known-unknown.
+        """
+        if self._measured_bitfield_align is not None:
+            return None
+        with contextlib.suppress(Exception):
+            if not any(f.is_bitfield() and not f.spelling for f in cursor.type.get_fields()):
+                return None
+            return (
+                "Record contains an unnamed bit-field and clang could not be asked whether "
+                "this target gives such a field its type's alignment, so is_packed was "
+                "resolved with the Itanium C++ ABI's answer and is unverified here."
+            )
+        return None
+
     def _member_natural_align(self, member_type: Any, depth: int = 0) -> int:
         """Alignment ``member_type`` would impose if nothing had been packed.
 
@@ -2445,6 +2492,9 @@ class ClangASTConverter:
         pack_note = self._pack_note(cursor)
         if pack_note is not None:
             notes.append(pack_note)
+        unmeasured_note = self._unmeasured_bitfield_align_note(cursor)
+        if unmeasured_note is not None:
+            notes.append(unmeasured_note)
         vtable_entries = [m for m in methods if m.is_virtual or m.is_pure_virtual]
 
         struct = Struct(
