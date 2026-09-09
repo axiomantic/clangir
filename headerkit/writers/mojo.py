@@ -29,7 +29,7 @@ from headerkit.ir import (
     TypeExpr,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 MOJO_KEYWORDS: set[str] = {
     "alias",
@@ -627,18 +627,21 @@ class MojoWriter(BaseWriter):
             tw_lines = [f'    _ = handle.get_function[{sig}]("{sym}")' for sym, sig in signatures]
             tw_body = "\n".join(tw_lines) if tw_lines else "    # Library opened successfully"
 
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 from sys.ffi import DLHandle
 
                 fn test_tripwire_bindings() raises:
                     # Tripwire: verifies foreign dynamic library can be opened and symbols resolved
                     var handle = DLHandle("{pkg}")
-                {tw_body}
+                {DEDENT_BLOCK}
                     handle.close()
 
                 fn main() raises:
                     test_tripwire_bindings()
-            """)
+            """,
+                tw_body,
+            )
             files.append(OutputFile(path="tests/test_tripwire.mojo", content=tripwire))
 
         if test_type in ("unit", "both"):
