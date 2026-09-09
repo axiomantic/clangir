@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import math
+import platform
 import re
 import textwrap
 import warnings
@@ -306,8 +307,86 @@ def _ctypes_scalar(expr: str) -> type | None:
     return obj if isinstance(obj, type) else None
 
 
+def _ctypes_member_type(expr: str, nested: dict[str, type] | None = None) -> type | None:
+    """The ctypes class a rendered *member* expression names, arrays included.
+
+    A plain member may be an array -- ``ctypes.c_ubyte * 16`` -- which the
+    scalar table cannot name but whose size is exactly knowable. Packed records
+    in real headers are network and file formats, where a byte array is the
+    commonest member shape there is, so treating one as unmeasurable would
+    report most packed records as unverified and spend the signal that a
+    genuine report depends on.
+
+    ``nested`` supplies the record classes the enclosing body has already
+    built. None for anything left unresolved -- notably the bare C spelling the
+    writer passes through for a struct- or enum-typed member, which is not
+    valid Python either.
+    """
+    if nested and expr in nested:
+        return nested[expr]
+    base, *lengths = expr.split(" * ")
+    scalar = _ctypes_scalar(base)
+    if scalar is None:
+        return None
+    member: Any = scalar
+    for length in lengths:
+        # ``c_ubyte * 4 * 4`` is a two-dimensional array and folds the same way.
+        if not length.strip().isdigit():
+            return None
+        member = member * int(length.strip())
+    result: type = member
+    return result
+
+
+def _ctypes_member_bits(expr: str, nested: dict[str, type] | None = None) -> tuple[int, int] | None:
+    """Size and alignment, in bits, of the member ``expr`` names."""
+    member = _ctypes_member_type(expr, nested)
+    if member is None:
+        return None
+    try:
+        return ctypes.sizeof(member) * 8, ctypes.alignment(member) * 8
+    except TypeError:
+        return None
+
+
+def _build_probe_type(
+    layout: list[tuple[str, str, int | None]],
+    *,
+    is_union: bool,
+    packed: bool = True,
+    nested: dict[str, type] | None = None,
+) -> type | None:
+    """The class ctypes will build from these tuples, or None if it refuses.
+
+    Created, never instantiated: creating it runs the layout engine, which is
+    the thing being measured, while instantiating it would run the record -- and
+    a record ctypes lays out wrongly can write outside its own storage. Measured
+    on CPython 3.10 and 3.13, where assigning to the second bit-field of a union
+    corrupts the heap and the interpreter dies at the next collection.
+    """
+    fields: list[tuple[Any, ...]] = []
+    for name, expr, width in layout:
+        carrier = _ctypes_scalar(expr) if width is not None else _ctypes_member_type(expr, nested)
+        if carrier is None:
+            return None
+        fields.append((name, carrier) if width is None else (name, carrier, width))
+    namespace: dict[str, Any] = {"_fields_": fields}
+    if packed:
+        namespace["_pack_"] = 1
+    base = ctypes.Union if is_union else ctypes.Structure
+    try:
+        with warnings.catch_warnings():
+            # ``_pack_`` warns from 3.14 that it selects the MSVC layout. The
+            # generated module carries that fact; measuring must not reprint it
+            # once per record at generation time.
+            warnings.simplefilter("ignore")
+            return type("_HKProbe", (base,), namespace)
+    except Exception:  # noqa: BLE001 -- any refusal means "cannot be reproduced"
+        return None
+
+
 def _measure_ctypes_layout(
-    layout: list[tuple[str, str, int | None]], *, is_union: bool
+    layout: list[tuple[str, str, int | None]], *, is_union: bool, nested: dict[str, type] | None = None
 ) -> tuple[int, int, dict[str, int]] | None:
     """Ask ctypes where it will put these fields: ``(size bits, align bits, first bit per name)``.
 
@@ -321,30 +400,23 @@ def _measure_ctypes_layout(
     None when the engine rejects the spelling outright, which is itself a
     reason to flag the record rather than emit it.
     """
-    fields: list[tuple[Any, ...]] = []
-    for name, expr, width in layout:
-        carrier = _ctypes_scalar(expr)
-        if carrier is None:
-            return None
-        fields.append((name, carrier) if width is None else (name, carrier, width))
-    namespace: dict[str, Any] = {"_pack_": 1, "_fields_": fields}
-    base = ctypes.Union if is_union else ctypes.Structure
+    probe = _build_probe_type(layout, is_union=is_union, nested=nested)
+    if probe is None:
+        return None
     try:
-        with warnings.catch_warnings():
-            # ``_pack_`` warns from 3.14 that it selects the MSVC layout. The
-            # generated module carries that fact; measuring must not reprint it
-            # once per record at generation time.
-            warnings.simplefilter("ignore")
-            probe = type("_HKProbe", (base,), namespace)
         starts: dict[str, int] = {}
         for name, _expr, width in layout:
             descriptor = getattr(probe, name)
-            if width is None:
-                starts[name] = descriptor.offset * 8
-            else:
-                # ``size`` packs the bit width in its high half and the offset
-                # within the storage unit in its low half.
-                starts[name] = descriptor.offset * 8 + (descriptor.size & 0xFFFF)
+            # ``size`` packs the bit width in its high half and the offset
+            # within the storage unit in its low half. That decode holds for a
+            # well-formed descriptor; where ctypes has mislaid a field it can
+            # produce a degenerate one -- the union bit-fields it misplaces on
+            # CPython 3.10 and 3.13 decode to a negative position -- so a
+            # negative result is reported unmeasurable rather than compared.
+            start = descriptor.offset * 8 + (0 if width is None else descriptor.size & 0xFFFF)
+            if start < 0:
+                return None
+            starts[name] = start
         return ctypes.sizeof(probe) * 8, ctypes.alignment(probe) * 8, starts
     except Exception:  # noqa: BLE001 -- any refusal means "cannot be reproduced"
         return None
@@ -391,6 +463,10 @@ class _StructBody:
         #: This is what the packed-layout model is walked over, so it describes
         #: the spelling that is actually emitted rather than the source fields.
         self.flat_layout: list[tuple[str, str, int | None]] = []
+        #: Nested record classes this body refers to by name, with the size C
+        #: gives each. A record containing one is measurable only with both.
+        self.nested_types: dict[str, type] = {}
+        self.nested_c_bits: dict[str, int] = {}
         self.pad_index = 0
         self.flat_pad_index = 0
         self.padding_bits = 0
@@ -481,7 +557,7 @@ class _StructBody:
     def _advance_plain(self, expr: str) -> None:
         if self.is_union:
             return
-        info = _ctypes_scalar_bits(expr)
+        info = _ctypes_member_bits(expr, self.nested_types)
         if info is None or self.bit_pos is None:
             self.bit_pos = None
             self.packed_bit_pos = None
@@ -651,10 +727,21 @@ class _StructBody:
         self._add_both(f'("{field_name}", {cls_name})', (field_name, cls_name, None))
         self.has_member = True
         self.member_align_bits = None
-        # The nested record carries its own alignment, so the offset past it is
-        # not derivable from the scalar table.
-        self.bit_pos = None
-        self.packed_bit_pos = None
+        # A nested record can be sized like any other member as long as it can
+        # be built and C's size for it derived. Only then does the enclosing
+        # record stay measurable and its running offset trackable; failing
+        # that, the offset really is unknown from here on.
+        probe = _probe_record(inner)
+        if probe is None:
+            self.bit_pos = None
+            self.packed_bit_pos = None
+            return True
+        self.nested_types[cls_name] = probe[0]
+        self.nested_c_bits[cls_name] = probe[1]
+        if self.bit_pos is not None:
+            self.bit_pos = _round_up(self.bit_pos, 8) + probe[1]
+        if self.packed_bit_pos is not None:
+            self.packed_bit_pos = _round_up(self.packed_bit_pos, 8) + probe[1]
         return True
 
     def _portable_bitfield_carrier(self, expr: str, width: int) -> str:
@@ -705,7 +792,12 @@ class _StructBody:
         position = 0
         widest = 0
         for name, expr, width in self.flat_layout:
-            info = _ctypes_scalar_bits(expr)
+            if width is None and expr in self.nested_c_bits:
+                info: tuple[int, int] | None = (self.nested_c_bits[expr], 8)
+            elif width is None:
+                info = _ctypes_member_bits(expr, self.nested_types)
+            else:
+                info = _ctypes_scalar_bits(expr)
             if info is None:
                 return None
             span = info[0] if width is None else width
@@ -747,7 +839,11 @@ class _StructBody:
         if not self.flat_layout:
             return None
         expected = self.packed_c_layout()
-        measured = None if expected is None else _measure_ctypes_layout(self.flat_layout, is_union=self.is_union)
+        measured = (
+            None
+            if expected is None
+            else _measure_ctypes_layout(self.flat_layout, is_union=self.is_union, nested=self.nested_types)
+        )
         if expected is None or measured is None:
             # Unjudgeable is not the same as correct. A member whose size the
             # scalar table cannot supply -- a nested record, an array -- leaves
@@ -800,13 +896,8 @@ def _alignment_entries(body: _StructBody, *, include_padding: bool) -> list[str]
     return entries
 
 
-def _record_body(decl: Struct, class_name: str) -> list[str] | None:
-    """Render a ctypes class for ``decl``, or None when it cannot be represented."""
-    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
-
-    if not decl.fields:
-        return [f"class {class_name}({base_class}):", "    pass"]
-
+def _collect_body(decl: Struct) -> _StructBody | None:
+    """Accumulate the class body for ``decl``, or None if it cannot be represented."""
     body = _StructBody(decl.is_union, decl.is_packed)
     for index, f in enumerate(decl.fields):
         if f.is_padding:
@@ -819,6 +910,55 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
             return None
         else:
             body.add_member(f)
+    return body
+
+
+def _probe_record(decl: Struct) -> tuple[type, int] | None:
+    """A ctypes type for ``decl`` and the size, in bits, C gives it.
+
+    Both are needed by a record that *contains* this one: without the type the
+    enclosing record cannot be laid out, and without C's size for it the
+    enclosing record's own C layout cannot be derived. None when either is
+    unavailable, which leaves the container honestly unjudgeable rather than
+    judged against a guess.
+    """
+    if not decl.fields:
+        return None
+    inner = _collect_body(decl)
+    if inner is None or not inner.flat_layout:
+        return None
+    probe = _build_probe_type(
+        inner.flat_layout, is_union=inner.is_union, packed=decl.is_packed, nested=inner.nested_types
+    )
+    if probe is None:
+        return None
+    if decl.is_packed:
+        expected = inner.packed_c_layout()
+        if expected is None:
+            return None
+        return probe, expected[0]
+    # An unpacked nested record keeps its own natural layout even inside a
+    # packed one: ``struct __attribute__((packed)) { unsigned char a; struct {
+    # unsigned char x; unsigned int y; }; unsigned char b; }`` measures 10 bytes
+    # in C with the inner spanning eight of them -- packing moved the inner to
+    # byte 1 but did not squeeze it. ctypes reproduces an unpacked record's
+    # layout, which is the assumption the rest of this writer already rests on,
+    # so its size is the one to use.
+    return probe, ctypes.sizeof(probe) * 8
+
+
+def _record_body(
+    decl: Struct, class_name: str, expectations: dict[str, tuple[int, int, dict[str, int]] | None] | None = None
+) -> list[str] | None:
+    """Render a ctypes class for ``decl``, or None when it cannot be represented."""
+    base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
+
+    if not decl.fields:
+        return [f"class {class_name}({base_class}):", "    pass"]
+
+    body = _collect_body(decl)
+    if body is None:
+        return None
 
     if not body.entries:
         return [f"class {class_name}({base_class}):", "    pass"]
@@ -855,6 +995,12 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
 
     if decl.is_packed:
         lines.append("    _pack_ = 1")
+        # ``_pack_`` alone selects the MSVC layout implicitly from CPython
+        # 3.14, which warns once per class and is slated to become an error in
+        # 3.19. Saying it outright silences the warning and keeps these records
+        # working. It changes nothing today: ``_layout_`` is honored only from
+        # 3.14, and earlier versions accept and ignore the attribute entirely.
+        lines.append('    _layout_ = "ms"')
 
     for nested_line in body.nested:
         lines.append(f"    {nested_line}" if nested_line else "")
@@ -876,6 +1022,11 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
         # byte-granular spelling gives every bit-field a carrier no wider than
         # the bits it uses, which is what makes the two agree; it is the same
         # list the ABI branch already relies on for padding.
+        if expectations is not None:
+            # What C says this record looks like, for the module to re-check
+            # under whatever interpreter imports it. None where the writer
+            # could not derive it, which is itself the answer.
+            expectations[class_name] = body.packed_c_layout()
         divergence = body.packed_divergence()
         if divergence is not None:
             name, c_bit = divergence
@@ -940,12 +1091,14 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
     return lines
 
 
-def _struct_to_ctypes(decl: Struct) -> str | None:
+def _struct_to_ctypes(
+    decl: Struct, expectations: dict[str, tuple[int, int, dict[str, int]] | None] | None = None
+) -> str | None:
     """Convert a Struct/Union IR node to a ctypes class definition."""
     if decl.name is None or _is_anonymous_name(decl.name):
         return None
 
-    lines = _record_body(decl, decl.name)
+    lines = _record_body(decl, decl.name, expectations)
     if lines is None:
         return None
     return "\n".join(lines)
@@ -1057,6 +1210,84 @@ def _variable_to_ctypes(decl: Variable, lib_name: str) -> str | None:
     return f"# {lib_name}.{decl.name}: {var_type}"
 
 
+def _packed_verification_lines(
+    expectations: dict[str, tuple[int, int, dict[str, int]] | None],
+) -> list[str]:
+    """The import-time layout check, emitted into the generated module.
+
+    The writer can only measure the interpreter it runs on, and ctypes lays
+    packed bit-fields out differently across versions -- ``_pack_`` selects the
+    MSVC rules from CPython 3.14 where earlier versions used the System V ones.
+    A verdict computed at generation is therefore about the wrong interpreter as
+    soon as the module is imported by another one. Carrying C's answer into the
+    module and re-deriving the verdict on import puts the check where it can be
+    right.
+
+    Emitted only when the header held a packed record, so a module with none is
+    byte for byte what it would otherwise have been.
+    """
+    if not expectations:
+        return []
+    lines = [
+        f"# Packed layouts below were checked against C on CPython {platform.python_version()};"
+        " the check re-runs on import.",
+        "#: What C says each packed record looks like: (sizeof bits, alignof bits,",
+        "#: {field: first bit}), or None where the writer could not derive it.",
+        "_HK_PACKED_EXPECTED = {",
+    ]
+    for name, expected in expectations.items():
+        if expected is None:
+            lines.append(f'    "{name}": None,')
+            continue
+        size_bits, align_bits, starts = expected
+        rendered = ", ".join(f'"{field}": {bit}' for field, bit in starts.items())
+        lines.append(f'    "{name}": ({size_bits}, {align_bits}, {{{rendered}}}),')
+    lines.extend(
+        [
+            "}",
+            "",
+            "",
+            "def _hk_unverified_records():",
+            '    """Packed records this interpreter\'s ctypes does not lay out as C does."""',
+            "    unverified = []",
+            "    for name, expected in _HK_PACKED_EXPECTED.items():",
+            "        cls = globals().get(name)",
+            "        if cls is None:",
+            "            continue",
+            "        if expected is None:",
+            "            unverified.append(name)",
+            "            continue",
+            "        size_bits, align_bits, starts = expected",
+            "        try:",
+            "            actual = {}",
+            "            for field in cls._fields_:",
+            "                descriptor = getattr(cls, field[0])",
+            "                bit = descriptor.offset * 8",
+            "                if len(field) > 2:",
+            "                    bit += descriptor.size & 0xFFFF",
+            "                actual[field[0]] = bit",
+            "            matches = (",
+            "                ctypes.sizeof(cls) * 8 == size_bits",
+            "                and ctypes.alignment(cls) * 8 == align_bits",
+            "                and all(bit >= 0 for bit in actual.values())",
+            "                and all(actual.get(field) == bit for field, bit in starts.items())",
+            "            )",
+            "        except Exception:",
+            "            matches = False",
+            "        if not matches:",
+            "            unverified.append(name)",
+            "    return tuple(unverified)",
+            "",
+            "",
+            "#: Packed records whose layout this interpreter does not reproduce. Empty",
+            "#: when every one of them checks out; absent when the header had none.",
+            f"{_UNVERIFIED_NAME} = _hk_unverified_records()",
+            "",
+        ]
+    )
+    return lines
+
+
 def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
     """Convert all declarations in a Header to a Python ctypes module string.
 
@@ -1065,6 +1296,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
         function prototype annotations (e.g., ``_lib.func.argtypes = [...]``).
     :returns: A string of Python source code defining ctypes bindings.
     """
+    packed_expectations: dict[str, tuple[int, int, dict[str, int]] | None] = {}
     sections: dict[str, list[str]] = {
         "constants": [],
         "enums": [],
@@ -1085,7 +1317,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
             result = _enum_to_ctypes(decl)
             section = "enums"
         elif isinstance(decl, Struct):
-            result = _struct_to_ctypes(decl)
+            result = _struct_to_ctypes(decl, packed_expectations)
             section = "structs"
         elif isinstance(decl, Typedef):
             result = _typedef_to_ctypes(decl)
@@ -1139,17 +1371,6 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
     # report, so a module with no affected record is byte-for-byte what it was:
     # read it as ``getattr(mod, "HEADERKIT_UNVERIFIED_RECORDS", ())``, where
     # absent means none.
-    unverified = _UNVERIFIED_MARKER.findall("\n".join(sections["structs"]))
-    if unverified:
-        output_lines.append("#: Records in this module whose layout ctypes could not reproduce.")
-        output_lines.append("#: Each also carries a '# HEADERKIT:' comment on its class.")
-        output_lines.append("#: Defined only when non-empty, so read it as")
-        output_lines.append('#: getattr(mod, "HEADERKIT_UNVERIFIED_RECORDS", ()) -- absent means none.')
-        output_lines.append(f"{_UNVERIFIED_NAME} = (")
-        output_lines.extend(f'    "{name}",' for name in unverified)
-        output_lines.append(")")
-        output_lines.append("")
-
     for section_name in section_order:
         items = sections[section_name]
         if items:
@@ -1161,6 +1382,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib") -> str:
                 output_lines.append(item)
                 output_lines.append("")
 
+    output_lines.extend(_packed_verification_lines(packed_expectations))
     return "\n".join(output_lines)
 
 

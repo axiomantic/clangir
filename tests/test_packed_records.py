@@ -14,9 +14,9 @@ sizes are the same on every platform the project supports.
 """
 
 import ctypes
-import platform
 import re
 import sys
+import warnings
 
 import pytest
 
@@ -31,16 +31,29 @@ from headerkit.writers import get_writer
 #: anonymous padding bit-field and a wider bit-field is not one of them.
 _BITFIELD_UNIT_RULE_MATCHES_C = sys.version_info >= (3, 14)
 
-#: Whether the *host's C ABI* gives an unnamed bit-field's declared type
-#: alignment to the record containing it. The figures in the layout corpus
-#: below were measured under the Itanium C++ ABI, where it does not; on a
-#: target where it does, C itself lays those records out differently and the
-#: corpus is measuring a different language. Mirrors the reasoning recorded in
-#: ``headerkit.writers.ctypes.ABI_ALIGNMENT_NOTE``, which the generated modules
-#: resolve at import for the same reason.
-_UNNAMED_BITFIELDS_ALIGN_HERE = sys.platform.startswith("win") or (
-    not sys.platform.startswith(("darwin", "ios")) and platform.machine().lower().startswith(("aarch64", "arm"))
-)
+
+def _unnamed_bitfields_align_here() -> bool:
+    """Whether the *host's C ABI* gives an unnamed bit-field its type's alignment.
+
+    Asked of clang rather than guessed from the platform triple. The figures in
+    the layout corpus below were measured under the Itanium C++ ABI, where it
+    does not; on a target where it does, C itself lays those records out
+    differently and the corpus would be measuring a different language.
+
+    The backend already answers this by compiling a probe, which is the whole
+    point of the change these tests cover -- restating it here as a triple
+    heuristic would leave the repository asserting an ABI rule in one place and
+    measuring it in another. False if the probe cannot be run at all, which
+    matches what the backend then assumes.
+    """
+    backend = get_backend("libclang")
+    if not backend.is_available():
+        return False
+    backend.parse("struct _hk_configure { int a; };", "rec.h")
+    from headerkit.backends.libclang import _unnamed_bitfields_impose_alignment
+
+    return _unnamed_bitfields_impose_alignment((), False) is True
+
 
 BACKENDS = ["libclang", "tree-sitter"]
 
@@ -596,7 +609,7 @@ _LAYOUT_CASES = [
         4,
         {"a": (0, 7, 8), "b": (8, 12, 5), "c": (16, 24, 9), "d": (32, 63, 32), "e": (64, 71, 8)},
         marks=pytest.mark.xfail(
-            not _BITFIELD_UNIT_RULE_MATCHES_C or _UNNAMED_BITFIELDS_ALIGN_HERE,
+            not _BITFIELD_UNIT_RULE_MATCHES_C or _unnamed_bitfields_align_here(),
             reason=(
                 "Pre-existing and unrelated to packing: this record is not packed. "
                 "On CPython 3.10 the generated class measures 16 bytes where C measures "
@@ -836,6 +849,10 @@ def test_a_packed_union_is_reproduced_or_flagged_never_silently_wrong(
         ctypes.sizeof(cls) == c_sizeof and ctypes.alignment(cls) == c_alignof and all(b == 0 for b in starts.values())
     )
     assert correct or flagged, f"{label}: laid out as {ctypes.sizeof(cls)}B {starts}, C says {c_sizeof}B all at bit 0"
+    if not correct:
+        # The reader of the module gets the reason beside the class, not only
+        # a name in a tuple at the bottom of the file.
+        assert "# HEADERKIT: packed record S" in code, label
 
 
 def test_a_union_ctypes_places_correctly_is_not_flagged() -> None:
@@ -851,13 +868,16 @@ def test_a_union_ctypes_places_correctly_is_not_flagged() -> None:
 def test_padding_after_an_untrackable_member_is_reserved_not_dropped() -> None:
     """Losing a padding member silently moves every field after it.
 
-    An anonymous inner struct makes the running bit offset unknowable -- the
-    nested record carries its own alignment. That is a reason not to know how
-    to *spell* the following padding, not a reason to reserve nothing: dropping
-    the entry deletes the bits from the record. A compiled C probe puts this
-    record at 3 bytes with ``b`` at byte 2.
+    A function-pointer member has no size the writer can read, so the running
+    bit offset stops there. That is a reason not to know how to *spell* the
+    following padding, not a reason to reserve nothing: dropping the entry
+    deletes the bits from the record and moves every member after them. A
+    compiled C probe puts this record at 10 bytes with ``b`` at byte 9.
+
+    The writer's reason for not knowing the offset travels with the record too,
+    rather than being assigned to a field the packed branch never renders.
     """
-    source = "struct __attribute__((packed)) S { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };"
+    source = "struct __attribute__((packed)) S { void (*fn)(int); unsigned int : 8; unsigned char b; };"
     emitted = _emitted_fields(source)
     pad_widths = [width for name, _expr, width in emitted if name.startswith("_pad")]
     assert sum(pad_widths) == 8, f"padding not reserved: {emitted}"
@@ -866,8 +886,9 @@ def test_padding_after_an_untrackable_member_is_reserved_not_dropped() -> None:
     namespace: dict[str, object] = {}
     exec(compile(code, "<generated>", "exec"), namespace)
     cls = namespace["S"]
-    assert ctypes.sizeof(cls) == 3
-    assert cls.b.offset == 2
+    assert ctypes.sizeof(cls) == 10
+    assert cls.b.offset == 9
+    assert "The writer also reports:" in code
 
 
 def test_a_record_whose_layout_cannot_be_judged_is_reported_not_assumed_good() -> None:
@@ -877,7 +898,10 @@ def test_a_record_whose_layout_cannot_be_judged_is_reported_not_assumed_good() -
     the writer cannot check this record against C at all. Saying nothing would
     put it in the same category as a record that was checked and passed.
     """
-    source = "struct __attribute__((packed)) S { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };"
+    # A function-pointer member: valid Python, but no size the writer can
+    # obtain, so the record genuinely cannot be checked. An array or a nested
+    # record is *not* such a case -- both are sized and verified.
+    source = "struct __attribute__((packed)) S { unsigned char a; void (*fn)(int); unsigned char b; };"
     code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
     namespace: dict[str, object] = {}
     exec(compile(code, "<generated>", "exec"), namespace)
@@ -886,7 +910,99 @@ def test_a_record_whose_layout_cannot_be_judged_is_reported_not_assumed_good() -
     # The writer's own reason for not knowing the offset travels with the
     # record, rather than being assigned to a field the packed branch never
     # renders.
-    assert "The writer also reports:" in code
+
+
+# Packed records whose members are not plain scalars. Each row: label, source,
+# C sizeof, C alignof, {field: byte offset} -- measured with a compiled C probe.
+# These are the member shapes real packed headers are made of: network and
+# file-format structs are mostly byte arrays and nested records.
+_AGGREGATE_MEMBER_CASES = [
+    (
+        "byte-array",
+        "struct __attribute__((packed)) S { unsigned char a; unsigned char data[16]; unsigned int b; };",
+        21,
+        1,
+        {"a": 0, "data": 1, "b": 17},
+    ),
+    (
+        "two-dimensional-array",
+        "struct __attribute__((packed)) S { unsigned char a; unsigned char m[4][4]; unsigned int b; };",
+        21,
+        1,
+        {"a": 0, "m": 1, "b": 17},
+    ),
+    (
+        "nested-record-with-bitfield",
+        "struct __attribute__((packed)) S { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };",
+        3,
+        1,
+        {"b": 2},
+    ),
+    (
+        "nested-record-with-plain-members",
+        "struct __attribute__((packed)) S { unsigned char a; struct { unsigned char x; unsigned int y; };"
+        " unsigned char b; };",
+        10,
+        1,
+        {"a": 0, "x": 1, "y": 5, "b": 9},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "c_sizeof", "c_alignof", "c_offsets"),
+    _AGGREGATE_MEMBER_CASES,
+    ids=[case[0] for case in _AGGREGATE_MEMBER_CASES],
+)
+def test_a_packed_record_with_aggregate_members_is_reproduced_and_not_flagged(
+    label: str, source: str, c_sizeof: int, c_alignof: int, c_offsets: dict[str, int]
+) -> None:
+    """An array or a nested record is sized, not treated as unmeasurable.
+
+    ``ctypes.sizeof(ctypes.c_ubyte * 16)`` is exactly knowable, and a nested
+    record can be built and sized like any other member, so neither is a reason
+    to report a record unverified. Reporting them would cover most packed
+    records in real headers -- network and file formats are largely byte arrays
+    -- and spend the signal a genuine report depends on.
+
+    Both halves matter: the record has to match C *and* carry no report.
+    """
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    cls = namespace["S"]
+
+    assert "S" not in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ()), f"{label} reproduces C but was reported"
+    assert ctypes.sizeof(cls) == c_sizeof, label
+    assert ctypes.alignment(cls) == c_alignof, label
+    for name, offset in c_offsets.items():
+        assert getattr(cls, name).offset == offset, f"{label}.{name}"
+
+
+def test_a_record_nested_deeper_than_the_alignment_walk_says_so() -> None:
+    """Hitting the recursion bound is not the same as finding no alignment.
+
+    Past the bound the walk used to return zero, which left the natural figure
+    at 1, the packed test false, and a packed record emitted at the unpacked
+    layout with nothing said. A compiled C probe puts the twelve-deep record at
+    size 17 alignment 1, against 56 alignment 4 for the same nest without the
+    pragma, so it is packed.
+    """
+
+    def nest(depth: int) -> str:
+        source = "#pragma pack(1)\nstruct L0 { unsigned char x; unsigned int y; };\n"
+        for level in range(1, depth + 1):
+            source += f"struct L{level} {{ unsigned char a; struct L{level - 1} n; }};\n"
+        return source + "#pragma pack()\n"
+
+    within = {r.name: r for r in _parse("libclang", nest(4))}["L4"]
+    assert within.is_packed is True
+    assert not any("nests aggregates" in note for note in within.notes)
+
+    beyond = {r.name: r for r in _parse("libclang", nest(12))}["L12"]
+    assert any("nests aggregates" in note for note in beyond.notes), (
+        "a record too deep to resolve must say so rather than be reported unpacked"
+    )
 
 
 def test_unreproducible_records_are_named_in_a_module_level_tuple() -> None:
@@ -898,20 +1014,100 @@ def test_unreproducible_records_are_named_in_a_module_level_tuple() -> None:
     """
     source = (
         "struct __attribute__((packed)) S { unsigned short a : 12; unsigned char b : 4; unsigned char c; };\n"
-        "struct T { unsigned char x; };\n"
+        "struct __attribute__((packed)) T { unsigned char a; unsigned int b : 8; unsigned char c; };\n"
     )
     code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
     namespace: dict[str, object] = {}
     exec(compile(code, "<generated>", "exec"), namespace)
-    assert namespace.get("HEADERKIT_UNVERIFIED_RECORDS") == ("S",)
+    assert namespace["HEADERKIT_UNVERIFIED_RECORDS"] == ("S",)
 
 
-def test_a_module_with_no_unreproducible_record_defines_no_tuple() -> None:
-    """Negative control: an all-clean module is unchanged by the mechanism."""
+def test_the_layout_check_runs_on_import_not_at_generation() -> None:
+    """The verdict has to be the importing interpreter's, not the writer's.
+
+    ctypes lays packed bit-fields out differently across versions, so a verdict
+    computed when the module was written describes the wrong interpreter as
+    soon as another one imports it. The module therefore carries C's answer and
+    re-derives the verdict itself.
+
+    Asserted by rebuilding the classes against a layout this interpreter does
+    *not* produce: the check must notice, whatever the writer concluded.
+    """
+    source = "struct __attribute__((packed)) S { unsigned char a; unsigned int b : 8; unsigned char c; };"
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+
+    clean: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), clean)
+    assert clean["HEADERKIT_UNVERIFIED_RECORDS"] == ()
+
+    # Same module, but C's recorded answer moved one field along. The check is
+    # what must react -- nothing about the class definitions changed.
+    moved = code.replace('"c": 16', '"c": 24')
+    assert moved != code, "the expected-layout table was not found in the module"
+    tampered: dict[str, object] = {}
+    exec(compile(moved, "<generated>", "exec"), tampered)
+    assert tampered["HEADERKIT_UNVERIFIED_RECORDS"] == ("S",)
+
+
+def test_a_module_with_no_packed_record_defines_no_tuple() -> None:
+    """Negative control: an unpacked module is untouched by the mechanism."""
     code = get_writer("ctypes").write(get_backend("libclang").parse("struct T { unsigned char x; };", "rec.h"))
     namespace: dict[str, object] = {}
     exec(compile(code, "<generated>", "exec"), namespace)
     assert "HEADERKIT_UNVERIFIED_RECORDS" not in namespace
+    assert "_HK_PACKED_EXPECTED" not in namespace
+
+
+def test_a_packed_record_pins_the_msvc_layout_explicitly() -> None:
+    """``_pack_`` alone selects that layout implicitly, which 3.19 will reject.
+
+    From CPython 3.14 ``_pack_`` implies the MSVC memory layout and warns once
+    per class that the implicit default is deprecated. Saying ``_layout_``
+    outright silences the warning and keeps these records working past 3.19.
+    """
+    code = get_writer("ctypes").write(get_backend("libclang").parse(_PACKED_SOURCE, "rec.h"))
+    assert '_layout_ = "ms"' in code
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        namespace: dict[str, object] = {}
+        exec(compile(code, "<generated>", "exec"), namespace)
+    assert "S" in namespace
+
+
+def test_pinning_the_layout_changes_no_layout() -> None:
+    """The pin is a statement of the status quo, not a change to it.
+
+    Asserted by laying every corpus record out both ways on this interpreter
+    and comparing field for field, rather than by trusting the claim. Below
+    3.14 ``_layout_`` is ignored outright, so this is a no-op there; on 3.14 it
+    names what ``_pack_`` was already selecting.
+    """
+    sources = [case[1] for case in _UNFAITHFUL_PACKED_CASES]
+    sources += [case[1] for case in _LAYOUT_CASES if not hasattr(case, "values") and case[0].startswith("packed")]
+    sources += [case[1] for case in _UNION_CASES]
+    assert sources, "no packed corpus rows to compare"
+
+    for source in sources:
+        code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+        assert '_layout_ = "ms"' in code, source
+        unpinned = code.replace('    _layout_ = "ms"\n', "")
+        assert unpinned != code
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            pinned_ns: dict[str, object] = {}
+            exec(compile(code, "<generated>", "exec"), pinned_ns)
+            unpinned_ns: dict[str, object] = {}
+            exec(compile(unpinned, "<generated>", "exec"), unpinned_ns)
+
+        pinned, plain = pinned_ns["S"], unpinned_ns["S"]
+        assert ctypes.sizeof(pinned) == ctypes.sizeof(plain), source
+        assert ctypes.alignment(pinned) == ctypes.alignment(plain), source
+        for field in pinned._fields_:
+            name = field[0]
+            assert getattr(pinned, name).offset == getattr(plain, name).offset, f"{source}: {name} offset"
+            assert getattr(pinned, name).size == getattr(plain, name).size, f"{source}: {name} size"
 
 
 def test_an_expressible_packed_record_carries_no_diagnostic() -> None:

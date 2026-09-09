@@ -89,6 +89,11 @@ TypeKind: Any = None
 #: and a bound is what keeps a cyclic canonical type from looping.
 _NATURAL_ALIGN_MAX_DEPTH = 8
 
+#: Returned when the recursion bound above was reached, so the caller can tell
+#: "no alignment to impose" from "did not finish looking". They are not the
+#: same answer and collapsing them reports a packed record as unpacked.
+_NATURAL_ALIGN_UNKNOWN = -1
+
 #: Probe used to measure whether the target gives an unnamed bit-field's
 #: declared type alignment to the enclosing record. ``a`` and ``b`` pin the
 #: record's own alignment to 1, so anything above 1 came from the bit-field.
@@ -2105,7 +2110,11 @@ class ClangASTConverter:
         scalars restores the figure the members would have imposed.
         """
         if depth > _NATURAL_ALIGN_MAX_DEPTH:
-            return 0
+            # Not an alignment of "none". Returning 0 here left the natural
+            # figure at 1, the packed test False and the record emitted at the
+            # unpacked layout with nothing said, which is the collapse of
+            # "unjudgeable" into "correct" that this branch removes elsewhere.
+            return _NATURAL_ALIGN_UNKNOWN
         with contextlib.suppress(Exception):
             canonical = member_type.get_canonical()
             while canonical.kind == TypeKind.CONSTANTARRAY:
@@ -2117,11 +2126,40 @@ class ClangASTConverter:
                 for f in canonical.get_fields():
                     if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
                         continue
-                    best = max(best, self._member_natural_align(f.type, depth + 1))
+                    member = self._member_natural_align(f.type, depth + 1)
+                    if member == _NATURAL_ALIGN_UNKNOWN:
+                        return _NATURAL_ALIGN_UNKNOWN
+                    best = max(best, member)
                 if best > 0:
                     return best
             return int(canonical.get_align())
         return 0
+
+    def _natural_align_unresolved(self, cursor: Any) -> bool:
+        """Whether the members' natural alignment could not be resolved.
+
+        True only when the nesting bound was reached. That is a different
+        answer from "the members impose nothing", and reporting it is what
+        stops a deeply nested packed record from being emitted at the unpacked
+        layout with nothing said about it.
+        """
+        with contextlib.suppress(Exception):
+            for f in cursor.type.get_fields():
+                if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
+                    continue
+                if self._member_natural_align(f.type) == _NATURAL_ALIGN_UNKNOWN:
+                    return True
+        return False
+
+    def _unresolved_alignment_note(self, cursor: Any) -> str | None:
+        """Report a record whose natural alignment the writer stopped short of."""
+        if not self._natural_align_unresolved(cursor):
+            return None
+        return (
+            f"Record nests aggregates more than {_NATURAL_ALIGN_MAX_DEPTH} deep, so the natural "
+            "alignment of its members was not resolved and is_packed could not be decided "
+            "from the layout; it is reported false here and is unverified."
+        )
 
     def _layout_alignments(self, cursor: Any) -> tuple[int | None, int | None]:
         """Return (natural alignment of the members, recorded alignment)."""
@@ -2140,6 +2178,8 @@ class ClangASTConverter:
                 if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
                     continue
                 fa = self._member_natural_align(f.type)
+                if fa == _NATURAL_ALIGN_UNKNOWN:
+                    return None, actual
                 if fa > 0:
                     saw_member = True
                     best = max(best, fa)
@@ -2559,6 +2599,9 @@ class ClangASTConverter:
         unmeasured_note = self._unmeasured_bitfield_align_note(cursor)
         if unmeasured_note is not None:
             notes.append(unmeasured_note)
+        unresolved_note = self._unresolved_alignment_note(cursor)
+        if unresolved_note is not None:
+            notes.append(unresolved_note)
         vtable_entries = [m for m in methods if m.is_virtual or m.is_pure_virtual]
 
         struct = Struct(

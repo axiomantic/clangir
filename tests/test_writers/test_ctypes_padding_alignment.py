@@ -452,7 +452,11 @@ def test_a_packed_record_still_reserves_the_padding_bits() -> None:
     assert '("_pad0", ctypes.c_uint, 8)' not in code
 
 
-_UNTRACKABLE = "struct e1 { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };"
+# A member the writer cannot size: a function pointer has no entry in the
+# ctypes scalar table, so the running bit offset stops here. A nested record is
+# no longer such a member -- it is built and sized like any other, which is what
+# ``test_padding_behind_a_nested_record_is_tracked`` below pins.
+_UNTRACKABLE = "struct e1 { void (*fn)(int); unsigned int : 8; unsigned char b; };"
 
 
 @pytest.mark.parametrize("backend_name", ["libclang", "tree-sitter"])
@@ -468,6 +472,21 @@ def test_an_untrackable_offset_is_named_in_the_output(backend_name: str) -> None
 
     assert "# HEADERKIT: e1 may be over-aligned where C does not" in code
     assert '("_pad0", ctypes.c_uint, 8)' in code
+
+
+@pytest.mark.parametrize("backend_name", ["libclang", "tree-sitter"])
+def test_padding_behind_a_nested_record_is_tracked(backend_name: str) -> None:
+    """A nested record is sized, so the padding behind it is respelled properly.
+
+    This shape used to stop the running offset and take the diagnostic above.
+    Sizing the nested record instead lets the writer build the byte-granular
+    carrier, and a compiled C probe agrees exactly: size 3, alignment 1, ``b``
+    at byte 2, where the wide-carrier spelling gave alignment 4.
+    """
+    code = _generate(backend_name, "struct e1 { struct { unsigned char x : 3; }; unsigned int : 8; unsigned char b; };")
+
+    assert "# HEADERKIT:" not in code
+    assert '("_pad0", ctypes.c_ubyte, 8)' in code
 
 
 def test_a_representable_record_carries_no_diagnostic() -> None:

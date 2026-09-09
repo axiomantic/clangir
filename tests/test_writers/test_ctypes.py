@@ -309,11 +309,17 @@ class TestStructToCtypes:
 
             class Packed(ctypes.Structure):
                 _pack_ = 1
+                _layout_ = "ms"
                 _fields_ = [
                     ("x", ctypes.c_int),
                 ]
             """)
-        assert result == expected
+        # A module holding a packed record also carries the import-time layout
+        # check, whose leading comment names the generating interpreter, so the
+        # class is compared exactly and the check by its parts.
+        assert result.startswith(expected)
+        assert "_HK_PACKED_EXPECTED = {" in result
+        assert "HEADERKIT_UNVERIFIED_RECORDS = _hk_unverified_records()" in result
 
     def test_non_packed_struct_no_pack(self) -> None:
         header = Header(
