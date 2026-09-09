@@ -110,3 +110,10 @@ if unverified:
 
 `from mybindings import HEADERKIT_UNVERIFIED_RECORDS` raises `ImportError` on a
 module with no packed records. Absent means none.
+
+The check also binds two private helpers, `_HK_PACKED_EXPECTED` and
+`_hk_unverified_records`. Both are renamed out of the way if the header
+declares something of the same name, so a declaration always wins. The public
+name cannot move -- consumers read it to decide whether the bindings are
+trustworthy -- so a header declaring `HEADERKIT_UNVERIFIED_RECORDS` is refused
+with an error rather than generated with the check under a different name.

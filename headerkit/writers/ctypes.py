@@ -353,6 +353,27 @@ def _byte_split(start: int, end: int) -> list[int]:
 #: reproduce. Read by importing code, unlike the comment beside each class.
 _UNVERIFIED_NAME = "HEADERKIT_UNVERIFIED_RECORDS"
 
+#: Module-level names the packed-layout check needs. The two private ones are
+#: implementation detail and can be renamed out of a declaration's way without
+#: anyone noticing; ``_UNVERIFIED_NAME`` is the documented contract and cannot.
+_PACKED_CHECK_TABLE = "_HK_PACKED_EXPECTED"
+_PACKED_CHECK_FUNCTION = "_hk_unverified_records"
+
+
+def _free_name(preferred: str, taken: set[str]) -> str:
+    """``preferred``, or the first underscore-suffixed variant nothing else binds.
+
+    A declaration named like one of this writer's own helpers would otherwise
+    be overwritten by it: the module still imports, and the record's class is
+    silently a dict or a function instead. Renaming the helper is invisible to
+    every consumer, so it is the side that gives way.
+    """
+    name = preferred
+    while name in taken:
+        name += "_"
+    return name
+
+
 #: Recovers those record names from the rendered class bodies. The diagnostic
 #: is the only place the fact is recorded per class, and it names the class.
 _UNVERIFIED_MARKER = re.compile(r"^\s*# HEADERKIT: packed record (\w+) has no faithful ctypes$", re.MULTILINE)
@@ -1295,6 +1316,7 @@ def _variable_to_ctypes(decl: Variable, lib_name: str) -> str | None:
 
 def _packed_verification_lines(
     expectations: dict[str, tuple[int, int, dict[str, int]] | None],
+    taken_names: set[str] | None = None,
 ) -> list[str]:
     """The import-time layout check, emitted into the generated module.
 
@@ -1308,15 +1330,33 @@ def _packed_verification_lines(
 
     Emitted only when the header held a packed record, so a module with none is
     byte for byte what it would otherwise have been.
+
+    :raises ValueError: when the header declares something named
+        ``HEADERKIT_UNVERIFIED_RECORDS``. The two private helpers below step
+        aside for a declaration of the same name, but that one is the name
+        consumers are documented to read, and moving it would answer them with
+        an empty tuple -- "every record verified" -- which is the silent-wrong
+        answer this whole check exists to prevent. Refusing is loud; the
+        alternatives are not.
     """
     if not expectations:
         return []
+    taken = set(taken_names or ())
+    if _UNVERIFIED_NAME in taken:
+        raise ValueError(
+            f"header declares {_UNVERIFIED_NAME}, which the packed-layout check binds to report "
+            "records whose layout ctypes does not reproduce. Rename the declaration: the check "
+            "cannot move, because consumers read that name to decide whether the bindings are "
+            "trustworthy and would read an empty tuple as 'all verified'."
+        )
+    table = _free_name(_PACKED_CHECK_TABLE, taken)
+    function = _free_name(_PACKED_CHECK_FUNCTION, taken | {table})
     lines = [
         f"# Packed layouts below were checked against C on CPython {platform.python_version()};"
         " the check re-runs on import.",
         "#: What C says each packed record looks like: (sizeof bits, alignof bits,",
         "#: {field: first bit}), or None where the writer could not derive it.",
-        "_HK_PACKED_EXPECTED = {",
+        f"{table} = {{",
     ]
     for name, expected in expectations.items():
         if expected is None:
@@ -1330,10 +1370,10 @@ def _packed_verification_lines(
             "}",
             "",
             "",
-            "def _hk_unverified_records():",
+            f"def {function}():",
             '    """Packed records this interpreter\'s ctypes does not lay out as C does."""',
             "    unverified = []",
-            "    for name, expected in _HK_PACKED_EXPECTED.items():",
+            f"    for name, expected in {table}.items():",
             "        cls = globals().get(name)",
             "        if cls is None:",
             "            continue",
@@ -1364,7 +1404,7 @@ def _packed_verification_lines(
             "",
             "#: Packed records whose layout this interpreter does not reproduce. Empty",
             "#: when every one of them checks out; absent when the header had none.",
-            f"{_UNVERIFIED_NAME} = _hk_unverified_records()",
+            f"{_UNVERIFIED_NAME} = {function}()",
             "",
         ]
     )
@@ -1584,7 +1624,7 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
                 output_lines.append(f"{symbol} = {lib_name}.{symbol}")
         output_lines.append("")
 
-    output_lines.extend(_packed_verification_lines(packed_expectations))
+    output_lines.extend(_packed_verification_lines(packed_expectations, taken_names))
     return "\n".join(output_lines)
 
 

@@ -1049,6 +1049,58 @@ def test_the_layout_check_runs_on_import_not_at_generation() -> None:
     assert tampered["HEADERKIT_UNVERIFIED_RECORDS"] == ("S",)
 
 
+_PACKED_NEIGHBOUR = "struct __attribute__((packed)) P { unsigned short a : 12; unsigned char b : 4; unsigned char c; };"
+
+
+@pytest.mark.parametrize("reserved", ["_HK_PACKED_EXPECTED", "_hk_unverified_records"])
+def test_a_record_named_like_the_layout_check_is_not_clobbered(reserved: str) -> None:
+    """The check's private helpers give way to a declaration, not the reverse.
+
+    Binding them unconditionally overwrites a record of the same name: the
+    module still imports, and the record's class is silently a dict or a
+    function. That is the failure mode this branch spent its length removing,
+    so it must not arrive in the mechanism that removed it. Renaming a private
+    helper is invisible to every consumer, which is why it is the side that
+    moves.
+    """
+    source = f"struct {reserved} {{ unsigned char q; }};\n{_PACKED_NEIGHBOUR}"
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+
+    record = namespace[reserved]
+    assert isinstance(record, type) and issubclass(record, ctypes.Structure), (
+        f"{reserved} is bound to {type(namespace[reserved]).__name__}, not the record's class"
+    )
+    assert ctypes.sizeof(record) == 1
+    # And the check still works, under whatever name it moved to.
+    assert namespace["HEADERKIT_UNVERIFIED_RECORDS"] == ("P",)
+
+
+def test_a_record_named_like_the_public_contract_is_refused_loudly() -> None:
+    """The one name that cannot step aside says so instead of moving quietly.
+
+    ``HEADERKIT_UNVERIFIED_RECORDS`` is what consumers are documented to read.
+    Emitting the check under some other name would answer them with an empty
+    tuple -- "every record verified" -- which is exactly the silent-wrong
+    answer the check exists to prevent, so this refuses rather than degrades.
+    """
+    source = f"struct HEADERKIT_UNVERIFIED_RECORDS {{ unsigned char q; }};\n{_PACKED_NEIGHBOUR}"
+    header = get_backend("libclang").parse(source, "rec.h")
+    with pytest.raises(ValueError, match="HEADERKIT_UNVERIFIED_RECORDS"):
+        get_writer("ctypes").write(header)
+
+
+def test_a_header_with_no_packed_record_may_use_the_reserved_names() -> None:
+    """Negative control: nothing is reserved when no check is emitted."""
+    code = get_writer("ctypes").write(
+        get_backend("libclang").parse("struct HEADERKIT_UNVERIFIED_RECORDS { unsigned char q; };", "rec.h")
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    assert issubclass(namespace["HEADERKIT_UNVERIFIED_RECORDS"], ctypes.Structure)
+
+
 def test_a_module_with_no_packed_record_defines_no_tuple() -> None:
     """Negative control: an unpacked module is untouched by the mechanism."""
     code = get_writer("ctypes").write(get_backend("libclang").parse("struct T { unsigned char x; };", "rec.h"))
