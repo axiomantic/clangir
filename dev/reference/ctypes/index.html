@@ -1974,7 +1974,14 @@ and function prototype annotations.</p>
 <p>lib_name : str
     Variable name for the loaded library object. Defaults to <code>"_lib"</code>.
     Controls the variable name used in function prototype annotations
-    (e.g., <code>_lib.func.argtypes = [...]</code>).</p>
+    (e.g., <code>_lib.func.argtypes = [...]</code>).
+library : str
+    Base name of the <em>native</em> library a scaffolded package loads, without a
+    <code>lib</code> prefix or a platform suffix -- what <code>ctypes.util.find_library</code>
+    is given. This is not <code>lib_name</code>, which names a Python variable.
+    Defaults to the package name, which is right only when the two happen to
+    coincide: scaffolding <code>probe_bindings</code> around <code>libprobe</code> needs
+    <code>library="probe"</code> or the generated module cannot find its binary.</p>
 <h4 id="headerkit.writers.ctypes.CtypesWriter--example">Example<a class="headerlink" href="#headerkit.writers.ctypes.CtypesWriter--example" title="Permanent link">&para;</a></h4>
 <p>::</p>
 <div class="highlight"><pre><span></span><code>from headerkit.writers import get_writer
@@ -2066,7 +2073,7 @@ source = writer.write(header)
 
 
 <a href="#headerkit.writers.ctypes.header_to_ctypes" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">header_to_ctypes</span><span class="p">(</span><span class="n">header</span><span class="p">,</span> <span class="n">lib_name</span><span class="o">=</span><span class="s1">'_lib'</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">header_to_ctypes</span><span class="p">(</span><span class="n">header</span><span class="p">,</span> <span class="n">lib_name</span><span class="o">=</span><span class="s1">'_lib'</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">library</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -2121,6 +2128,26 @@ function prototype annotations (e.g., <code>_lib.func.argtypes = [...]</code>).<
             </td>
             <td>
                   <code>&#39;_lib&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>library</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Base name of the native library to load. When given, the
+module defines <code>lib_name</code> itself and binds each function to a
+module-level name, so the result is importable and callable on its own.
+When omitted the output stays a fragment that expects the caller to
+supply <code>lib_name</code> -- which is what the single-file writer emits.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
             </td>
           </tr>
       </tbody>
