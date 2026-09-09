@@ -160,3 +160,9 @@ def custom_scaffold_hook(unit: Header, options: ScaffoldOptions, **_kwargs) -> P
 ```
 
 See the executable example in `examples/scaffolding/copier_scaffolder.py`.
+
+## Test work orders
+
+Scaffolded projects also receive tiered tests: real passing tests where the IR
+determines the answer, and deliberately failing stubs naming the work that needs
+human or LLM judgment. See [Test work orders](work-orders.md).

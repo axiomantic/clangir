@@ -2,11 +2,78 @@
 
 from __future__ import annotations
 
+import ast
+import textwrap
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from headerkit.ir import Header, SourceUnit, strip_padding_fields
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
+
+#: One-line stand-in for a generated multi-line block inside a dedented
+#: template. See :func:`render_block_template` for why the substitution cannot
+#: be an ordinary f-string interpolation.
+DEDENT_BLOCK = "_HK_BLOCK_"
+
+
+def module_level_bindings(source: str) -> frozenset[str]:
+    """Return every module-level name ``source`` binds.
+
+    A generated Python module's export block is emitted last, so any name the
+    module already binds must be reserved before that block re-exports a C
+    symbol over it. Deriving the set from the emitted text keeps it correct by
+    construction: a preamble that starts binding a new name reserves it without
+    a second list needing to be updated in step.
+
+    Every binding form a preamble can plausibly use is covered, not only the
+    ones present today. Under ``mypy --strict`` an annotated assignment is the
+    likeliest way a new constant arrives, and it is the form a naive
+    ``ast.Assign``-only walk silently misses.
+
+    Nested bindings are deliberately not collected: a name assigned inside a
+    function or a class body is not a module-level name and cannot collide with
+    an export.
+
+    :param source: Python source. Must parse; a generated preamble that does
+        not is a defect worth raising on rather than silently under-reporting.
+    :raises SyntaxError: if ``source`` does not parse.
+    """
+    bound: set[str] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            bound.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                bound.add(node.target.id)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(node.name)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c``.
+            bound.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+    return frozenset(bound)
+
+
+def render_block_template(template: str, *blocks: str) -> str:
+    """Dedent ``template``, then substitute ``blocks`` for its placeholders.
+
+    ``textwrap.dedent`` measures the string *after* interpolation, so dropping a
+    multi-line block straight into an indented template makes the block's own
+    indentation the common prefix and strips the template down to it -- the
+    emitted file then begins with the template's leftover indent and does not
+    parse. It only misbehaves once the block has a second line, which is why the
+    single-item case looks correct and the defect survives review. Dedenting
+    against a one-line token and substituting afterwards keeps the template's
+    indentation and the block's independent of each other.
+
+    :param template: An f-string carrying one :data:`DEDENT_BLOCK` token per
+        block, each written at the template's own indentation.
+    :param blocks: Replacement text, substituted into the tokens left to right.
+        A block may be empty, which leaves the token's line blank.
+    """
+    rendered = textwrap.dedent(template)
+    for block in blocks:
+        rendered = rendered.replace(DEDENT_BLOCK, block, 1)
+    return rendered
 
 
 @dataclass(frozen=True)

@@ -34,7 +34,8 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.workorder import build_work_order_files
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 NIM_KEYWORDS: set[str] = {
     "addr",
@@ -194,6 +195,34 @@ CPP_OPERATOR_MAP: dict[str, str] = {
     "operator--": "`dec`",
     "operator->": "`->`",
 }
+
+
+def _c_type_spelling(name: str, is_typedef: bool, tag_keyword: str) -> str:
+    """Return the C spelling ``importc`` must use to name this tag.
+
+    ``typedef enum { ... } Flags;`` declares no ``enum Flags`` tag, so an
+    ``importc: "enum Flags"`` emits C that names an incomplete type and the
+    build fails with ``cast to incomplete type 'enum Flags'``. The same is true
+    of a tag-less ``typedef struct { ... } Rec;``.
+
+    ``is_typedef`` is the discriminator the other writers already use for this
+    -- ``headerkit.writers.cffi._find_typedef_enum_pairs`` documents it. When it
+    is set, the bare name is a valid C type spelling; without it the tag keyword
+    is required, since a plain ``struct Rec { ... };`` declares no bare ``Rec``.
+
+    It is *not* simply "a typedef of the same name exists", and the rule differs
+    by declaration kind:
+
+    - a **record** sets it when the bare name spells the type -- no tag at all,
+      or an alias repeating the tag;
+    - an **enum** sets it only when there is no tag at all, because a tagged
+      ``typedef enum Switch { ... } Switch;`` really does declare
+      ``enum Switch``, and the cffi and Cython writers re-emit that tag.
+
+    So a tagged typedef'd enum has a same-named typedef and ``is_typedef=False``.
+    ``tests/test_regression_backend_parity.py`` pins both halves of that split.
+    """
+    return name if is_typedef else f"{tag_keyword} {name}"
 
 
 def _escape_ident(name: str) -> str:
@@ -485,8 +514,9 @@ class NimWriter(BaseWriter):
             pragma_parts.append(f'importcpp: "{cpp_pattern}", header: "{header_file}"')
             pragma_parts.append("bycopy")
         else:
-            tag_prefix = "union " if s.is_union else "struct "
-            pragma_parts.append(f'importc: "{tag_prefix}{name}", header: "{header_file}"')
+            pragma_parts.append(
+                f'importc: "{_c_type_spelling(name, s.is_typedef, "union" if s.is_union else "struct")}", header: "{header_file}"'
+            )
             if s.is_union:
                 pragma_parts.append("union")
             else:
@@ -663,7 +693,8 @@ class NimWriter(BaseWriter):
         nim_name = f"{name}_enum" if func_names and name in func_names else name
         e_name = _escape_ident(nim_name)
 
-        lines = [f'{e_name}* {{.size: sizeof(cint), importc: "enum {name}", header: "{header_file}".}} = enum']
+        spelling = _c_type_spelling(name, e.is_typedef, "enum")
+        lines = [f'{e_name}* {{.size: sizeof(cint), importc: "{spelling}", header: "{header_file}".}} = enum']
         for v in e.values:
             v_name = _escape_ident(v.name)
             if v.value is not None:
@@ -794,7 +825,8 @@ class NimWriter(BaseWriter):
                 )
             stubs = "\n".join(stub_lines) if stub_lines else f"    checkpoint \"Verified native library '{pkg}' loads\""
 
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 import std/[unittest, dynlib]
                 import {pkg}
 
@@ -804,8 +836,10 @@ class NimWriter(BaseWriter):
                     if lib == nil:
                       checkpoint "Native dynamic library '{pkg}' not found in system library path"
                       fail()
-                {stubs}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                stubs,
+            )
             files.append(OutputFile(path="tests/test_tripwire.nim", content=tripwire))
 
         if test_type in ("unit", "both"):
@@ -814,15 +848,21 @@ class NimWriter(BaseWriter):
                 if fn_names
                 else f"    check declared({pkg})"
             )
-            unit_test = textwrap.dedent(f"""\
+            unit_test = render_block_template(
+                f"""\
                 import std/unittest
                 import {pkg}
 
                 suite "{pkg} Unit Tests":
                   test "module exports expected declarations":
-                {decl_checks}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                decl_checks,
+            )
             files.append(OutputFile(path=f"tests/test_{pkg}.nim", content=unit_test))
+
+        if test_type in ("unit", "both"):
+            files.extend(build_work_order_files(unit, pkg, "nim"))
 
         return ProjectLayout(files=files)
 

@@ -1393,6 +1393,15 @@ class TestCastAndSizeofMacrosAreConstants:
             # Nothing but a qualifier may join a tag and its name.
             ("TAG_PLUS_SPECIFIER", "sizeof(struct mystruct_t int)"),
             ("SPECIFIER_BEFORE_TAG", "sizeof(int struct mystruct_t)"),
+            # POSIX signal.h, in both spellings the platforms use.  A cast to a
+            # function-pointer type is not an int, and classifying it as one is the
+            # `PyMODINIT_FUNC` defect on a real header: Cython emits
+            # `__Pyx_PyLong_From_int(SIG_DFL)` and the C compiler rejects it with
+            # "incompatible pointer to integer conversion passing 'void (*)(int)'
+            # to parameter of type 'int'".  Measured, not predicted.
+            ("SIG_DFL", "(void (*)(int))0"),
+            ("SIG_ERR", "((void (*)(int))-1)"),
+            ("SIG_IGN", "(void (*)(int))1"),
             # `restrict` is not a free-floating qualifier: it must follow a `*`.
             ("RESTRICT_NO_POINTER", "((int restrict)1)"),
             ("RESTRICT_LEADING", "((restrict int)1)"),

@@ -26,7 +26,7 @@ from headerkit.ir import (
     TypeExpr,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 
 def _sanitize_name(name: str, num_params: int | None = None) -> str:
@@ -357,21 +357,27 @@ class CShimWriter(BaseWriter):
                     # C++ wrapper
                     new_call = f"return reinterpret_cast<{safe_cls_name}_t*>(new (std::nothrow) {cls_full_name}({', '.join(params_call)}));"
                     if self.catch_exceptions:
-                        body = textwrap.dedent(f"""\
+                        body = render_block_template(
+                            f"""\
                             {safe_cls_name}_t* {fn_name}({", ".join(params_c) if params_c else "void"}) {{
                                 try {{
-                                    {new_call}
+                                    {DEDENT_BLOCK}
                                 }} catch (...) {{
                                     return nullptr;
                                 }}
                             }}
-                        """)
+                        """,
+                            new_call,
+                        )
                     else:
-                        body = textwrap.dedent(f"""\
+                        body = render_block_template(
+                            f"""\
                             {safe_cls_name}_t* {fn_name}({", ".join(params_c) if params_c else "void"}) {{
-                                {new_call}
+                                {DEDENT_BLOCK}
                             }}
-                        """)
+                        """,
+                            new_call,
+                        )
                     cpp_lines.append(body)
 
                 # Destructor
@@ -685,7 +691,8 @@ class CShimWriter(BaseWriter):
                 if fn_names
                 else '    printf("Shim header included successfully\\n");'
             )
-            test_c = textwrap.dedent(f"""\
+            test_c = render_block_template(
+                f"""\
                 #include <stdio.h>
                 #include <stdlib.h>
                 #include <assert.h>
@@ -709,10 +716,12 @@ class CShimWriter(BaseWriter):
 
                 int main(void) {{
                     printf("Testing {pkg} C-ABI shim symbol resolution...\\n");
-                {checks}
+                {DEDENT_BLOCK}
                     return 0;
                 }}
-            """)
+            """,
+                checks,
+            )
             files.append(OutputFile(path="tests/test_cshim.c", content=test_c))
 
         return ProjectLayout(files=files)

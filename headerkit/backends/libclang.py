@@ -932,6 +932,16 @@ def _is_type_name(spellings: list[str], *, as_cast: bool) -> bool:
     accepts in its default mode, where it yields 1.  All of these were found by
     differential fuzzing against the C compiler.
 
+    Two families are knowingly accepted, both reachable only from a header that is
+    already invalid in its own language, so no header that compiles reaches them.
+    ``( float _Complex _Complex ) 1`` is an error under ``-pedantic-errors`` and
+    accepted by clang in its default mode -- the same mode the ``sizeof(void)``
+    reasoning above appeals to.  ``( wchar_t const const ) 1`` and
+    ``( wchar_t * restrict ) 1`` mix the languages: a duplicate qualifier is an
+    error in C++ but a warning in C11, and ``restrict`` is not a C++ keyword at
+    all.  The specifier table is a C/C++ union while the qualifier rules are
+    language-agnostic, so the seam between them is where these sit.
+
     Qualifier *placement* is checked rather than ignored, because the two kinds of
     qualifier do not go in the same places.  ``const`` and ``volatile`` float
     freely among the specifiers, so ``const int *``, ``int const *`` and
@@ -956,6 +966,10 @@ def _is_type_name(spellings: list[str], *, as_cast: bool) -> bool:
             pointer = True
         elif token in _POINTER_QUALIFIER_KEYWORDS and not pointer:
             return False
+    # Belt and braces: the run above consumes every trailing ``*`` and pointer
+    # qualifier, and fuzzing found no input where this guard changes the verdict.
+    # It states the invariant the code below relies on rather than earning its
+    # place by catching something, so a surviving mutant here is expected.
     if any(token in _POINTER_QUALIFIER_KEYWORDS or token == "*" for token in core):
         return False
     tag = next((i for i, s in enumerate(core) if s in _TAG_KEYWORDS), None)

@@ -301,6 +301,39 @@ Values support `${ENV_VAR}` expansion for build-time paths injected by CMake or 
 
 ---
 
+## Test Work Orders
+
+Scaffolding a project also generates its tests. A generator knows what an API *is*,
+but not what it is *for*, so HeaderKit splits generated tests into three tiers and is
+explicit about which is which.
+
+| Tier | What HeaderKit knows | What it emits |
+|---|---|---|
+| 1 | The call and the expected result | A **real, passing** test -- struct field round-trip, unsigned bit-field bounds, enum value coverage |
+| 2 | The cases, but not the expectation | One **failing** case per enumerator, per overload, or a NULL case |
+| 3 | Only that the function exists | One **failing** stub |
+
+Stubs fail loudly and carry their instruction on the failing assertion, together with
+the signature verbatim and a definition of done:
+
+```
+FAILED tests/test_workorder.py::test_ct_scale[null_s] - Failed: WORK ORDER: for the
+`behaviour` case, describe what `ct_scale` is for and assert it. For the `null_s`
+case, decide what it does when `s` is NULL -- an error, or undefined and therefore
+untestable? Done means: call it and assert on the result. Asserting that it does not
+raise is insufficient.
+```
+
+The test run is the progress meter -- a stub turns from red to green when it is
+written. Scaffolded projects also get `WORK_ORDER.md` (the same list in prose),
+`SUGGESTIONS.md` (generic wrapper design ideas), and an `AGENTS.md` telling the next
+AI session to **ask you** before working through any of it.
+
+Re-running the scaffolder never overwrites a test you have written.
+
+See [Test work orders](docs/guides/work-orders.md) for the full tier rules, the
+deliberate exclusions, and the Nim macro that makes per-case reporting work.
+
 ## Extensibility & Plugins
 
 HeaderKit's hook architecture makes it straightforward to add new source languages, target writers, or custom package layouts without modifying the core repository.

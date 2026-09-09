@@ -54,6 +54,39 @@ def position_independent_flags() -> list[str]:
     return [] if IS_WINDOWS else ["-fPIC"]
 
 
+def shared_library_filename(stem: str) -> str:
+    """Return the filename a C shared library called ``stem`` carries on this host.
+
+    ``ctypes.util.find_library`` and Nim's ``loadLib`` both resolve a base name
+    through the platform's own convention, and the conventions disagree about
+    the ``lib`` prefix: a Windows DLL carries none.
+    """
+    if IS_WINDOWS:
+        return f"{stem}.dll"
+    return f"lib{stem}" + (".dylib" if IS_DARWIN else ".so")
+
+
+def shared_library_command(
+    compiler: str,
+    sources: Sequence[str],
+    output: str,
+    *,
+    includes: Sequence[str | Path] = (),
+    extra: Sequence[str] = (),
+) -> list[str]:
+    """Build the argv that links ``sources`` into a loadable C shared library."""
+    return [
+        compiler,
+        *extra,
+        "-shared",
+        *position_independent_flags(),
+        *sources,
+        *(f"-I{include}" for include in includes),
+        "-o",
+        output,
+    ]
+
+
 def _python_import_library() -> str:
     """Return the path to ``pythonXY.lib``, which a Windows DLL must link against.
 

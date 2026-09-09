@@ -517,6 +517,65 @@ class TreeSitterBackend:
             return Typedef(name=name, underlying_type=underlying, namespace=namespace, location=loc)
         return None
 
+    def _apply_single_alias(
+        self,
+        record: Struct | Enum,
+        declarator: Node,
+        filename: str,
+        *,
+        namespace: str | None,
+        tagged: bool,
+    ) -> list[Declaration]:
+        """Attach a one-declarator typedef alias to the record it defines.
+
+        The tag is kept whenever the definition carries one. Renaming the record
+        to the alias discards it, and ``typedef struct Foo { ... } FooAlias;``
+        leaves ``Foo`` spellable only as ``struct Foo``; the alias then reaches
+        the writers as a separate ``Typedef``, which is what libclang produces
+        for the same input.
+
+        ``is_typedef`` follows libclang's rule, which differs by declaration
+        kind and is pinned by ``tests/test_regression_backend_parity.py``:
+
+        * A **record** sets it when the bare name spells the type -- no tag, or
+          an alias repeating the tag.
+        * An **enum** sets it only when there is no tag at all. A tagged
+          ``typedef enum Switch { ... } Switch;`` really does declare ``enum
+          Switch``, and the cffi and Cython writers re-emit that tag; treating
+          it as tag-less silently drops it from the regenerated header.
+        """
+        is_record = isinstance(record, Struct)
+        # An enum's underlying spelling keeps the ``enum`` keyword, as libclang's
+        # does: a writer that strips it back off gets ``Mode2 = Mode2``, and one
+        # that needs the tag has it. A record's does not, matching libclang too.
+        base = CType(record.name or "") if is_record else CType(f"enum {record.name}")
+        alias_name, underlying_type, ident_node = self._unwrap_declarator(declarator, base)
+        if not tagged:
+            if alias_name:
+                record.name = alias_name
+            record.is_typedef = True
+            return [record]
+
+        record.is_typedef = is_record and alias_name == record.name
+        # A tagged enum keeps its alias as a separate Typedef even when the two
+        # spellings match, because ``is_typedef`` stays False for it and nothing
+        # else would bind the name. A record in that position carries the alias
+        # in the flag instead, and a second declaration would duplicate it.
+        if not alias_name or (is_record and alias_name == record.name):
+            return [record]
+        loc_node = ident_node or declarator
+        return [
+            record,
+            Typedef(
+                name=alias_name,
+                underlying_type=underlying_type,
+                namespace=namespace,
+                location=SourceLocation(
+                    file=filename, line=loc_node.start_point[0] + 1, column=loc_node.start_point[1] + 1
+                ),
+            ),
+        ]
+
     def _convert_type_definition(
         self,
         node: Node,
@@ -552,11 +611,14 @@ class TreeSitterBackend:
                     st = self._filled_forward
                 if st:
                     if len(declarators) == 1:
-                        alias_name, _, _ = self._unwrap_declarator(declarators[0], CType(st.name or ""))
-                        if alias_name:
-                            st.name = alias_name
-                        st.is_typedef = True
-                        return [] if folded else [st]
+                        aliased = self._apply_single_alias(
+                            st,
+                            declarators[0],
+                            filename,
+                            namespace=namespace,
+                            tagged=struct_node.child_by_field_name("name") is not None,
+                        )
+                        return aliased[1:] if folded else aliased
                     results: list[Declaration] = [] if folded else [st]
                     for d in declarators:
                         alias_name, underlying_type, ident_node = self._unwrap_declarator(d, CType(st.name or ""))
@@ -599,11 +661,13 @@ class TreeSitterBackend:
                 en = self._convert_enum(struct_node, filename, namespace=namespace)
                 if en:
                     if len(declarators) == 1:
-                        alias_name, _, _ = self._unwrap_declarator(declarators[0], CType(en.name or ""))
-                        if alias_name:
-                            en.name = alias_name
-                        en.is_typedef = True
-                        return [en]
+                        return self._apply_single_alias(
+                            en,
+                            declarators[0],
+                            filename,
+                            namespace=namespace,
+                            tagged=struct_node.child_by_field_name("name") is not None,
+                        )
                     res_en: list[Declaration] = [en]
                     for d in declarators:
                         alias_name, underlying_type, ident_node = self._unwrap_declarator(d, CType(en.name or ""))
