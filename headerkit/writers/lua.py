@@ -29,7 +29,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 
 def _type_to_c(t: TypeExpr) -> str:
@@ -478,14 +478,17 @@ class LuaWriter(BaseWriter):
                 if fn_names
                 else '    assert(lib ~= nil, "Native library should be loaded")'
             )
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 local ffi = require("ffi")
                 local status, lib = pcall(ffi.load, "{pkg}")
                 if not status or not lib then
                     error("Tripwire failure: native dynamic library '{pkg}' could not be loaded via LuaJIT FFI")
                 end
-            {tw_fn_checks}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                tw_fn_checks,
+            )
             files.append(OutputFile(path="tests/test_tripwire.lua", content=tripwire))
 
         if test_type in ("both", "unit"):
@@ -497,11 +500,14 @@ class LuaWriter(BaseWriter):
                 if fn_names
                 else f'assert(type({pkg}) == "table", "Module {pkg} should be a table")'
             )
-            unit_test = textwrap.dedent(f"""\
+            unit_test = render_block_template(
+                f"""\
                 local {pkg} = require("src.{pkg}")
                 assert(type({pkg}) == "table" or type({pkg}) == "userdata", "{pkg} bindings should export a valid table or library handle")
-                {unit_fn_checks}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                unit_fn_checks,
+            )
             files.append(OutputFile(path=f"tests/test_{pkg}.lua", content=unit_test))
 
         return ProjectLayout(files=files)

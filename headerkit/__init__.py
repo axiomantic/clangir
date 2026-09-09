@@ -68,6 +68,15 @@ from headerkit.scaffold import (
     prompt_scaffold_options,
     scaffold,
 )
+from headerkit.workorder import (
+    DEFINITION_OF_DONE,
+    WORK_ORDER_MARKER,
+    Stub,
+    Tier1Test,
+    WorkOrder,
+    analyze_work_order,
+    build_work_order_files,
+)
 from headerkit.writers import (
     BaseWriter,
     WriterBackend,
@@ -175,6 +184,14 @@ __all__ = [
     "extract_function_names",
     "prompt_scaffold_options",
     "scaffold",
+    # Work-order API
+    "WorkOrder",
+    "Tier1Test",
+    "Stub",
+    "analyze_work_order",
+    "build_work_order_files",
+    "WORK_ORDER_MARKER",
+    "DEFINITION_OF_DONE",
     # Packaging API
     "generate_nim_cmake",
     "generate_nim_pyproject",

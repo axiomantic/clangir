@@ -1335,8 +1335,8 @@ class TestCastAndSizeofMacrosAreConstants:
 
     def _classify_with_typedefs(self, name: str, body: str, lang: str = "c"):
         code = self._TYPEDEF_PRELUDE + f"#define {name} {body}\nvoid f(void);\n"
-        if lang == "cpp":
-            header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", "-std=c++17"])
+        if lang.startswith("c++"):
+            header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", f"-std={lang}"])
         else:
             header = self.backend.parse(code, "test.h")
         return [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
@@ -1353,7 +1353,23 @@ class TestCastAndSizeofMacrosAreConstants:
             ("SIZE_T_NEG", "((size_t)-1)", "( ( size_t ) - 1 )", "c"),
             ("SIZEOF_VOID", "sizeof(void)", "sizeof ( void )", "c"),
             ("SIZEOF_TYPEDEF", "sizeof(size_t)", "sizeof ( size_t )", "c"),
-            ("CPP_BOOL", "((bool)1)", "( ( bool ) 1 )", "cpp"),
+            # `restrict` qualifies a pointer, so it is legal to the right of a `*`.
+            ("PTR_RESTRICT", "((int * restrict)0)", "( ( int * restrict ) 0 )", "c"),
+            ("PTR_RESTRICT_GNU", "((int * __restrict)0)", "( ( int * __restrict ) 0 )", "c"),
+            ("VOID_PTR_RESTRICT", "((void * restrict)0)", "( ( void * restrict ) 0 )", "c"),
+            ("TAG_PTR_RESTRICT", "((struct mystruct_t * restrict)0)", "( ( struct mystruct_t * restrict ) 0 )", "c"),
+            # `const` and `volatile` float: all three spellings are the same type.
+            ("PTR_CONST", "((int * const)0)", "( ( int * const ) 0 )", "c"),
+            ("CONST_PTR", "((const int *)0)", "( ( const int * ) 0 )", "c"),
+            ("INT_CONST", "((int const)1)", "( ( int const ) 1 )", "c"),
+            # C++ spells these as keywords where C leaves them identifiers or macros,
+            # so the keyword gate must admit them or the cast is dropped.
+            ("CPP_BOOL", "((bool)1)", "( ( bool ) 1 )", "c++17"),
+            ("CPP_WCHAR", "((wchar_t)1)", "( ( wchar_t ) 1 )", "c++17"),
+            ("CPP_CHAR16", "((char16_t)1)", "( ( char16_t ) 1 )", "c++17"),
+            ("CPP_CHAR32", "((char32_t)1)", "( ( char32_t ) 1 )", "c++17"),
+            ("CPP_CHAR8", "((char8_t)1)", "( ( char8_t ) 1 )", "c++20"),
+            ("CPP_WCHAR_PTR", "((wchar_t *)0)", "( ( wchar_t * ) 0 )", "c++17"),
         ],
     )
     def test_cast_to_a_typedef_or_tag_is_a_constant(self, name: str, body: str, raw: str, lang: str):
@@ -1377,6 +1393,21 @@ class TestCastAndSizeofMacrosAreConstants:
             # Nothing but a qualifier may join a tag and its name.
             ("TAG_PLUS_SPECIFIER", "sizeof(struct mystruct_t int)"),
             ("SPECIFIER_BEFORE_TAG", "sizeof(int struct mystruct_t)"),
+            # POSIX signal.h, in both spellings the platforms use.  A cast to a
+            # function-pointer type is not an int, and classifying it as one is the
+            # `PyMODINIT_FUNC` defect on a real header: Cython emits
+            # `__Pyx_PyLong_From_int(SIG_DFL)` and the C compiler rejects it with
+            # "incompatible pointer to integer conversion passing 'void (*)(int)'
+            # to parameter of type 'int'".  Measured, not predicted.
+            ("SIG_DFL", "(void (*)(int))0"),
+            ("SIG_ERR", "((void (*)(int))-1)"),
+            ("SIG_IGN", "(void (*)(int))1"),
+            # `restrict` is not a free-floating qualifier: it must follow a `*`.
+            ("RESTRICT_NO_POINTER", "((int restrict)1)"),
+            ("RESTRICT_LEADING", "((restrict int)1)"),
+            ("RESTRICT_BEFORE_STAR", "((int restrict *)0)"),
+            ("RESTRICT_ON_TYPEDEF", "((myint_t restrict)1)"),
+            ("RESTRICT_ALONE", "((restrict)1)"),
         ],
     )
     def test_type_name_that_is_not_valid_c_is_rejected(self, name: str, body: str):
@@ -1431,6 +1462,11 @@ class TestConstantExpressionShape:
             ["sizeof", "(", "T", ")"],
             ["sizeof", "(", "void", ")"],
             ["sizeof", "(", "struct", "S", "const", ")"],  # a trailing qualifier is fine
+            # A pointer qualifier is consumed only while popping trailing `*`s.
+            ["(", "int", "*", "restrict", ")", "0"],
+            ["(", "int", "*", "const", ")", "0"],
+            ["(", "T", "*", "__restrict", ")", "0"],
+            ["(", "struct", "S", "*", "restrict", ")", "0"],
         ],
     )
     def test_accepts_constant_expressions(self, spellings: list[str]):
@@ -1461,6 +1497,10 @@ class TestConstantExpressionShape:
             ["sizeof", "(", "struct", "const", "S", ")"],  # qualifier between tag and name
             ["sizeof", "(", "struct", "S", "int", ")"],  # a specifier is not a qualifier
             ["sizeof", "(", "int", "struct", "S", ")"],
+            ["(", "int", "restrict", ")", "1"],  # restrict must follow a `*`
+            ["(", "restrict", "int", ")", "1"],
+            ["(", "int", "restrict", "*", ")", "0"],
+            ["(", "T", "restrict", ")", "1"],
         ],
     )
     def test_rejects_non_expressions(self, spellings: list[str]):

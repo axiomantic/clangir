@@ -2,6 +2,8 @@
 
 import textwrap
 
+import pytest
+
 from headerkit.ir import (
     Array,
     Constant,
@@ -18,9 +20,12 @@ from headerkit.ir import (
     Typedef,
     Variable,
 )
+from headerkit.writers.base import module_level_bindings
 from headerkit.writers.ctypes import (
+    ABI_ALIGNMENT_NOTE,
     CTYPES_TYPE_MAP,
     CtypesWriter,
+    _library_loader,
     header_to_ctypes,
     type_to_ctypes,
 )
@@ -1227,3 +1232,123 @@ class TestVariables:
             # _lib.count: ctypes.c_int
             """)
         assert result == expected
+
+
+class TestLoaderCollisionSeed:
+    """The collision set must know every name the module itself binds.
+
+    A C function may legally be named ``_lib``, ``_load_library`` or ``os``. The
+    export block is emitted last, so any such name that is not reserved gets
+    re-exported over the thing it collides with.
+    """
+
+    def test_the_loader_binds_exactly_these_names(self) -> None:
+        """Pin the loader preamble's module-level bindings.
+
+        The writer reserves whatever :func:`module_level_bindings` reports, so
+        nothing here can drift out of step with the seeding. What this pins is
+        the *expected* set: a template that starts binding a new name fails here
+        and has to be acknowledged, rather than silently widening what the
+        export block refuses to emit.
+        """
+        assert module_level_bindings(_library_loader("probe", "_lib")) == {
+            "_LIBRARY_NAME",
+            "_LIBRARY_PATH_ENV",
+            "_load_library",
+            "_lib",
+        }
+
+    def test_the_abi_note_binds_exactly_these_names(self) -> None:
+        """Pin the ABI-alignment preamble's module-level bindings.
+
+        These two flags are read only by struct definitions emitted *above* the
+        export block, so a collision here is milder than one on ``_lib``: the
+        module still imports and every export still works. They are reserved
+        anyway, because ``_HK_UNNAMED_BITFIELD_ALIGNS = _lib.<sym>`` would
+        replace a resolved ABI decision with a function pointer.
+        """
+        assert module_level_bindings(ABI_ALIGNMENT_NOTE) == {
+            "_HK_UNNAMED_BITFIELD_ALIGNS",
+            "_HK_CTYPES_MATCHES_C_NATIVELY",
+        }
+
+    def test_a_function_named_after_an_abi_flag_is_not_re_exported(self) -> None:
+        """The ABI note's names are reachable end to end, so they are gated.
+
+        An unnamed bit-field is what emits the note at all, so the header needs
+        one for this collision to exist.
+        """
+        header = Header(
+            "collide.h",
+            [
+                Struct(
+                    "Packed",
+                    [
+                        Field("c", CType("unsigned char"), bit_width=1),
+                        Field("", CType("unsigned int"), bit_width=0, is_padding=True),
+                        Field("flag", CType("unsigned char"), bit_width=1),
+                    ],
+                ),
+                Function("_HK_UNNAMED_BITFIELD_ALIGNS", CType("int"), []),
+                Function("thing_add", CType("int"), []),
+            ],
+        )
+        result = header_to_ctypes(header, library="collide")
+
+        assert "_HK_UNNAMED_BITFIELD_ALIGNS = _lib._HK_UNNAMED_BITFIELD_ALIGNS" not in result
+        assert "'_HK_UNNAMED_BITFIELD_ALIGNS' is not re-exported" in result
+        assert "thing_add = _lib.thing_add" in result, "a later export did not survive"
+
+    def test_a_function_named_lib_is_not_re_exported(self) -> None:
+        """``int _lib(void);`` must not overwrite the library handle."""
+        header = Header("collide.h", [Function("_lib", CType("int"), [])])
+        result = header_to_ctypes(header, library="collide")
+
+        assert "_lib = _lib._lib" not in result
+        assert "_lib = _load_library()" in result
+        assert "'_lib' is not re-exported" in result
+
+    @pytest.mark.parametrize("name", ["ctypes", "os", "sys"])
+    def test_a_function_named_after_an_import_is_not_re_exported(self, name: str) -> None:
+        """``int os(void);`` must not overwrite the imported module.
+
+        Every import the module writes unconditionally is covered, not one
+        representative: each is reserved by its own statement, so a test naming
+        only ``os`` leaves the others' reservations unguarded.
+        """
+        header = Header("collide.h", [Function(name, CType("int"), [])])
+        result = header_to_ctypes(header, library="collide")
+
+        assert f"import {name}" in result, "the import this reservation guards is not written"
+        assert f"{name} = _lib.{name}" not in result
+        assert f"'{name}' is not re-exported" in result
+
+    def test_a_conditional_import_is_reserved_only_when_written(self) -> None:
+        """``platform`` is imported only for a bit-field struct.
+
+        Reserving a name the module never binds would suppress a legitimate
+        export, so the seed follows the same conditionals the emission does.
+        Both halves are asserted here: reserving unconditionally passes the
+        collision half and fails this one.
+        """
+        fn = Function("platform", CType("int"), [])
+        # A zero-width unnamed bit-field on a wider carrier is what pulls in
+        # ``import platform``: whether it raises the record's alignment differs
+        # between the MSVC and Itanium ABIs, so the layout needs a runtime branch.
+        bitfield = Struct(
+            "Packed",
+            [
+                Field("c", CType("unsigned char"), bit_width=1),
+                Field("", CType("unsigned int"), bit_width=0, is_padding=True),
+                Field("flag", CType("unsigned char"), bit_width=1),
+            ],
+        )
+
+        without = header_to_ctypes(Header("plain.h", [fn]), library="probe")
+        assert "import platform" not in without
+        assert "platform = _lib.platform" in without, "a name the module never binds must stay exportable"
+
+        with_abi = header_to_ctypes(Header("packed.h", [bitfield, fn]), library="probe")
+        assert "import platform" in with_abi
+        assert "platform = _lib.platform" not in with_abi
+        assert "'platform' is not re-exported" in with_abi

@@ -33,7 +33,7 @@ from headerkit.ir import (
     Variable,
 )
 from headerkit.scaffold import OutputFile, ProjectLayout, ScaffoldOptions, extract_function_names
-from headerkit.writers.base import BaseWriter, WriterOption
+from headerkit.writers.base import DEDENT_BLOCK, BaseWriter, WriterOption, render_block_template
 
 # Maps bare tag names to their kind ("struct", "union", "enum").
 # Populated by header_to_cffi before emitting declarations.
@@ -637,18 +637,21 @@ class CffiWriter(BaseWriter):
             where = ["src"]
         """)
 
-        build_ffi = textwrap.dedent(f"""\
+        build_ffi = render_block_template(
+            f"""\
             from cffi import FFI
 
             ffibuilder = FFI()
 
-            CDEF = \"\"\"{cdef_code}\"\"\"
+            CDEF = \"\"\"{DEDENT_BLOCK}\"\"\"
             ffibuilder.cdef(CDEF)
             ffibuilder.set_source("_{pkg}_cffi", None)
 
             if __name__ == "__main__":
                 ffibuilder.compile(verbose=True)
-        """)
+        """,
+            cdef_code,
+        )
 
         init_py = textwrap.dedent(f"""\
             \"\"\"{pkg} package initialization.\"\"\"
@@ -657,11 +660,12 @@ class CffiWriter(BaseWriter):
             __all__ = ["ffi", "lib"]
         """)
 
-        bindings_py = textwrap.dedent(f"""\
+        bindings_py = render_block_template(
+            f"""\
             from cffi import FFI
 
             ffi = FFI()
-            CDEF = \"\"\"{cdef_code}\"\"\"
+            CDEF = \"\"\"{DEDENT_BLOCK}\"\"\"
             ffi.cdef(CDEF)
 
             lib = None
@@ -669,7 +673,9 @@ class CffiWriter(BaseWriter):
                 lib = ffi.dlopen("{pkg}")
             except OSError:
                 pass
-        """)
+        """,
+            cdef_code,
+        )
 
         files = [
             OutputFile(path="pyproject.toml", content=pyproject),
@@ -686,7 +692,8 @@ class CffiWriter(BaseWriter):
                 )
                 or '    assert lib is not None, "Library failed to load"'
             )
-            tripwire = textwrap.dedent(f"""\
+            tripwire = render_block_template(
+                f"""\
                 import pytest
 
                 @pytest.mark.tripwire
@@ -695,8 +702,10 @@ class CffiWriter(BaseWriter):
                     from {pkg}._bindings import lib
                     if lib is None:
                         pytest.fail("C library '{pkg}' could not be loaded via CFFI")
-                {tw_fn_checks}
-            """)
+                {DEDENT_BLOCK}
+            """,
+                tw_fn_checks,
+            )
             files.append(OutputFile(path="tests/test_tripwire.py", content=tripwire))
 
         if test_type in ("both", "unit"):

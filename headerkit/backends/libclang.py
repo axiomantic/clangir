@@ -857,23 +857,46 @@ _TYPE_SPECIFIER_KEYWORDS = frozenset(
         "char32_t",
     }
 )
-_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile", "restrict", "__restrict", "__restrict__"})
+# ``const`` and ``volatile`` float: they may sit anywhere among the specifiers.
+_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile"})
+# ``restrict`` does not float.  It qualifies a *pointer*, so it is legal only to
+# the right of a ``*`` -- ``int * restrict`` is a type, ``int restrict`` is not.
+_POINTER_QUALIFIER_KEYWORDS = frozenset({"restrict", "__restrict", "__restrict__"})
 # ``_Complex`` modifies a floating specifier rather than joining the multiset, so
 # it is stripped before the combination is looked up.
 _COMPLEX_KEYWORDS = frozenset({"_Complex", "_Imaginary", "__complex__"})
 _TAG_KEYWORDS = frozenset({"struct", "union", "enum"})
-_TYPE_NAME_KEYWORDS = _TYPE_SPECIFIER_KEYWORDS | _TYPE_QUALIFIER_KEYWORDS | _COMPLEX_KEYWORDS | _TAG_KEYWORDS
+_TYPE_NAME_KEYWORDS = (
+    _TYPE_SPECIFIER_KEYWORDS
+    | _TYPE_QUALIFIER_KEYWORDS
+    | _POINTER_QUALIFIER_KEYWORDS
+    | _COMPLEX_KEYWORDS
+    | _TAG_KEYWORDS
+)
 # ``sizeof``/``alignof`` yield an integer constant, so they are operators here
 # rather than declaration specifiers.
 _SIZEOF_KEYWORDS = frozenset({"sizeof", "alignof", "_Alignof", "__alignof__"})
 _EXPRESSION_KEYWORDS = _TYPE_NAME_KEYWORDS | _SIZEOF_KEYWORDS
 # The floating specifiers ``_Complex`` may modify.
 _COMPLEX_BASE_MULTISETS = frozenset({("float",), ("double",), ("double", "long")})
+# What may appear to the right of the specifiers in a type name.
+_POINTER_RUN_TOKENS = frozenset({"*"}) | _TYPE_QUALIFIER_KEYWORDS | _POINTER_QUALIFIER_KEYWORDS
 
-# The complete set of type-specifier combinations C admits, as sorted multisets.
-# ``int char`` and ``int void`` are each built from admissible keywords but name
-# no type, and differential fuzzing against the C compiler reached them; the
-# grammar is closed and fixed, so enumerating it is exact rather than a heuristic.
+# Type-specifier combinations that name a type, as sorted multisets.  ``int char``
+# and ``int void`` are each built from admissible keywords and name nothing, and
+# differential fuzzing against the C compiler reached them.
+#
+# This is the UNION of the C and C++ spellings, so it is a superset of either
+# language taken alone rather than an exact closure of both: measured with
+# ``-pedantic-errors``, which matters because a permissive invocation accepts
+# ``signed signed``, C11 admits 31 of these, C23 32, C++17 34 and C++20 35, while
+# the table holds 36.  The extras are the four spellings the other language lacks
+# -- ``_Bool`` in C++, and ``bool``/``wchar_t``/``char8_t``/``char16_t``/
+# ``char32_t`` in C -- plus ``char8_t``, which is C++20 and not C++17.  What the
+# measurement does establish, in every one of those four modes, is the direction
+# that matters: nothing a compiler admits is missing here.  Erring wide costs a
+# macro that the C compiler would reject anyway; erring narrow would drop a real
+# constant, which is the defect this whole predicate exists to avoid.
 _VALID_TYPE_SPECIFIER_MULTISETS = frozenset(
     tuple(sorted(combination))
     for combination in (
@@ -978,16 +1001,49 @@ def _is_type_name(spellings: list[str], *, as_cast: bool) -> bool:
     removed) and, for a cast only, ``void`` with no pointer declarator, because
     ``( void ) A`` discards its operand rather than yielding one.  ``sizeof(void)``
     is a different question and is admitted -- it is a GNU extension the compiler
-    accepts, and it yields 1.  All of these were found by differential fuzzing
-    against the C compiler.
+    accepts in its default mode, where it yields 1.  All of these were found by
+    differential fuzzing against the C compiler.
+
+    Two families are knowingly accepted, both reachable only from a header that is
+    already invalid in its own language, so no header that compiles reaches them.
+    ``( float _Complex _Complex ) 1`` is an error under ``-pedantic-errors`` and
+    accepted by clang in its default mode -- the same mode the ``sizeof(void)``
+    reasoning above appeals to.  ``( wchar_t const const ) 1`` and
+    ``( wchar_t * restrict ) 1`` mix the languages: a duplicate qualifier is an
+    error in C++ but a warning in C11, and ``restrict`` is not a C++ keyword at
+    all.  The specifier table is a C/C++ union while the qualifier rules are
+    language-agnostic, so the seam between them is where these sit.
+
+    Qualifier *placement* is checked rather than ignored, because the two kinds of
+    qualifier do not go in the same places.  ``const`` and ``volatile`` float
+    freely among the specifiers, so ``const int *``, ``int const *`` and
+    ``int * const`` are all the same type.  ``restrict`` does not float: it
+    qualifies a pointer and is legal only to the right of a ``*``.  Stripping all
+    qualifiers wherever they appear would accept ``int restrict`` and reject
+    ``int * restrict``, which is the wrong answer in both directions, so the
+    trailing pointer run is parsed instead of discarded.
     """
     if not spellings:
         return False
     core = list(spellings)
+    # Split off the trailing declarator run -- the ``*``s and the qualifiers that
+    # bind to them -- and require every pointer qualifier in it to follow a ``*``.
+    run_start = len(core)
+    while run_start and core[run_start - 1] in _POINTER_RUN_TOKENS:
+        run_start -= 1
+    run, core = core[run_start:], core[:run_start]
     pointer = False
-    while core and core[-1] == "*":
-        core.pop()
-        pointer = True
+    for token in run:
+        if token == "*":
+            pointer = True
+        elif token in _POINTER_QUALIFIER_KEYWORDS and not pointer:
+            return False
+    # Belt and braces: the run above consumes every trailing ``*`` and pointer
+    # qualifier, and fuzzing found no input where this guard changes the verdict.
+    # It states the invariant the code below relies on rather than earning its
+    # place by catching something, so a surviving mutant here is expected.
+    if any(token in _POINTER_QUALIFIER_KEYWORDS or token == "*" for token in core):
+        return False
     tag = next((i for i, s in enumerate(core) if s in _TAG_KEYWORDS), None)
     if tag is not None:
         # The tag keyword and its name are adjacent; a qualifier may precede or
