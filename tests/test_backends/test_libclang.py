@@ -20,6 +20,7 @@ from headerkit.backends.libclang import (
     _configure_libclang,
     _deduplicate_declarations,
     _get_libclang_search_paths,
+    _is_constant_expression_shape,
     _is_system_header,
     _mangle_specialization_name,
     get_system_include_dirs,
@@ -1113,6 +1114,397 @@ class TestMacroParsing:
         max_consts = [c for c in constants if c.name == "MAX"]
         # Function-like macros should not produce Constants
         assert len(max_consts) == 0
+
+
+@pytest.mark.allow("subprocess")
+@libclang
+class TestDeclarationSpecifierMacrosRejected:
+    """Macros whose replacement list is declaration specifiers are not constants.
+
+    ``#define PyMODINIT_FUNC __declspec(dllexport) PyObject *`` is a
+    declaration-specifier macro.  Emitting it as ``int PyMODINIT_FUNC`` makes
+    Cython generate ``__Pyx_PyLong_From_int(PyMODINIT_FUNC)`` -- measured on the
+    generated C, which contains that call once and no ``sizeof`` of the macro at
+    all -- and the C compiler rejects the expansion.  The compile-level proof is
+    ``test_regression_cython_output.py``; this class pins the IR classification.
+
+    A cast or a ``sizeof`` is *not* a declaration specifier: see
+    :class:`TestCastAndSizeofMacrosAreConstants`.
+    """
+
+    def setup_method(self):
+        self.backend = LibclangBackend()
+
+    @pytest.mark.parametrize(
+        ("name", "body"),
+        [
+            ("MSVC_EXPORT", "__declspec(dllexport) PyObject *"),
+            ("MSVC_IMPORT_ONLY", "__declspec(dllimport)"),
+            # Rejected before this change too, by the string-literal guard rather
+            # than by either new rule: a regression guard, not a demonstration.
+            ("GNU_VISIBILITY", '__attribute__ ((visibility ("default"))) PyObject *'),
+            ("CDECL_RET", "__cdecl int"),
+            ("STDCALL_RET", "__stdcall int"),
+            ("FASTCALL_RET", "__fastcall void"),
+            # Single-token bodies below take the _analyze_single_token path and
+            # were rejected before this change: regression guards, not coverage
+            # of the keyword or shape rules.
+            ("STORAGE_STATIC", "static"),
+            ("STORAGE_EXTERN_INLINE", "extern inline"),
+            ("TYPE_CONST_CHAR_PTR", "const char *"),
+            ("TYPE_UNSIGNED_INT", "unsigned int"),
+            ("TYPE_STRUCT", "struct PyObject"),
+            ("TYPE_POINTER", "PyObject *"),
+            ("TYPE_REFERENCE", "PyObject &"),
+            ("TYPE_BARE", "PyObject"),
+            ("TYPE_TYPEDEFD", "myint_t"),
+            ("DLLIMPORT_BARE", "dllimport"),
+        ],
+    )
+    def test_declaration_specifier_macro_is_not_a_constant(self, name: str, body: str):
+        code = textwrap.dedent(f"""\
+            typedef struct PyObject PyObject;
+            typedef int myint_t;
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert matches == [], f"#define {name} {body} was wrongly classified as {matches!r}"
+
+    @pytest.mark.parametrize(
+        ("name", "body", "type_name", "value"),
+        [
+            ("SIZE", "100", "int", 100),
+            ("PI", "3.14", "double", 3.14),
+            ("VERSION", '"1.0"', "char", '"1.0"'),
+            ("NEG", "-1", "int", -1),
+            ("HEX", "0x1F", "int", 31),
+            ("CHAR_LIT", "'a'", "char", "'a'"),
+            ("SHIFTED", "(1 << 4)", "int", 16),
+            ("PARENED_NEG", "(-1)", "int", -1),
+            ("FLOAT_EXPR", "(1.5 * 2)", "double", 3.0),
+            ("SUFFIXED", "10ULL", "int", 10),
+        ],
+    )
+    def test_constant_macro_still_classified(self, name: str, body: str, type_name: str, value: object):
+        code = textwrap.dedent(f"""\
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert len(matches) == 1, f"#define {name} {body} was not classified as a constant"
+        assert matches[0].type is not None
+        assert matches[0].type.name == type_name
+        assert matches[0].value == value
+
+    def test_macro_referencing_another_macro_still_classified(self):
+        """``#define B (A + 1)`` keeps working: identifiers are valid expression operands."""
+        code = textwrap.dedent("""\
+            #define A 5
+            #define B (A + 1)
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == "B"]
+        assert len(matches) == 1
+        assert matches[0].type is not None
+        assert matches[0].type.name == "int"
+        assert matches[0].raw_expression == "( A + 1 )"
+
+    def test_ternary_expression_macro_still_classified(self):
+        code = textwrap.dedent("""\
+            #define PICK (1 ? 2 : 3)
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == "PICK"]
+        assert len(matches) == 1
+        assert matches[0].raw_expression == "( 1 ? 2 : 3 )"
+
+    @pytest.mark.parametrize(
+        "name,body", [("FLAG_TRUE", "(true)"), ("FLAG_FALSE", "(false)"), ("NULL_PTR", "(nullptr)")]
+    )
+    def test_keyword_literal_macro_is_not_an_int_constant(self, name: str, body: str):
+        """A parenthesised C++ keyword is structurally expression-shaped but is not an int.
+
+        These reach the keyword check only: ``( true )`` alternates operand and
+        parentheses correctly, so the shape predicate admits it.  Classifying it
+        as ``int`` with no value -- and ``nullptr`` as ``int`` outright -- is the
+        same defect class as the declaration-specifier macros.
+        """
+        code = textwrap.dedent(f"""\
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", "-std=c++17"])
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+        assert matches == [], f"#define {name} {body} was wrongly classified as {matches!r}"
+
+    def test_pymodinit_func_dropped_while_neighbouring_constant_survives(self):
+        """The rejection is selective: only the offending macro leaves the IR.
+
+        This is an IR-level check, not a compile-level one.  The compile-level
+        property -- that the generated binding cythonizes, compiles, imports and
+        returns the real constant's value -- is asserted by
+        ``test_regression_cython_output.py``.
+        """
+        code = textwrap.dedent("""\
+            typedef struct PyObject PyObject;
+            #define PyMODINIT_FUNC __declspec(dllexport) PyObject *
+            #define REAL_CONST 42
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        names = [d.name for d in header.declarations if isinstance(d, Constant)]
+        assert "PyMODINIT_FUNC" not in names
+        assert "REAL_CONST" in names
+
+
+@pytest.mark.allow("subprocess")
+@libclang
+class TestCastAndSizeofMacrosAreConstants:
+    """A cast or a ``sizeof`` is a value, not a declaration specifier.
+
+    ``((int)0x1F)``, ``((unsigned long)-1)`` and ``sizeof(int)`` are ubiquitous
+    in real headers -- limits, flag masks, stdint-style definitions -- and each
+    is a constant expression.  They contain type keywords, so a gate that
+    rejects every keyword deletes them along with ``__declspec(dllexport)
+    PyObject *``.  This class is the boundary: the four rows below are values and
+    must survive; the fifth is declaration specifiers and must not.
+    """
+
+    def setup_method(self):
+        self.backend = LibclangBackend()
+
+    def _classify(self, name: str, body: str):
+        code = textwrap.dedent(f"""\
+            typedef struct PyObject PyObject;
+            #define {name} {body}
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        return [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+
+    @pytest.mark.parametrize(
+        ("name", "body", "raw"),
+        [
+            ("CAST_INT", "((int)0x1F)", "( ( int ) 0x1F )"),
+            ("CAST_UNSIGNED", "((unsigned)1)", "( ( unsigned ) 1 )"),
+            ("CAST_ULONG_NEG", "((unsigned long)-1)", "( ( unsigned long ) - 1 )"),
+            ("SIZEOF_INT", "sizeof(int)", "sizeof ( int )"),
+            ("SIZEOF_TAG", "sizeof(struct PyObject)", "sizeof ( struct PyObject )"),
+            ("CAST_CONST_CHAR_PTR", "((const char *)0)", "( ( const char * ) 0 )"),
+            ("MASK", "((unsigned)~0U >> 1)", "( ( unsigned ) ~ 0U >> 1 )"),
+        ],
+    )
+    def test_cast_or_sizeof_macro_is_a_constant(self, name: str, body: str, raw: str):
+        matches = self._classify(name, body)
+        assert len(matches) == 1, f"#define {name} {body} was dropped"
+        assert matches[0].type is not None
+        assert matches[0].type.name == "int"
+        assert matches[0].raw_expression == raw
+
+    def test_declaration_specifier_macro_is_still_rejected(self):
+        """The row the fix must not readmit, stated beside the four it restores."""
+        assert self._classify("PyMODINIT_FUNC", "__declspec(dllexport) PyObject *") == []
+
+    @pytest.mark.parametrize(
+        ("name", "body"),
+        [
+            # A type name that is not a cast operand is still declaration specifiers.
+            ("BARE_CAST", "(int)"),
+            ("VOID_CAST", "((void)1)"),
+            ("QUALIFIER_ONLY_CAST", "((const)1)"),
+            # Admissible keywords that combine into no type.
+            ("IMPOSSIBLE_TYPE", "((int char)1)"),
+            ("SIZEOF_IMPOSSIBLE_TYPE", "sizeof(int void)"),
+        ],
+    )
+    def test_type_shaped_but_not_a_value_is_rejected(self, name: str, body: str):
+        assert self._classify(name, body) == [], f"#define {name} {body} was wrongly accepted"
+
+    _TYPEDEF_PRELUDE = textwrap.dedent("""\
+        #include <stddef.h>
+        #include <stdint.h>
+        struct mystruct_t { int x; };
+        typedef struct mystruct_t mystruct_t;
+        typedef int myint_t;
+        """)
+
+    def _classify_with_typedefs(self, name: str, body: str, lang: str = "c"):
+        code = self._TYPEDEF_PRELUDE + f"#define {name} {body}\nvoid f(void);\n"
+        if lang.startswith("c++"):
+            header = self.backend.parse(code, "test.hpp", extra_args=["-x", "c++", f"-std={lang}"])
+        else:
+            header = self.backend.parse(code, "test.h")
+        return [d for d in header.declarations if isinstance(d, Constant) and d.name == name]
+
+    @pytest.mark.parametrize(
+        ("name", "body", "raw", "lang"),
+        [
+            ("SIZE_T_ONE", "((size_t)1)", "( ( size_t ) 1 )", "c"),
+            ("U32_MASK", "((uint32_t)0x1F)", "( ( uint32_t ) 0x1F )", "c"),
+            ("TYPEDEFD", "((myint_t)1)", "( ( myint_t ) 1 )", "c"),
+            ("STRUCT_PTR", "((mystruct_t *)0)", "( ( mystruct_t * ) 0 )", "c"),
+            ("TAG_PTR", "((const struct mystruct_t *)0)", "( ( const struct mystruct_t * ) 0 )", "c"),
+            ("COMPLEX", "((float _Complex)1)", "( ( float _Complex ) 1 )", "c"),
+            ("SIZE_T_NEG", "((size_t)-1)", "( ( size_t ) - 1 )", "c"),
+            ("SIZEOF_VOID", "sizeof(void)", "sizeof ( void )", "c"),
+            ("SIZEOF_TYPEDEF", "sizeof(size_t)", "sizeof ( size_t )", "c"),
+            # `restrict` qualifies a pointer, so it is legal to the right of a `*`.
+            ("PTR_RESTRICT", "((int * restrict)0)", "( ( int * restrict ) 0 )", "c"),
+            ("PTR_RESTRICT_GNU", "((int * __restrict)0)", "( ( int * __restrict ) 0 )", "c"),
+            ("VOID_PTR_RESTRICT", "((void * restrict)0)", "( ( void * restrict ) 0 )", "c"),
+            ("TAG_PTR_RESTRICT", "((struct mystruct_t * restrict)0)", "( ( struct mystruct_t * restrict ) 0 )", "c"),
+            # `const` and `volatile` float: all three spellings are the same type.
+            ("PTR_CONST", "((int * const)0)", "( ( int * const ) 0 )", "c"),
+            ("CONST_PTR", "((const int *)0)", "( ( const int * ) 0 )", "c"),
+            ("INT_CONST", "((int const)1)", "( ( int const ) 1 )", "c"),
+            # C++ spells these as keywords where C leaves them identifiers or macros,
+            # so the keyword gate must admit them or the cast is dropped.
+            ("CPP_BOOL", "((bool)1)", "( ( bool ) 1 )", "c++17"),
+            ("CPP_WCHAR", "((wchar_t)1)", "( ( wchar_t ) 1 )", "c++17"),
+            ("CPP_CHAR16", "((char16_t)1)", "( ( char16_t ) 1 )", "c++17"),
+            ("CPP_CHAR32", "((char32_t)1)", "( ( char32_t ) 1 )", "c++17"),
+            ("CPP_CHAR8", "((char8_t)1)", "( ( char8_t ) 1 )", "c++20"),
+            ("CPP_WCHAR_PTR", "((wchar_t *)0)", "( ( wchar_t * ) 0 )", "c++17"),
+        ],
+    )
+    def test_cast_to_a_typedef_or_tag_is_a_constant(self, name: str, body: str, raw: str, lang: str):
+        """``size_t`` and ``uint32_t`` reach the walker as a lone identifier.
+
+        A typedef name is commoner in real headers than a cast spelled out of
+        keywords, so a rule that admitted only keyword spellings would drop most
+        real casts.
+        """
+        matches = self._classify_with_typedefs(name, body, lang)
+        assert len(matches) == 1, f"#define {name} {body} was dropped"
+        assert matches[0].raw_expression == raw
+
+    @pytest.mark.parametrize(
+        ("name", "body"),
+        [
+            # C has no cast to a struct type, only to a pointer to one.
+            ("CAST_TO_TAG", "((struct mystruct_t)0)"),
+            # A qualifier cannot sit between the tag keyword and its name.
+            ("QUALIFIER_INSIDE_TAG", "sizeof(struct const mystruct_t)"),
+            # Nothing but a qualifier may join a tag and its name.
+            ("TAG_PLUS_SPECIFIER", "sizeof(struct mystruct_t int)"),
+            ("SPECIFIER_BEFORE_TAG", "sizeof(int struct mystruct_t)"),
+            # POSIX signal.h, in both spellings the platforms use.  A cast to a
+            # function-pointer type is not an int, and classifying it as one is the
+            # `PyMODINIT_FUNC` defect on a real header: Cython emits
+            # `__Pyx_PyLong_From_int(SIG_DFL)` and the C compiler rejects it with
+            # "incompatible pointer to integer conversion passing 'void (*)(int)'
+            # to parameter of type 'int'".  Measured, not predicted.
+            ("SIG_DFL", "(void (*)(int))0"),
+            ("SIG_ERR", "((void (*)(int))-1)"),
+            ("SIG_IGN", "(void (*)(int))1"),
+            # `restrict` is not a free-floating qualifier: it must follow a `*`.
+            ("RESTRICT_NO_POINTER", "((int restrict)1)"),
+            ("RESTRICT_LEADING", "((restrict int)1)"),
+            ("RESTRICT_BEFORE_STAR", "((int restrict *)0)"),
+            ("RESTRICT_ON_TYPEDEF", "((myint_t restrict)1)"),
+            ("RESTRICT_ALONE", "((restrict)1)"),
+        ],
+    )
+    def test_type_name_that_is_not_valid_c_is_rejected(self, name: str, body: str):
+        assert self._classify_with_typedefs(name, body) == [], f"#define {name} {body} was wrongly accepted"
+
+    def test_parenthesised_identifier_is_grouping_not_a_cast(self):
+        """``(A)`` must keep meaning ``A``, or every ``#define B (A)`` changes.
+
+        Reading a parenthesised lone identifier as a cast to a typedef would make
+        ``B`` a cast prefix with no operand, and the macro would be dropped.
+        """
+        code = textwrap.dedent("""\
+            #define A 5
+            #define B (A)
+            void f(void);
+        """)
+        header = self.backend.parse(code, "test.h")
+        matches = [d for d in header.declarations if isinstance(d, Constant) and d.name == "B"]
+        assert len(matches) == 1
+        assert matches[0].raw_expression == "( A )"
+
+
+class TestConstantExpressionShape:
+    """Unit tests for the structural expression-shape predicate."""
+
+    @pytest.mark.parametrize(
+        "spellings",
+        [
+            ["1"],
+            ["-", "1"],
+            ["(", "1", "<<", "4", ")"],
+            ["(", "A", "+", "1", ")"],
+            ["(", "-", "1", ")"],
+            ["(", "1", "?", "2", ":", "3", ")"],
+            ["~", "0"],
+            ["!", "A"],
+            # Casts: the parenthesised type name consumes no operand.
+            ["(", "(", "int", ")", "0x1F", ")"],
+            ["(", "(", "unsigned", "long", ")", "-", "1", ")"],
+            ["(", "(", "const", "char", "*", ")", "0", ")"],
+            # sizeof / alignof over a type name is a complete operand.
+            ["sizeof", "(", "int", ")"],
+            ["sizeof", "(", "struct", "S", ")"],
+            ["_Alignof", "(", "int", ")"],
+            # sizeof over an expression is a unary operator.
+            ["sizeof", "A"],
+            ["sizeof", "(", "A", "+", "1", ")"],
+            # A lone identifier is a type name: size_t, uint32_t, project typedefs.
+            ["(", "T", ")", "1"],
+            ["(", "T", "*", ")", "0"],
+            ["(", "struct", "S", "*", ")", "0"],
+            ["sizeof", "(", "T", ")"],
+            ["sizeof", "(", "void", ")"],
+            ["sizeof", "(", "struct", "S", "const", ")"],  # a trailing qualifier is fine
+            # A pointer qualifier is consumed only while popping trailing `*`s.
+            ["(", "int", "*", "restrict", ")", "0"],
+            ["(", "int", "*", "const", ")", "0"],
+            ["(", "T", "*", "__restrict", ")", "0"],
+            ["(", "struct", "S", "*", "restrict", ")", "0"],
+        ],
+    )
+    def test_accepts_constant_expressions(self, spellings: list[str]):
+        assert _is_constant_expression_shape(spellings) is True
+
+    @pytest.mark.parametrize(
+        "spellings",
+        [
+            ["PyObject", "*"],  # trailing binary operator: a declarator
+            ["PyObject", "&"],
+            ["__declspec", "(", "dllexport", ")", "PyObject", "*"],
+            ["__declspec", "(", "dllimport", ")"],  # call syntax
+            ["A", "B"],  # adjacent operands
+            ["(", "1", "+", "2"],  # unbalanced
+            ["1", "+", "2", ")"],
+            ["+"],  # operator only
+            [],  # empty
+            ["const", "char", "*"],  # type keywords outside a cast: declaration specifiers
+            ["unsigned", "int"],
+            ["struct", "S"],
+            ["(", "int", ")"],  # a cast with nothing to cast
+            ["(", "void", ")", "1"],  # yields no value
+            ["(", "const", ")", "1"],  # qualifier alone is implicit int, removed in C99
+            ["(", "int", "char", ")", "1"],  # admissible keywords, no such type
+            ["sizeof", "(", "int", "void", ")"],
+            ["1", "sizeof", "(", "int", ")"],  # sizeof where an operator belongs
+            ["(", "struct", "S", ")", "1"],  # no cast to a struct type, only to a pointer
+            ["sizeof", "(", "struct", "const", "S", ")"],  # qualifier between tag and name
+            ["sizeof", "(", "struct", "S", "int", ")"],  # a specifier is not a qualifier
+            ["sizeof", "(", "int", "struct", "S", ")"],
+            ["(", "int", "restrict", ")", "1"],  # restrict must follow a `*`
+            ["(", "restrict", "int", ")", "1"],
+            ["(", "int", "restrict", "*", ")", "0"],
+            ["(", "T", "restrict", ")", "1"],
+        ],
+    )
+    def test_rejects_non_expressions(self, spellings: list[str]):
+        assert _is_constant_expression_shape(spellings) is False
 
 
 class TestLinuxVersionedSearchPaths:

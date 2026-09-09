@@ -753,6 +753,338 @@ def _detect_cplus(filename: str, extra_args: Sequence[str] | None) -> bool:
     return filename.endswith(CPP_HEADER_EXTENSIONS)
 
 
+# Operator spellings admissible in a C constant expression.  ``(`` and ``)`` are
+# handled structurally by :func:`_is_constant_expression_shape` rather than being
+# listed here, because their meaning depends on position: grouping or a cast in
+# operand position, a function call in operator position.
+_EXPR_UNARY_OPERATORS = frozenset({"+", "-", "~", "!"})
+_EXPR_BINARY_OPERATORS = frozenset({"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", ">", "?", ":"})
+
+# Keywords that may legitimately appear inside a constant expression.  A cast
+# operand and a ``sizeof`` operand are type names, so the type specifiers and the
+# three tag keywords belong to the expression grammar even though every other
+# keyword -- ``static``, ``extern``, ``inline``, ``__cdecl``, ``true`` -- marks a
+# declaration or a value this backend cannot type.
+_TYPE_SPECIFIER_KEYWORDS = frozenset(
+    {
+        "void",
+        "char",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "signed",
+        "unsigned",
+        "_Bool",
+        # C++ spells these as keywords where C leaves them identifiers or macros.
+        "bool",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+    }
+)
+# ``const`` and ``volatile`` float: they may sit anywhere among the specifiers.
+_TYPE_QUALIFIER_KEYWORDS = frozenset({"const", "volatile"})
+# ``restrict`` does not float.  It qualifies a *pointer*, so it is legal only to
+# the right of a ``*`` -- ``int * restrict`` is a type, ``int restrict`` is not.
+_POINTER_QUALIFIER_KEYWORDS = frozenset({"restrict", "__restrict", "__restrict__"})
+# ``_Complex`` modifies a floating specifier rather than joining the multiset, so
+# it is stripped before the combination is looked up.
+_COMPLEX_KEYWORDS = frozenset({"_Complex", "_Imaginary", "__complex__"})
+_TAG_KEYWORDS = frozenset({"struct", "union", "enum"})
+_TYPE_NAME_KEYWORDS = (
+    _TYPE_SPECIFIER_KEYWORDS
+    | _TYPE_QUALIFIER_KEYWORDS
+    | _POINTER_QUALIFIER_KEYWORDS
+    | _COMPLEX_KEYWORDS
+    | _TAG_KEYWORDS
+)
+# ``sizeof``/``alignof`` yield an integer constant, so they are operators here
+# rather than declaration specifiers.
+_SIZEOF_KEYWORDS = frozenset({"sizeof", "alignof", "_Alignof", "__alignof__"})
+_EXPRESSION_KEYWORDS = _TYPE_NAME_KEYWORDS | _SIZEOF_KEYWORDS
+# The floating specifiers ``_Complex`` may modify.
+_COMPLEX_BASE_MULTISETS = frozenset({("float",), ("double",), ("double", "long")})
+# What may appear to the right of the specifiers in a type name.
+_POINTER_RUN_TOKENS = frozenset({"*"}) | _TYPE_QUALIFIER_KEYWORDS | _POINTER_QUALIFIER_KEYWORDS
+
+# Type-specifier combinations that name a type, as sorted multisets.  ``int char``
+# and ``int void`` are each built from admissible keywords and name nothing, and
+# differential fuzzing against the C compiler reached them.
+#
+# This is the UNION of the C and C++ spellings, so it is a superset of either
+# language taken alone rather than an exact closure of both: measured with
+# ``-pedantic-errors``, which matters because a permissive invocation accepts
+# ``signed signed``, C11 admits 31 of these, C23 32, C++17 34 and C++20 35, while
+# the table holds 36.  The extras are the four spellings the other language lacks
+# -- ``_Bool`` in C++, and ``bool``/``wchar_t``/``char8_t``/``char16_t``/
+# ``char32_t`` in C -- plus ``char8_t``, which is C++20 and not C++17.  What the
+# measurement does establish, in every one of those four modes, is the direction
+# that matters: nothing a compiler admits is missing here.  Erring wide costs a
+# macro that the C compiler would reject anyway; erring narrow would drop a real
+# constant, which is the defect this whole predicate exists to avoid.
+_VALID_TYPE_SPECIFIER_MULTISETS = frozenset(
+    tuple(sorted(combination))
+    for combination in (
+        ("void",),
+        ("_Bool",),
+        # C++ only; each stands alone and admits no signedness or width modifier.
+        ("bool",),
+        ("wchar_t",),
+        ("char8_t",),
+        ("char16_t",),
+        ("char32_t",),
+        ("float",),
+        ("double",),
+        ("long", "double"),
+        ("char",),
+        ("signed", "char"),
+        ("unsigned", "char"),
+        ("short",),
+        ("signed", "short"),
+        ("unsigned", "short"),
+        ("short", "int"),
+        ("signed", "short", "int"),
+        ("unsigned", "short", "int"),
+        ("int",),
+        ("signed",),
+        ("unsigned",),
+        ("signed", "int"),
+        ("unsigned", "int"),
+        ("long",),
+        ("signed", "long"),
+        ("unsigned", "long"),
+        ("long", "int"),
+        ("signed", "long", "int"),
+        ("unsigned", "long", "int"),
+        ("long", "long"),
+        ("signed", "long", "long"),
+        ("unsigned", "long", "long"),
+        ("long", "long", "int"),
+        ("signed", "long", "long", "int"),
+        ("unsigned", "long", "long", "int"),
+    )
+)
+
+
+def _has_non_expression_keyword(tokens: list[Any]) -> bool:
+    """Report whether any token is a keyword that cannot occur in a constant expression.
+
+    Declaration specifiers -- ``static``, ``extern``, ``inline``, ``struct`` used
+    as a declaration head, and the calling-convention keywords ``__cdecl`` /
+    ``__stdcall`` / ``__fastcall`` -- are keywords, so clang's own token
+    classification separates them from constants without a denylist of spellings
+    that would forever trail the next compiler extension.
+
+    The gate is narrowed to keywords outside :data:`_EXPRESSION_KEYWORDS` because
+    a cast and a ``sizeof`` are ordinary constant expressions: ``((int)0x1F)``,
+    ``((unsigned long)-1)`` and ``sizeof(int)`` are values, and rejecting every
+    keyword outright deleted them.  A type keyword that is *not* part of a cast or
+    a ``sizeof`` -- ``const char *``, ``unsigned int`` -- is rejected structurally
+    by :func:`_is_constant_expression_shape` instead, which is where the
+    distinction actually lives.
+    """
+    for token in tokens:
+        kind = getattr(getattr(token, "kind", None), "name", None)
+        if kind == "KEYWORD" and getattr(token, "spelling", None) not in _EXPRESSION_KEYWORDS:
+            return True
+    return False
+
+
+def _matching_paren(spellings: list[str], open_index: int) -> int | None:
+    """Return the index of the ``)`` closing the ``(`` at ``open_index``, or None."""
+    depth = 0
+    for index in range(open_index, len(spellings)):
+        if spellings[index] == "(":
+            depth += 1
+        elif spellings[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _is_type_name(spellings: list[str], *, as_cast: bool) -> bool:
+    """Report whether the spellings form a type name -- a cast or ``sizeof`` operand.
+
+    A lone identifier counts.  ``size_t``, ``uint32_t`` and every project typedef
+    reach this function as one identifier, and they are commoner in real headers
+    than the spellings built from keywords, so refusing them would drop
+    ``((size_t)1)`` and ``((uint32_t)0x1F)``.  Reading a parenthesised identifier
+    as a cast is safe in the position this is asked from, and safe for two
+    independent reasons:
+
+    * the caller only treats a parenthesised run as a cast when a token follows
+      it, so ``#define B (A)`` -- nothing after the ``)`` -- is grouping and
+      keeps its value;
+    * where a token does follow, grouping is not a possible reading. ``(A) B``
+      would be two adjacent operands, which C has no rule for, so a cast is the
+      only interpretation that parses.
+
+    The specifiers must *combine* into a type: ``int char`` and ``int void`` are
+    each built from admissible keywords and name nothing.  Two further shapes are
+    excluded: qualifiers alone (``( const ) A`` is implicit int, which C99
+    removed) and, for a cast only, ``void`` with no pointer declarator, because
+    ``( void ) A`` discards its operand rather than yielding one.  ``sizeof(void)``
+    is a different question and is admitted -- it is a GNU extension the compiler
+    accepts in its default mode, where it yields 1.  All of these were found by
+    differential fuzzing against the C compiler.
+
+    Two families are knowingly accepted, both reachable only from a header that is
+    already invalid in its own language, so no header that compiles reaches them.
+    ``( float _Complex _Complex ) 1`` is an error under ``-pedantic-errors`` and
+    accepted by clang in its default mode -- the same mode the ``sizeof(void)``
+    reasoning above appeals to.  ``( wchar_t const const ) 1`` and
+    ``( wchar_t * restrict ) 1`` mix the languages: a duplicate qualifier is an
+    error in C++ but a warning in C11, and ``restrict`` is not a C++ keyword at
+    all.  The specifier table is a C/C++ union while the qualifier rules are
+    language-agnostic, so the seam between them is where these sit.
+
+    Qualifier *placement* is checked rather than ignored, because the two kinds of
+    qualifier do not go in the same places.  ``const`` and ``volatile`` float
+    freely among the specifiers, so ``const int *``, ``int const *`` and
+    ``int * const`` are all the same type.  ``restrict`` does not float: it
+    qualifies a pointer and is legal only to the right of a ``*``.  Stripping all
+    qualifiers wherever they appear would accept ``int restrict`` and reject
+    ``int * restrict``, which is the wrong answer in both directions, so the
+    trailing pointer run is parsed instead of discarded.
+    """
+    if not spellings:
+        return False
+    core = list(spellings)
+    # Split off the trailing declarator run -- the ``*``s and the qualifiers that
+    # bind to them -- and require every pointer qualifier in it to follow a ``*``.
+    run_start = len(core)
+    while run_start and core[run_start - 1] in _POINTER_RUN_TOKENS:
+        run_start -= 1
+    run, core = core[run_start:], core[:run_start]
+    pointer = False
+    for token in run:
+        if token == "*":
+            pointer = True
+        elif token in _POINTER_QUALIFIER_KEYWORDS and not pointer:
+            return False
+    # Belt and braces: the run above consumes every trailing ``*`` and pointer
+    # qualifier, and fuzzing found no input where this guard changes the verdict.
+    # It states the invariant the code below relies on rather than earning its
+    # place by catching something, so a surviving mutant here is expected.
+    if any(token in _POINTER_QUALIFIER_KEYWORDS or token == "*" for token in core):
+        return False
+    tag = next((i for i, s in enumerate(core) if s in _TAG_KEYWORDS), None)
+    if tag is not None:
+        # The tag keyword and its name are adjacent; a qualifier may precede or
+        # follow the pair but never sit between them (``struct const S`` is not C).
+        name = core[tag + 1] if tag + 1 < len(core) else None
+        if name is None or name in _EXPRESSION_KEYWORDS or not name.isidentifier():
+            return False
+        if any(s not in _TYPE_QUALIFIER_KEYWORDS for i, s in enumerate(core) if i not in (tag, tag + 1)):
+            return False
+        # C has no cast to a struct, union or enum type, only to a pointer to one.
+        # ``sizeof ( struct S )`` is unaffected, which is why the caller says which
+        # it is asking about.
+        return pointer or not as_cast
+    core = [s for s in core if s not in _TYPE_QUALIFIER_KEYWORDS]
+    if not core:
+        return False
+    if len(core) == 1 and core[0] not in _EXPRESSION_KEYWORDS and core[0].isidentifier():
+        return True
+    is_complex = any(s in _COMPLEX_KEYWORDS for s in core)
+    rest = [s for s in core if s not in _COMPLEX_KEYWORDS]
+    if not all(s in _TYPE_SPECIFIER_KEYWORDS for s in rest):
+        return False
+    specifiers = tuple(sorted(rest))
+    if is_complex:
+        return specifiers in _COMPLEX_BASE_MULTISETS
+    if specifiers not in _VALID_TYPE_SPECIFIER_MULTISETS:
+        return False
+    return specifiers != ("void",) or pointer or not as_cast
+
+
+def _is_constant_expression_shape(spellings: list[str]) -> bool:
+    """Report whether token spellings form a well-formed constant expression.
+
+    Walks the tokens tracking whether an operand or an operator is expected,
+    which rejects the shapes that declaration specifiers produce but constant
+    expressions never do:
+
+    * two adjacent operands (``__declspec ( dllexport ) PyObject``, ``PyObject``
+      following a closing paren) -- a C expression requires an operator between
+      operands;
+    * a trailing binary operator (``PyObject *``, ``PyObject &``) -- a pointer or
+      reference declarator, not a value;
+    * call syntax (``__declspec ( dllimport )``) -- a ``(`` in operator position.
+      A constant expression contains no function calls.
+    * a type name outside a cast or a ``sizeof`` (``const char *``,
+      ``unsigned int``, ``struct PyObject``) -- declaration specifiers.
+
+    A parenthesised type name in *operand* position with something after it is a
+    cast, which consumes no operand and so leaves the walker still expecting one.
+    ``sizeof`` and ``alignof`` take either a parenthesised type name, which is a
+    complete operand, or an ordinary expression operand.
+
+    Caller has already established that every non-operator token is a numeric
+    literal or an identifier, so operands need no further validation here.
+    """
+    expect_operand = True
+    depth = 0
+    index = 0
+    count = len(spellings)
+    while index < count:
+        spelling = spellings[index]
+        if expect_operand:
+            if spelling in _SIZEOF_KEYWORDS:
+                close = _matching_paren(spellings, index + 1) if spellings[index + 1 : index + 2] == ["("] else None
+                if close is not None and _is_type_name(spellings[index + 2 : close], as_cast=False):
+                    # ``sizeof ( int )`` is a complete operand.
+                    expect_operand = False
+                    index = close + 1
+                    continue
+                # ``sizeof X`` / ``sizeof ( X + 1 )``: a unary operator.
+                index += 1
+                continue
+            if spelling == "(":
+                close = _matching_paren(spellings, index)
+                if (
+                    close is not None
+                    and close + 1 < count
+                    and _is_type_name(spellings[index + 1 : close], as_cast=True)
+                ):
+                    # A cast: it yields no operand, so one is still expected.
+                    index = close + 1
+                    continue
+                depth += 1
+                index += 1
+                continue
+            if spelling in _TYPE_NAME_KEYWORDS:
+                return False
+            if spelling in _EXPR_UNARY_OPERATORS:
+                index += 1
+                continue
+            if spelling == ")" or spelling in _EXPR_BINARY_OPERATORS:
+                return False
+            expect_operand = False
+            index += 1
+            continue
+        if spelling == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+            index += 1
+            continue
+        if spelling == "(":
+            # Call syntax: an operand immediately followed by an argument list.
+            return False
+        if spelling in _EXPR_BINARY_OPERATORS:
+            expect_operand = True
+            index += 1
+            continue
+        # Two adjacent operands, or a type name where an operator belongs.
+        return False
+    return depth == 0 and not expect_operand
+
+
 def _is_function_like_macro(tokens: list[Any]) -> bool:
     """Report whether a macro definition's tokens describe a function-like macro.
 
@@ -1474,6 +1806,10 @@ class ClangASTConverter:
                     has_float = True
                     break
 
+        # A keyword that cannot occur in an expression means declaration specifiers.
+        if _has_non_expression_keyword(tokens):
+            return None, None, None, None
+
         # Valid expression tokens for integer/float expressions
         valid_operators = {"+", "-", "*", "/", "%", "&", "|", "^", "~", "<<", ">>", "(", ")", "<", ">", "!", "?", ":"}
 
@@ -1489,6 +1825,11 @@ class ClangASTConverter:
             if spelling.isidentifier():
                 continue
             # Unknown token - not a simple expression
+            return None, None, None, None
+
+        # Every token is individually admissible; require that they also compose
+        # into an expression rather than a sequence of declaration specifiers.
+        if not _is_constant_expression_shape(spellings):
             return None, None, None, None
 
         # Expression looks valid - try to safely evaluate

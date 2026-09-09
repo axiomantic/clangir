@@ -992,12 +992,22 @@ def _enum_type_names(header: Header) -> frozenset[str]:
 
     Withholding a name a ``Typedef`` binds is the arm no execution gate covers,
     because the shape that reaches it -- ``typedef struct ToneRec Tone;`` next
-    to ``enum Tone`` -- cannot be scaffolded into an importable module today for
-    an unrelated reason: a record alias renders into the typedefs section, which
-    is emitted after the records that use it. It is kept because dropping it
-    does not restore that module, it only changes how the module fails: the
-    member becomes a four-byte integer where C laid out an eight-byte record,
-    and the package imports and computes wrong answers instead of raising.
+    to ``enum Tone`` -- cannot be scaffolded into an importable module today.
+    Two separate unfixed defects in this writer stand between that header and a
+    gate, both about *records* rather than enums, and both outside the scope of
+    the change this arm belongs to:
+
+    1. a record alias renders via ``_typedef_to_ctypes`` into the ``typedefs``
+       section, which ``_SECTION_ORDER`` emits *after* ``structs`` -- so a
+       record using the alias raises ``NameError`` at import;
+    2. a record named by its tag in a function signature reaches the module as
+       ``argtypes = [struct ToneRec]``, which is not valid Python.
+
+    Whoever closes either of those should come back and gate this arm. It is
+    kept meanwhile because dropping it does not restore that module, it only
+    changes how the module fails: the member becomes a four-byte integer where
+    C laid out an eight-byte record, so the package imports and computes wrong
+    answers instead of raising.
     """
     bare: set[str] = set()
     for d in header.declarations:
