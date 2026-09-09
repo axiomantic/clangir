@@ -134,54 +134,35 @@ def _scaffold(workdir: Path, target: str, package: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_generated_ctypes_package_is_not_yet_importable(tmp_path: Path) -> None:
-    """Pin the two known ctypes-writer defects, precisely, so the xfail below cannot rot.
+def test_generated_ctypes_loader_reads_the_env_var_this_file_sets(tmp_path: Path) -> None:
+    """The loader's environment variable must be the one the gate below sets.
 
-    A strict xfail is satisfied by *any* failure, so on its own it would keep passing if
-    the reason changed underneath it. This pins the actual failure. When PR #78 lands,
-    this test goes red with a message saying what to do, and the xfail below must come
-    off in the same change.
+    The neighbouring gate points the generated package at a real library through
+    :data:`CTYPES_LIBRARY_PATH_ENV`. If the writer renamed that variable, the gate
+    would stop reaching the library and would still be green on everything it can
+    see locally, so the mismatch is asserted here rather than inferred there.
+
+    Absence of the library is the condition under test: the import must fail
+    *because the library is missing*, not because the emitted module is broken.
     """
     _scaffold(tmp_path, "ctypes", "ctdemo")
     source = (tmp_path / "src" / "ctdemo" / "_bindings.py").read_text(encoding="utf-8")
+    assert f'_LIBRARY_PATH_ENV = "{CTYPES_LIBRARY_PATH_ENV}"' in source, source
 
     result = subprocess.run(
         [sys.executable, "-c", "import ctdemo._bindings"],
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(tmp_path / "src")},
+        env={**os.environ, "PYTHONPATH": str(tmp_path / "src"), CTYPES_LIBRARY_PATH_ENV: ""},
         capture_output=True,
         text=True,
     )
-    assert result.returncode != 0, (
-        "The generated ctypes package now imports. The ctypes importability fixes have "
-        "landed: remove the xfail on test_generated_python_suite_executes_against_a_real_library, "
-        f"and confirm the loader still reads {CTYPES_LIBRARY_PATH_ENV}."
-    )
-    assert "NameError" in result.stderr, result.stderr
-    assert "CtMode" in result.stderr, result.stderr
-    assert "_lib = " not in source, "a `_lib` binding now exists; the loader defect is fixed, see above"
-
-    # Armed for the fix rather than asserted against today's output: the moment a loader
-    # is emitted, its environment variable must be the one this file sets. A mismatch is
-    # the failure mode the xfail alone could not see -- the suite would keep xfailing on
-    # an import error and the marker would never come off.
-    if "_LIBRARY_PATH_ENV" in source:
-        assert f'_LIBRARY_PATH_ENV = "{CTYPES_LIBRARY_PATH_ENV}"' in source, source
+    assert result.returncode != 0, "the package imported with no native library present"
+    # Specific, not a bare non-zero exit: a module broken for an unrelated reason
+    # also exits non-zero, and that is the state this test replaced.
+    assert "OSError" in result.stderr, result.stderr
+    assert CTYPES_LIBRARY_PATH_ENV in result.stderr.split("OSError", 1)[1], result.stderr
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The ctypes writer emits a generated package that cannot be imported: it never "
-        "defines `_lib`, and it emits `CtMode = CtMode` for a typedef'd enum, which raises "
-        "NameError. Both are pre-existing writer defects fixed by PR #78, not defects in the "
-        "work-order tiering this file gates. strict=True turns this into a FAILURE the moment "
-        "those fixes land. The precise failure is pinned separately by "
-        "test_generated_ctypes_package_is_not_yet_importable, which also pins the loader's "
-        "environment-variable contract, because a strict xfail is satisfied by any failure "
-        "and would otherwise keep passing for a changed reason."
-    ),
-)
 def test_generated_python_suite_executes_against_a_real_library(tmp_path: Path) -> None:
     """Tier 1 must pass, every stub must fail, and the bindings must call the real library."""
     compiler = _c_compiler()
