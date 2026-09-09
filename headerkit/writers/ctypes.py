@@ -204,11 +204,20 @@ def _is_char_pointer(t: TypeExpr) -> bool:
     return False
 
 
-def type_to_ctypes(t: TypeExpr) -> str:
+def type_to_ctypes(t: TypeExpr, enum_names: frozenset[str] = frozenset()) -> str:
     """Convert a type expression to its ctypes string representation.
 
     Handles special cases like ``const char *`` -> ``ctypes.c_char_p``,
     ``void *`` -> ``ctypes.c_void_p``, and pointer/array composition.
+
+    :param enum_names: Every spelling this header uses for an enum type, from
+        :func:`_enum_type_names`. An enum binds no ctypes class, so a use of one
+        has to resolve to :data:`ENUM_CTYPE` here rather than to the C name. The
+        tag spelling ``enum E`` is not valid Python at all, and the alias
+        spelling ``E`` names something the module may not have assigned yet --
+        a ``Typedef`` renders into a section emitted *after* the records that
+        use it. Resolving at the use site is what makes the result independent
+        of both the spelling the backend chose and the order of the sections.
     """
     # const char * -> c_char_p
     if _is_const_char_pointer(t):
@@ -223,6 +232,11 @@ def type_to_ctypes(t: TypeExpr) -> str:
     if isinstance(t, CType):
         # Strip qualifiers for ctypes mapping (const int -> c_int)
         base_name = t.name
+        # At the ABI boundary a C enum is an integer, which is the same answer
+        # ``_typedef_to_ctypes`` gives for ``typedef enum E E``. The two must
+        # agree: a member typed ``E`` and the alias ``E`` name one C type.
+        if base_name.startswith("enum ") or base_name in enum_names:
+            return ENUM_CTYPE
         # Check with qualifiers prepended for compound types like "unsigned int"
         if t.qualifiers:
             # Only use qualified form for type-level qualifiers like "unsigned"
@@ -239,39 +253,39 @@ def type_to_ctypes(t: TypeExpr) -> str:
 
     if isinstance(t, Pointer):
         if isinstance(t.pointee, FunctionPointer):
-            return _function_pointer_to_ctypes(t.pointee)
-        inner = type_to_ctypes(t.pointee)
+            return _function_pointer_to_ctypes(t.pointee, enum_names)
+        inner = type_to_ctypes(t.pointee, enum_names)
         return f"ctypes.POINTER({inner})"
 
     if isinstance(t, Array):
-        element = type_to_ctypes(t.element_type)
+        element = type_to_ctypes(t.element_type, enum_names)
         if t.size is not None:
             return f"{element} * {t.size}"
         # Flexible array: use POINTER
         return f"ctypes.POINTER({element})"
 
     if isinstance(t, FunctionPointer):
-        return _function_pointer_to_ctypes(t)
+        return _function_pointer_to_ctypes(t, enum_names)
 
     return str(t)
 
 
-def _function_pointer_to_ctypes(fp: FunctionPointer) -> str:
+def _function_pointer_to_ctypes(fp: FunctionPointer, enum_names: frozenset[str] = frozenset()) -> str:
     """Convert a FunctionPointer to a ctypes.CFUNCTYPE expression."""
-    ret = type_to_ctypes(fp.return_type)
-    args = [type_to_ctypes(p.type) for p in fp.parameters]
+    ret = type_to_ctypes(fp.return_type, enum_names)
+    args = [type_to_ctypes(p.type, enum_names) for p in fp.parameters]
     all_types = [ret] + args
     return f"ctypes.CFUNCTYPE({', '.join(all_types)})"
 
 
-def _field_to_ctypes_tuple(f: Field) -> str:
+def _field_to_ctypes_tuple(f: Field, enum_names: frozenset[str] = frozenset()) -> str:
     """Convert a Field to a ctypes _fields_ tuple string.
 
     Bitfields use the 3-tuple format: ``("name", type, bit_width)``.
     Array fields use: ``("name", type * size)``.
     Regular fields use: ``("name", type)``.
     """
-    field_type = type_to_ctypes(f.type)
+    field_type = type_to_ctypes(f.type, enum_names)
     if f.bit_width is not None:
         return f'("{f.name}", {field_type}, {f.bit_width})'
     return f'("{f.name}", {field_type})'
@@ -356,8 +370,9 @@ class _StructBody:
     be reached by reserving the remaining bits of the current unit instead.
     """
 
-    def __init__(self, is_union: bool) -> None:
+    def __init__(self, is_union: bool, enum_names: frozenset[str] = frozenset()) -> None:
         self.is_union = is_union
+        self.enum_names = enum_names
         self.nested: list[str] = []
         self.anonymous: list[str] = []
         self.entries: list[str] = []
@@ -452,7 +467,7 @@ class _StructBody:
 
     def add_padding(self, f: Field) -> bool:
         """Reserve the bits of an unnamed bitfield. False if it cannot be placed."""
-        expr = type_to_ctypes(f.type)
+        expr = type_to_ctypes(f.type, self.enum_names)
         width = f.bit_width or 0
         is_zero_width = width == 0
         info = _ctypes_scalar_bits(expr)
@@ -568,7 +583,7 @@ class _StructBody:
             return False
         cls_name = f"_Anon{index}"
         field_name = f"_anon{index}"
-        body = _record_body(inner, cls_name)
+        body = _record_body(inner, cls_name, self.enum_names)
         if body is None:
             return False
         self.nested.extend(body)
@@ -613,18 +628,18 @@ class _StructBody:
         return narrow
 
     def add_member(self, f: Field) -> None:
-        expr = type_to_ctypes(f.type)
+        expr = type_to_ctypes(f.type, self.enum_names)
         self.has_member = True
         self._note_member_align(expr)
         if f.bit_width is None:
-            self._add_both(_field_to_ctypes_tuple(f))
+            self._add_both(_field_to_ctypes_tuple(f, self.enum_names))
             self._advance_plain(expr)
             return
         # Only the byte-granular spelling narrows. ``entries`` stays faithful
         # to the declared types, and mixing a narrowed member into it would
         # change the layout it exists to reproduce.
-        self.entries.append(_field_to_ctypes_tuple(f))
-        self.native_entries.append(_field_to_ctypes_tuple(f))
+        self.entries.append(_field_to_ctypes_tuple(f, self.enum_names))
+        self.native_entries.append(_field_to_ctypes_tuple(f, self.enum_names))
         carrier = self._portable_bitfield_carrier(expr, f.bit_width)
         self.flat_entries.append(f'("{f.name}", {carrier}, {f.bit_width})')
         # The running offset tracks C, so it advances by the *declared* type.
@@ -646,14 +661,14 @@ def _alignment_entries(body: _StructBody, *, include_padding: bool) -> list[str]
     return entries
 
 
-def _record_body(decl: Struct, class_name: str) -> list[str] | None:
+def _record_body(decl: Struct, class_name: str, enum_names: frozenset[str] = frozenset()) -> list[str] | None:
     """Render a ctypes class for ``decl``, or None when it cannot be represented."""
     base_class = "ctypes.Union" if decl.is_union else "ctypes.Structure"
 
     if not decl.fields:
         return [f"class {class_name}({base_class}):", "    pass"]
 
-    body = _StructBody(decl.is_union)
+    body = _StructBody(decl.is_union, enum_names)
     for index, f in enumerate(decl.fields):
         if f.is_padding:
             if not body.add_padding(f):
@@ -757,12 +772,12 @@ def _record_body(decl: Struct, class_name: str) -> list[str] | None:
     return lines
 
 
-def _struct_to_ctypes(decl: Struct) -> str | None:
+def _struct_to_ctypes(decl: Struct, enum_names: frozenset[str] = frozenset()) -> str | None:
     """Convert a Struct/Union IR node to a ctypes class definition."""
     if decl.name is None or _is_anonymous_name(decl.name):
         return None
 
-    lines = _record_body(decl, decl.name)
+    lines = _record_body(decl, decl.name, enum_names)
     if lines is None:
         return None
     return "\n".join(lines)
@@ -823,7 +838,7 @@ def _constant_to_ctypes(decl: Constant) -> str | None:
     return None
 
 
-def _function_to_ctypes(decl: Function, lib_name: str) -> str | None:
+def _function_to_ctypes(decl: Function, lib_name: str, enum_names: frozenset[str] = frozenset()) -> str | None:
     """Convert a Function IR node to ctypes prototype annotations."""
     lines = []
 
@@ -833,28 +848,28 @@ def _function_to_ctypes(decl: Function, lib_name: str) -> str | None:
 
     # argtypes
     if decl.parameters:
-        arg_types = [type_to_ctypes(p.type) for p in decl.parameters]
+        arg_types = [type_to_ctypes(p.type, enum_names) for p in decl.parameters]
         lines.append(f"{lib_name}.{decl.name}.argtypes = [{', '.join(arg_types)}]")
     else:
         lines.append(f"{lib_name}.{decl.name}.argtypes = []")
 
     # restype
-    ret = type_to_ctypes(decl.return_type)
+    ret = type_to_ctypes(decl.return_type, enum_names)
     lines.append(f"{lib_name}.{decl.name}.restype = {ret}")
 
     return "\n".join(lines)
 
 
-def _typedef_to_ctypes(decl: Typedef) -> str | None:
+def _typedef_to_ctypes(decl: Typedef, enum_names: frozenset[str] = frozenset()) -> str | None:
     """Convert a Typedef IR node to a ctypes type alias."""
     underlying = decl.underlying_type
 
     # Function pointer typedef: Name = ctypes.CFUNCTYPE(ret, *args)
     if isinstance(underlying, Pointer) and isinstance(underlying.pointee, FunctionPointer):
-        return f"{decl.name} = {_function_pointer_to_ctypes(underlying.pointee)}"
+        return f"{decl.name} = {_function_pointer_to_ctypes(underlying.pointee, enum_names)}"
 
     if isinstance(underlying, FunctionPointer):
-        return f"{decl.name} = {_function_pointer_to_ctypes(underlying)}"
+        return f"{decl.name} = {_function_pointer_to_ctypes(underlying, enum_names)}"
 
     # Struct/union typedef alias: Name = OriginalName
     if isinstance(underlying, CType):
@@ -872,7 +887,7 @@ def _typedef_to_ctypes(decl: Typedef) -> str | None:
                 target = name[len(prefix) :]
                 return f"{decl.name} = {target}"
         # Simple type alias: just a comment
-        ctypes_type = type_to_ctypes(underlying)
+        ctypes_type = type_to_ctypes(underlying, enum_names)
         if ctypes_type in CTYPES_TYPE_MAP.values() or ctypes_type == "None":
             return f"# typedef {underlying} -> {decl.name}"
         # User-defined type alias
@@ -880,21 +895,21 @@ def _typedef_to_ctypes(decl: Typedef) -> str | None:
 
     # Array typedef
     if isinstance(underlying, Array):
-        element = type_to_ctypes(underlying.element_type)
+        element = type_to_ctypes(underlying.element_type, enum_names)
         if underlying.size is not None:
             return f"{decl.name} = {element} * {underlying.size}"
         return f"{decl.name} = ctypes.POINTER({element})"
 
     # Pointer typedef
     if isinstance(underlying, Pointer):
-        return f"{decl.name} = {type_to_ctypes(underlying)}"
+        return f"{decl.name} = {type_to_ctypes(underlying, enum_names)}"
 
     return f"# typedef {decl.name} (unsupported)"
 
 
-def _variable_to_ctypes(decl: Variable, lib_name: str) -> str | None:
+def _variable_to_ctypes(decl: Variable, lib_name: str, enum_names: frozenset[str] = frozenset()) -> str | None:
     """Convert a Variable IR node to a ctypes global variable annotation."""
-    var_type = type_to_ctypes(decl.type)
+    var_type = type_to_ctypes(decl.type, enum_names)
     return f"# {lib_name}.{decl.name}: {var_type}"
 
 
@@ -902,7 +917,12 @@ def _variable_to_ctypes(decl: Variable, lib_name: str) -> str | None:
 _SECTION_ORDER: tuple[str, ...] = ("constants", "enums", "structs", "typedefs", "functions", "variables")
 
 
-def _render_declaration(decl: object, lib_name: str, typedef_names: frozenset[str]) -> tuple[str | None, str]:
+def _render_declaration(
+    decl: object,
+    lib_name: str,
+    typedef_names: frozenset[str],
+    enum_names: frozenset[str] = frozenset(),
+) -> tuple[str | None, str]:
     """Render one declaration and name the section it belongs in.
 
     :returns: The rendered source (``None`` when the declaration emits nothing)
@@ -913,13 +933,13 @@ def _render_declaration(decl: object, lib_name: str, typedef_names: frozenset[st
     if isinstance(decl, Enum):
         return _enum_to_ctypes(decl, typedef_names), "enums"
     if isinstance(decl, Struct):
-        return _struct_to_ctypes(decl), "structs"
+        return _struct_to_ctypes(decl, enum_names), "structs"
     if isinstance(decl, Typedef):
-        return _typedef_to_ctypes(decl), "typedefs"
+        return _typedef_to_ctypes(decl, enum_names), "typedefs"
     if isinstance(decl, Function):
-        return _function_to_ctypes(decl, lib_name), "functions"
+        return _function_to_ctypes(decl, lib_name, enum_names), "functions"
     if isinstance(decl, Variable):
-        return _variable_to_ctypes(decl, lib_name), "variables"
+        return _variable_to_ctypes(decl, lib_name, enum_names), "variables"
     return None, ""
 
 
@@ -951,6 +971,58 @@ def _typedef_names(header: Header) -> frozenset[str]:
     return frozenset(d.name for d in header.declarations if isinstance(d, Typedef) and d.name)
 
 
+def _enum_type_names(header: Header) -> frozenset[str]:
+    """The *bare* names this header uses to spell one of its own enum types.
+
+    The tag spelling ``enum E`` needs no header-wide knowledge to recognise and
+    is resolved directly in :func:`type_to_ctypes`, under the same rule
+    :func:`_typedef_to_ctypes` already applies. What that rule cannot see is the
+    other spelling: tree-sitter reduces every enum reference to the bare ``E``,
+    and a typedef gives an enum a bare name under either backend. A bare name
+    carries no marker of what it names, so it has to be looked up.
+
+    A tag and an ordinary identifier are separate namespaces in C, so
+    ``enum Tone { ... };`` and ``typedef struct { ... } Tone;`` are both legal in
+    one unit and mean different types. An unprefixed ``Tone`` is then the
+    *record*, and treating it as the enum would silently retype an 8-byte record
+    as a 4-byte integer. Any name something else in this header binds is
+    withheld, and a tag-less ``typedef struct`` has to be looked for under both
+    kinds: it reaches this writer as a ``Struct`` carrying the alias as its
+    name, with no ``Typedef`` node of its own.
+
+    Withholding a name a ``Typedef`` binds is the arm no execution gate covers,
+    because the shape that reaches it -- ``typedef struct ToneRec Tone;`` next
+    to ``enum Tone`` -- cannot be scaffolded into an importable module today for
+    an unrelated reason: a record alias renders into the typedefs section, which
+    is emitted after the records that use it. It is kept because dropping it
+    does not restore that module, it only changes how the module fails: the
+    member becomes a four-byte integer where C laid out an eight-byte record,
+    and the package imports and computes wrong answers instead of raising.
+    """
+    bare: set[str] = set()
+    for d in header.declarations:
+        if isinstance(d, Enum) and d.name and not _is_anonymous_name(d.name):
+            bare.add(d.name)
+
+    # A typedef onto an enum binds ``ENUM_CTYPE`` too, so its name is an enum
+    # spelling in its own right -- and one a record may use before the typedefs
+    # section that assigns it has been emitted.
+    enum_typedefs: set[str] = set()
+    typedef_names: set[str] = set()
+    for d in header.declarations:
+        if not isinstance(d, Typedef) or not d.name:
+            continue
+        typedef_names.add(d.name)
+        target = d.underlying_type
+        if isinstance(target, CType) and (target.name.startswith("enum ") or target.name in bare):
+            enum_typedefs.add(d.name)
+
+    records = {
+        d.name for d in header.declarations if isinstance(d, Struct) and d.name and not _is_anonymous_name(d.name)
+    }
+    return frozenset((bare | enum_typedefs) - records - (typedef_names - enum_typedefs))
+
+
 def declared_binding_names(header: Header, lib_name: str = "_lib") -> list[str]:
     """Return the non-function module-level names ``header_to_ctypes`` binds.
 
@@ -960,8 +1032,9 @@ def declared_binding_names(header: Header, lib_name: str = "_lib") -> list[str]:
     """
     names: list[str] = []
     typedef_names = _typedef_names(header)
+    enum_names = _enum_type_names(header)
     for decl in header.declarations:
-        rendered, section = _render_declaration(decl, lib_name, typedef_names)
+        rendered, section = _render_declaration(decl, lib_name, typedef_names, enum_names)
         if rendered is None or section in ("", "functions", "variables"):
             continue
         for name in _bound_names(decl, rendered, typedef_names):
@@ -1009,9 +1082,10 @@ def header_to_ctypes(header: Header, lib_name: str = "_lib", *, library: str | N
     #: reserves it without a second list needing to be updated in step.
     taken_names: set[str] = set()
     typedef_names = _typedef_names(header)
+    enum_names = _enum_type_names(header)
 
     for decl in header.declarations:
-        result, section = _render_declaration(decl, lib_name, typedef_names)
+        result, section = _render_declaration(decl, lib_name, typedef_names, enum_names)
 
         if result is not None and section:
             sections[section].append(result)

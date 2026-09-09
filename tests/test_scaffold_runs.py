@@ -121,6 +121,128 @@ COLLISION_SOURCE = textwrap.dedent("""\
     int thing_add(int a, int b) { return a + b; }
 """)
 
+#: Every shape in which an enum can reach a record member or a function
+#: signature. An enum binds no ctypes class, so each of these used to reach the
+#: generated module as the C spelling: ``("m", enum Colour)`` under libclang,
+#: which is a ``SyntaxError``, and ``("m", Colour)`` under tree-sitter, which is
+#: a ``NameError`` -- the alias is emitted, but into the typedefs section, which
+#: comes *after* the records that use it.
+#:
+#: ``Tagged``       the ``enum E`` tag spelling, with no typedef on the enum
+#: ``Aliased``      an enum typedef whose name differs from the enum's own
+#:                  tag, so only the ``Typedef`` node carries that name -- and
+#:                  it renders into the typedefs section, which is emitted
+#:                  after the record that uses it
+#: ``Anon``         a tag-less enum typedef, whose alias the ``Enum`` node
+#:                  carries itself, into the enums section
+#: ``Choice``       the same member in a union rather than a struct
+#: ``Row``          an array of enum, where the spelling is composed into
+#:                  ``Colour * 4`` and a bad element type is still a bad name
+#: ``colour_next``  an enum as a parameter and as a return type, which is the
+#:                  same defect outside a record entirely
+#: ``Shadowed``     the negative control. ``enum Tone`` and ``typedef struct
+#:                  { ... } Tone`` are both legal in one unit -- a tag and an
+#:                  ordinary identifier are separate namespaces in C -- and an
+#:                  unprefixed ``Tone`` is the *record*. Resolving every bare
+#:                  enum tag to an integer would retype this member from eight
+#:                  bytes to four, so this case fails if the fix over-reaches
+#:
+#: Every *record* here is a tag-less typedef, so no record is ever spelled
+#: ``struct X``. That is deliberate: a record named by its tag in a function
+#: signature reaches the generated module as ``argtypes = [struct Tagged]``,
+#: which is a separate unfixed defect in the same writer. Leaving it in the
+#: fixture would make this gate red for a reason it is not about.
+#:
+#: Each ``*_size`` function reports what the C compiler actually laid out, so the
+#: gate compares against the real ABI rather than against a second guess.
+ENUM_HEADER = textwrap.dedent("""\
+    #ifndef ENUMS_H
+    #define ENUMS_H
+
+    enum Colour { COLOUR_RED = 0, COLOUR_BLUE = 1 };
+    typedef enum Level { LEVEL_LOW = 0, LEVEL_HIGH = 1 } LevelAlias;
+    typedef enum { STATE_OFF = 0, STATE_ON = 1 } State;
+
+    typedef struct { enum Colour m; } Tagged;
+    typedef struct { LevelAlias m; } Aliased;
+    typedef struct { State m; } Anon;
+    typedef union { enum Colour m; int i; } Choice;
+    typedef struct { enum Colour arr[4]; } Row;
+
+    enum Tone { TONE_A = 0, TONE_B = 1 };
+    typedef struct { int lo; int hi; } Tone;
+    typedef struct { Tone t; } Shadowed;
+
+    int tagged_m(Tagged r);
+    int aliased_m(Aliased r);
+    int anon_m(Anon r);
+    int choice_m(Choice u);
+    int row_at(Row r, int i);
+    int shadowed_lo(Shadowed s);
+    enum Colour colour_next(enum Colour c);
+
+    int tagged_size(void);
+    int aliased_size(void);
+    int anon_size(void);
+    int choice_size(void);
+    int row_size(void);
+    int shadowed_size(void);
+    int colour_size(void);
+
+    #endif
+""")
+
+ENUM_SOURCE = textwrap.dedent("""\
+    #include "enums.h"
+
+    int tagged_m(Tagged r) { return (int)r.m; }
+    int aliased_m(Aliased r) { return (int)r.m; }
+    int anon_m(Anon r) { return (int)r.m; }
+    int choice_m(Choice u) { return (int)u.m; }
+    int row_at(Row r, int i) { return (int)r.arr[i]; }
+    int shadowed_lo(Shadowed s) { return s.t.lo; }
+    enum Colour colour_next(enum Colour c) {
+        return c == COLOUR_RED ? COLOUR_BLUE : COLOUR_RED;
+    }
+
+    int tagged_size(void) { return (int)sizeof(Tagged); }
+    int aliased_size(void) { return (int)sizeof(Aliased); }
+    int anon_size(void) { return (int)sizeof(Anon); }
+    int choice_size(void) { return (int)sizeof(Choice); }
+    int row_size(void) { return (int)sizeof(Row); }
+    int shadowed_size(void) { return (int)sizeof(Shadowed); }
+    int colour_size(void) { return (int)sizeof(enum Colour); }
+""")
+
+#: A C++ ``enum class`` member. The enumerators are scoped to the tag, so the
+#: member type is the only place the enum is named -- there is no enumerator
+#: constant whose presence could stand in for the member being right.
+#:
+#: The accessors are reached through a plain ``ctypes.CDLL`` rather than through
+#: the generated module: libclang drops an ``extern "C"`` function from the IR
+#: altogether, so binding this gate to the generated prototypes would prove
+#: nothing under one of the two backends. The record layout is what is under
+#: test, and it comes from the generated module either way.
+SCOPED_HEADER = textwrap.dedent("""\
+    #ifndef SCOPED_H
+    #define SCOPED_H
+
+    enum class Scoped : int { SCOPED_LOW = 0, SCOPED_HIGH = 1 };
+    struct ScopedRec { Scoped m; };
+
+    extern "C" int scoped_m(ScopedRec r);
+    extern "C" int scoped_size(void);
+
+    #endif
+""")
+
+SCOPED_SOURCE = textwrap.dedent("""\
+    #include "scoped.h"
+
+    extern "C" int scoped_m(ScopedRec r) { return static_cast<int>(r.m); }
+    extern "C" int scoped_size(void) { return static_cast<int>(sizeof(ScopedRec)); }
+""")
+
 
 def _require(*programs: str) -> str:
     """Return the first of ``programs`` on PATH, or skip.
@@ -338,6 +460,145 @@ class TestScaffoldedCtypesPackageRuns:
         )
         assert result.returncode == 0, f"the struct class did not survive the export block:\n{result.stderr}"
         assert "INTACT" in result.stdout
+
+    def test_enum_typed_members_and_signatures_match_the_c_abi(self, tmp_path: Path, backend_name: str) -> None:
+        """An enum-typed member must be a usable ctypes type of the C enum's width.
+
+        An enum binds no ctypes class, so a member typed by one has to resolve
+        to the underlying integer at the point of use. Emitting the C spelling
+        instead is fatal in both of the shapes a backend can produce it:
+        ``("m", enum Colour)`` does not parse at all, and ``("m", Colour)``
+        parses and then raises ``NameError``, because the alias is emitted into
+        a section that comes after the records.
+
+        Neither the round-trip nor the width alone is enough. A member of the
+        wrong width still round-trips a small value, so the C compiler's own
+        ``sizeof`` is the second assertion; and a matching size proves nothing
+        about which member the value landed in, so the value is passed through
+        a real by-value call to C and read back from there.
+        """
+        library = _build_c_library(
+            tmp_path,
+            "enums",
+            header=ENUM_HEADER,
+            source=ENUM_SOURCE,
+            basename="enums",
+        )
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "enums",
+            backend_name=backend_name,
+            header=ENUM_HEADER,
+            filename="enums.h",
+        )
+
+        script = textwrap.dedent("""\
+            import ctypes
+            from enums import _bindings as b
+
+            lib = b._lib
+
+            # Width first: a member narrower or wider than the C enum still
+            # round-trips COLOUR_BLUE, so the value checks below cannot see it.
+            colour = lib.colour_size()
+            assert colour == ctypes.sizeof(ctypes.c_int), "fixture assumption: C enum is not int-sized"
+            for name, size_fn in (
+                ("Tagged", lib.tagged_size),
+                ("Aliased", lib.aliased_size),
+                ("Anon", lib.anon_size),
+                ("Choice", lib.choice_size),
+                ("Row", lib.row_size),
+                ("Shadowed", lib.shadowed_size),
+            ):
+                cls = getattr(b, name)
+                assert ctypes.sizeof(cls) == size_fn(), (
+                    name + ": ctypes lays out " + str(ctypes.sizeof(cls))
+                    + " bytes, the C compiler lays out " + str(size_fn())
+                )
+
+            # Then the member itself, across the real ABI boundary.
+            assert lib.tagged_m(b.Tagged(m=b.COLOUR_BLUE)) == 1, "the tag-spelled member did not survive the call"
+            assert lib.aliased_m(b.Aliased(m=b.LEVEL_HIGH)) == 1, "the typedef'd member did not survive the call"
+            assert lib.anon_m(b.Anon(m=b.STATE_ON)) == 1, "the tag-less typedef member did not survive the call"
+            assert lib.choice_m(b.Choice(m=b.COLOUR_BLUE)) == 1, "the union member did not survive the call"
+
+            row = b.Row(arr=(ctypes.c_int * 4)(0, 1, 1, 0))
+            assert [lib.row_at(row, i) for i in range(4)] == [0, 1, 1, 0], "the enum array did not survive the call"
+
+            # Negative control: ``Tone`` names the record, not ``enum Tone``.
+            # A fix that resolved every bare enum tag would make this member a
+            # four-byte integer, and the size loop above would already be red.
+            assert lib.shadowed_lo(b.Shadowed(t=b.Tone(lo=4, hi=9))) == 4, (
+                "the typedef shadowing an enum tag was resolved to the enum"
+            )
+
+            # An enum as a parameter and as a return type, outside any record.
+            assert lib.colour_next(b.COLOUR_RED) == b.COLOUR_BLUE
+            assert lib.colour_next(b.COLOUR_BLUE) == b.COLOUR_RED
+            print("ABI-MATCH")
+        """)
+        result = _run_python(
+            script,
+            cwd=tmp_path,
+            env={"PYTHONPATH": str(root / "src"), "ENUMS_LIBRARY": str(library)},
+        )
+        assert result.returncode == 0, f"enum-typed members are not usable:\n{result.stderr}"
+        assert "ABI-MATCH" in result.stdout
+
+    def test_a_scoped_enum_member_matches_the_cpp_abi(self, tmp_path: Path, backend_name: str) -> None:
+        """A C++ ``enum class`` member is the same defect with no enumerator to hide it.
+
+        A scoped enumerator is spelled ``Scoped::SCOPED_HIGH`` and is not
+        introduced into the enclosing scope, so the member's type is the only
+        place the tag is named. The layout is checked against the C++
+        compiler's own ``sizeof``, and the member against a real by-value call.
+        """
+        compiler = _require("c++", "g++", "clang++")
+        (tmp_path / "scoped.h").write_text(SCOPED_HEADER, encoding="utf-8")
+        (tmp_path / "scoped.cpp").write_text(SCOPED_SOURCE, encoding="utf-8")
+        out = tmp_path / shared_library_filename("scoped")
+        argv = shared_library_command(compiler, ["scoped.cpp"], str(out), includes=["."])
+        built = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, check=False)  # noqa: S603
+        assert built.returncode == 0, f"fixture C++ library failed to build:\n{built.stderr}"
+
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "scoped",
+            backend_name=backend_name,
+            header=SCOPED_HEADER,
+            filename="scoped.hpp",
+        )
+
+        script = textwrap.dedent("""\
+            import ctypes
+            import os
+            from scoped import _bindings as b
+
+            lib = ctypes.CDLL(os.environ["SCOPED_SO"])
+            lib.scoped_size.restype = ctypes.c_int
+            assert ctypes.sizeof(b.ScopedRec) == lib.scoped_size(), (
+                "ctypes lays out " + str(ctypes.sizeof(b.ScopedRec))
+                + " bytes, the C++ compiler lays out " + str(lib.scoped_size())
+            )
+
+            lib.scoped_m.argtypes = [b.ScopedRec]
+            lib.scoped_m.restype = ctypes.c_int
+            assert lib.scoped_m(b.ScopedRec(m=1)) == 1, "the scoped-enum member did not survive the call"
+            print("SCOPED-MATCH")
+        """)
+        result = _run_python(
+            script,
+            cwd=tmp_path,
+            env={
+                "PYTHONPATH": str(root / "src"),
+                "SCOPED_LIBRARY": str(out),
+                "SCOPED_SO": str(out),
+            },
+        )
+        assert result.returncode == 0, f"the scoped-enum member is not usable:\n{result.stderr}"
+        assert "SCOPED-MATCH" in result.stdout
 
     def test_the_library_name_is_separable_from_the_package_name(self, tmp_path: Path, backend_name: str) -> None:
         """Scaffolding ``probe_bindings`` around ``libprobe`` must produce a usable package.
