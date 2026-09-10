@@ -20,14 +20,14 @@ module, and each has a negative control that rebuilds the native artifact from a
 translation unit and requires the run to go red. The negative control is the load-bearing
 part: a gate never observed failing for the right reason is a claim, not a mechanism.
 
-The skips are narrow and explicit. A toolchain check that quietly no-ops when the
-compiler is absent proves nothing while looking green.
+Every toolchain check routes through ``tests.skip_policy``: under CI a missing tool
+is a failure naming it, and only locally is it a skip. A toolchain check that quietly
+no-ops when the compiler is absent proves nothing while looking green.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +38,7 @@ from headerkit.backends import get_backend
 from headerkit.backends.libclang import is_system_libclang_available
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from tests.native_build import position_independent_flags
+from tests.skip_policy import CC_INSTALL, LIBCLANG_INSTALL, NIM_INSTALL, missing_toolchain, require_program
 
 #: Every test here parses with libclang. Without the marker, a machine that has `nim`
 #: and `cc` but no libclang errors instead of skipping.
@@ -90,11 +91,7 @@ assert stats.total == 20
 
 
 def _c_compiler() -> str:
-    for candidate in ("cc", "gcc", "clang"):
-        found = shutil.which(candidate)
-        if found:
-            return found
-    pytest.skip("no C compiler (cc/gcc/clang) on PATH")
+    return require_program("cc", "gcc", "clang", install=CC_INSTALL)
 
 
 def _shared_library_name(stem: str) -> str:
@@ -123,7 +120,7 @@ def _build_shared_library(compiler: str, workdir: Path, *, source: str = LIB_C) 
 
 def _scaffold(workdir: Path, target: str, package: str) -> None:
     if not is_system_libclang_available():
-        pytest.skip("System libclang not available")
+        missing_toolchain("the system libclang is not available", LIBCLANG_INSTALL)
     unit = get_backend("libclang").parse(LIB_H, "lib.h")
     layout = scaffold(unit, ScaffoldOptions(package_name=package, target_language=target, layout="package"))
     layout.write_to_disk(workdir)
@@ -209,10 +206,7 @@ def test_generated_python_suite_executes_against_a_real_library(tmp_path: Path) 
 
 
 def _nim() -> str:
-    found = shutil.which("nim")
-    if not found:
-        pytest.skip("nim is not on PATH")
-    return found
+    return require_program("nim", install=NIM_INSTALL)
 
 
 #: Appended to the generated Nim suite. The generated suite itself never calls a C

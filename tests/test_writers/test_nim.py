@@ -25,6 +25,7 @@ from headerkit.ir import (
 )
 from headerkit.writers import get_writer
 from headerkit.writers.nim import NimWriter, write_nim
+from tests.skip_policy import NIM_INSTALL, require_program
 
 
 class TestNimWriter:
@@ -572,15 +573,10 @@ class TestNimWriter:
     @pytest.mark.allow("subprocess")
     def test_nim_examples_compile(self, tmp_path) -> None:
         """Test that generated Nim examples compile cleanly with the Nim compiler."""
-        import shutil
         import subprocess
         from pathlib import Path
 
-        nim_bin = shutil.which("nim")
-        if not nim_bin:
-            import pytest
-
-            pytest.skip("Nim compiler ('nim') not installed on system")
+        nim_bin = require_program("nim", install=NIM_INSTALL)
 
         repo_root = Path(__file__).parent.parent.parent
         example_files = [

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import ctypes
 import platform
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +34,7 @@ import pytest
 from headerkit.backends import get_backend, is_backend_available
 from headerkit.ir import CType, Field, Header, Struct
 from headerkit.writers import get_writer
+from tests.skip_policy import BACKEND_INSTALL, CC_INSTALL, missing_toolchain, require_program
 
 #: name, source, (sizeof, alignof) where the ABI does not impose the padding's
 #: alignment, the same where it does, and per-member (lowest, highest) set bit
@@ -212,7 +212,7 @@ def _exec_as(code: str, *, system: str, machine: str) -> dict[str, object]:
 
 def _generate(backend_name: str, source: str) -> str:
     if not is_backend_available(backend_name):
-        pytest.skip(f"{backend_name} backend unavailable")
+        missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
     return get_writer("ctypes").write(get_backend(backend_name).parse(source, "layout.h"))
 
 
@@ -306,11 +306,7 @@ class TestPaddingAlignmentUnderBothABIs:
 
 
 def _c_compiler() -> str:
-    for candidate in ("cc", "gcc", "clang"):
-        found = shutil.which(candidate)
-        if found:
-            return found
-    pytest.skip("no C compiler available")
+    return require_program("cc", "gcc", "clang", install=CC_INSTALL)
 
 
 @pytest.fixture(scope="module")
