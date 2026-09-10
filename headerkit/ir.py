@@ -491,6 +491,26 @@ class Enum:
         signedness of every value crossing the ABI -- has to be told, so it is
         recorded here rather than guessed at downstream.
 
+        ``None`` means *the header declared none*, and is only trustworthy when
+        ``underlying_type_known`` is True. See that field.
+    :param underlying_type_known: Whether ``underlying_type`` is an observation
+        or an absence of one.
+
+        A parser can fail to see a clause that is there. tree-sitter's **C**
+        grammar has no production for ``enum E : long long`` -- C23 standardised
+        it and both major compilers accepted it as an extension for years -- so
+        it parses as an ``ERROR`` node with no ``base`` field, which is
+        indistinguishable from a plain ``enum E`` if only ``underlying_type`` is
+        consulted. A consumer that reads the resulting ``None`` as "declared
+        none" falls back to guessing the width from the enumerators, and
+        ``enum E : long long { A = 0 };`` becomes a four-byte type where the
+        compiler laid out eight.
+
+        False means the parser found something it could not represent, so the
+        width is unknown rather than absent, and a consumer must refuse rather
+        than infer. It defaults to True because "declared none" is the ordinary
+        case and every parser reports *that* reliably.
+
     Examples
     --------
     Named enum::
@@ -514,6 +534,7 @@ class Enum:
     is_scoped: bool = False
     cpp_name: str | None = None
     underlying_type: str | None = None
+    underlying_type_known: bool = True
 
     @property
     def qualified_name(self) -> str | None:

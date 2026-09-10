@@ -24,8 +24,11 @@ from headerkit.writers.base import module_level_bindings
 from headerkit.writers.ctypes import (
     ABI_ALIGNMENT_NOTE,
     CTYPES_TYPE_MAP,
+    ENUM_CTYPE,
     CtypesWriter,
+    _enum_ctype,
     _library_loader,
+    _normalised_c_integer,
     header_to_ctypes,
     type_to_ctypes,
 )
@@ -1346,3 +1349,94 @@ class TestLoaderCollisionSeed:
         assert "import platform" in with_abi
         assert "platform = _lib.platform" not in with_abi
         assert "'platform' is not re-exported" in with_abi
+
+
+class TestEnumWidthEstablishment:
+    """Unit pins for the two arms of ``_enum_ctype`` no execution gate can reach.
+
+    Both concern an enum that never becomes a struct member in compilable code,
+    so there is no module to import and no ``sizeof`` to compare: a C member of
+    an incomplete enum type does not compile, and a spelling difference between
+    backends is invisible once both resolve to the same ctypes type. They are
+    asserted on the function's own answer instead.
+    """
+
+    def test_an_enum_with_no_enumerators_and_no_declared_type_is_refused(self):
+        """The vacuous-truth arm. An empty enumerator list must not read as 'fits'.
+
+        ``enum E;`` produces this on both backends and in both languages. With no
+        refusal the loop over ``values`` runs zero times and the function returns
+        ``ENUM_CTYPE`` having examined nothing -- which is how a previous revision
+        sized ``enum Fwd : long long;`` at four bytes against a real eight.
+        """
+        assert _enum_ctype(Enum(name="E", values=[])) is None
+
+    def test_an_empty_bodied_cpp_enum_is_refused_too_and_that_is_a_false_refusal(self):
+        """The same arm also catches a header that could have been sized.
+
+        ``enum E {};`` is a complete C++ enum with underlying type ``int``, and
+        ``struct H { E m; };`` is 4 bytes -- compile-verified. Both backends
+        report it as ``values=[] underlying_type=None``, exactly as they report
+        the opaque ``enum E;``, so this function cannot tell the two apart and
+        refuses both.
+
+        That is a *false* refusal, and it is pinned rather than fixed because the
+        cost is a loud failure on a header that could have been sized, against a
+        wrong width on one that could not. Separating them needs the IR to record
+        that a body was present. If it ever does, this assertion should flip.
+        """
+        assert _enum_ctype(Enum(name="E", values=[])) is None
+
+    def test_an_enum_whose_clause_the_parser_could_not_see_is_refused(self):
+        """``underlying_type=None`` is only an absence when the parser could tell.
+
+        tree-sitter's C grammar has no production for ``enum E : long long``, so
+        it reports ``None`` for a header that declared a width. Falling back to
+        the enumerators there gives four bytes where the compiler laid out eight.
+        """
+        blind = Enum(name="E", values=[EnumValue("A", 0)], underlying_type=None, underlying_type_known=False)
+        assert _enum_ctype(blind) is None
+        # The same enum, seen: the enumerators are allowed to decide.
+        seen = Enum(name="E", values=[EnumValue("A", 0)], underlying_type=None, underlying_type_known=True)
+        assert _enum_ctype(seen) == ENUM_CTYPE
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("unsigned", "unsigned int"),
+            ("signed", "int"),
+            ("unsigned long int", "unsigned long"),
+            ("long int", "long"),
+            ("unsigned long long int", "unsigned long long"),
+            ("unsigned char", "unsigned char"),
+            ("int", "int"),
+            ("u64", "u64"),
+        ],
+    )
+    def test_integer_spellings_normalise_to_one_form(self, spelling, expected):
+        """The backends spell the same declared type differently; the map has one key.
+
+        libclang canonicalises through the type system and tree-sitter returns the
+        source tokens, so the same header yields ``unsigned`` and ``unsigned int``.
+        Without normalisation one backend resolves and the other refuses, and the
+        same header produces two different modules.
+
+        ``u64`` is the control: a typedef is deliberately *not* followed, because
+        inventing a width is what refusal exists to prevent.
+        """
+        assert _normalised_c_integer(spelling) == expected
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [("unsigned", "ctypes.c_uint"), ("unsigned long int", "ctypes.c_ulong"), ("u64", None)],
+    )
+    def test_the_normaliser_is_actually_consulted(self, spelling, expected):
+        """Pins the *wiring*, which testing the normaliser alone leaves unproven.
+
+        A correct normaliser that ``_enum_ctype`` does not call resolves nothing:
+        the raw spelling misses the map, the enum is refused, and one backend
+        produces a module the other does not. Asserting on the normaliser in
+        isolation cannot see that, because the function keeps passing.
+        """
+        decl = Enum(name="E", values=[EnumValue("A", 0)], underlying_type=spelling)
+        assert _enum_ctype(decl) == expected

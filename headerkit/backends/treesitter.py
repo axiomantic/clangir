@@ -1545,6 +1545,30 @@ class TreeSitterBackend:
         # which is the same thing the libclang backend records as None.
         base_node = node.child_by_field_name("base")
         underlying_type = _node_text(base_node).strip() if base_node else None
+        # The C grammar has no ``base`` field at all -- ``enum E : long long`` is
+        # C23, which both major compilers accepted as an extension long before --
+        # so a width the header declared reaches this point as no underlying type.
+        # That is indistinguishable from a plain ``enum E`` unless the clause's
+        # own tokens are looked for, and a consumer reading the resulting ``None``
+        # as "declared none" sizes the enum from its enumerators: four bytes where
+        # the compiler laid out one for ``: char``.
+        #
+        # How the clause survives parsing varies by width, so both of its traces
+        # are looked for. ``: char`` and ``: int`` parse *cleanly* -- a ``:``
+        # child and a type node, no error anywhere -- while ``: unsigned char``
+        # keeps the ``:`` and adds an ``ERROR``, and ``: short`` and
+        # ``: long long`` are swallowed whole, leaving an ``ERROR`` and no ``:``
+        # at all. Testing for the error node alone would have missed the two that
+        # parse cleanly, which are the narrow ones, where being wrong reads as
+        # plausible: a four-byte member for a one-byte enum.
+        #
+        # None of them is reconstructed. Only some carry recoverable text, and a
+        # backend that resolved the easy widths and not the rest would produce a
+        # module that differs from libclang's in a way that depends on which type
+        # was written. Unknown is reported for all of them, and the writer refuses.
+        underlying_type_known = base_node is not None or not any(
+            child.type in ("ERROR", ":") for child in node.children
+        )
 
         values: list[EnumValue] = []
         if body_node:
@@ -1585,6 +1609,7 @@ class TreeSitterBackend:
             is_scoped=is_scoped,
             cpp_name=cpp_name,
             underlying_type=underlying_type,
+            underlying_type_known=underlying_type_known,
         )
 
         # An opaque `enum E : int;` and its later definition are one entity. Emitting
