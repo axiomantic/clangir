@@ -3375,7 +3375,20 @@ class ClangASTConverter:
             member_alias = self._resolve_member_alias(clang_type, decl)
             if member_alias is not None:
                 return member_alias
-            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type))
+            # A typedef name is an ordinary identifier, never an elaborated type
+            # specifier -- true in C and C++ alike.
+            #
+            # This is the second of two capture points and they are NOT
+            # redundant, though on any one libclang they look it. Where the
+            # ELABORATED arm above fires it is authoritative, since it carries
+            # the spelling the source used and can separate ``struct Gauge``
+            # from ``Gauge`` for a record as well. But not every build produces
+            # that node: on the macOS CI runner the bare use of a typedef
+            # arrives directly as TYPEDEF, the flag went unrecorded, and the
+            # writer correctly refused a member it could have resolved. Deleting
+            # either one passes the whole suite on the machine that still
+            # produces the other, which is how this was nearly missed.
+            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type), is_elaborated=False)
 
         # Handle C++ reference types
         if kind == TypeKind.LVALUEREFERENCE:
