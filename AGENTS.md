@@ -39,6 +39,30 @@ All parser backends and AST extractors in HeaderKit **MUST** use formal parser g
 
 Any code introducing regex-based AST extraction, source scanning, or signature scraping will be rejected immediately.
 
+## Strict prohibition against deciding from a type spelling (WRITERS DO NOT GUESS)
+
+The section above forbids recovering structure from source text with a regex, because a regular language cannot parse a context-free one. This section forbids the same error one layer later, after the parse has succeeded: the writer holds a real IR, and decides by pattern-matching a **name string** anyway. That rule governs *extraction*; this one governs *decision*. They are the same principle and are sited together for that reason.
+
+**A writer must never decide from a type spelling. If the IR cannot answer the question, the fix is to record the fact in the IR, not to write a cleverer predicate.**
+
+The diagnostic that settles any instance: *can two genuinely different declarations, which must behave differently, produce the same string the predicate inspects?* If yes, no predicate over that string can ever be correct, however far it is refined.
+
+The tell that you are already inside one: **a predicate widened for false negatives and then narrowed for false positives is not badly tuned -- it is answering a question it cannot express.** Two corrections in opposite directions means stop tuning and go add the field.
+
+Four instances, each of which cost a pull request and several review rounds:
+
+- `Enum.underlying_type` / `Enum.underlying_type_known`. The ctypes writer sized an enum from its enumerator values, and `enum E : unsigned char` came out four bytes against a real one. Two rounds refined the predicate first -- `is_scoped`, which was never the property that mattered, then an enumerator-range test that an empty enumerator list made vacuously true -- before the two fields were added.
+- `CType.is_elaborated`. The writer could not tell `struct Gauge` from a bare `Gauge`. C keeps tags and ordinary identifiers in separate namespaces, so both are legal in one unit and name different types; tree-sitter strips the aggregate keyword before the writer sees it, so the two arrive identical and the distinction has to be recorded at the parser or not at all.
+- `SourceUnit.language`. The field exists, defaults to `"c"`, and is **never populated** -- while both backends compute the answer internally (`_is_cpp_mode`, `_detect_cplus`) and discard it at the `Header(...)` that returns. The measurement forecloses "just write a better heuristic": under `LibclangBackend`, `void f(std::string s);` in a `.hpp` and `typedef struct { int x; } string; void f(string s);` in a `.h` both reach a writer as `CType(name='string', qualifiers=[], is_elaborated=False)`, byte-identical, and both units report `language='c'`. Under `TreeSitterBackend` the same collision needs only `using namespace std;`. This one is still open.
+- Tri-state flattening downstream. A recorded "unknown" is worth only what the whole path preserves. `underlying_type_known` was collapsed to its `True` default by the JSON serialiser, and again by a cache entry written before the field existed, turning a refusal back into a wrong width through a door the writer cannot watch. `_IR_SCHEMA_VERSION` in `_cache_key.py` exists for exactly this and must move whenever an IR field is added.
+
+The lesson each teaches: **a default that cannot be distinguished from "nobody recorded this" is a bug.** Unknown needs its own state, every serialiser and cache on the path must carry that state, and a consumer facing it refuses rather than resolves.
+
+Two corollaries:
+
+- **Two independent predicates for one fact will drift, silently.** Derive one from the other, or both from a single recorded value. The ctypes writer already carries two normalisations of "does this name already mean something else" -- `_typedef_aliases_its_own_tag` strips a `struct ` prefix to compare a typedef against its target, while `_enum_type_names` withholds by unprefixed name -- and the disagreement mapped a type onto a helper whose declaration had been withheld.
+- **Model nothing the real engine can be asked.** A model of an allocator or a layout algorithm is a second implementation, and it drifts from the first. ctypes has three bit-field algorithms and any writer-side model encodes exactly one: the model was right on two CPython versions and silently wrong on a third. Build the artifact, read back what the engine did, and compare.
+
 ## Anti-completion bias & anti-green-mirage discipline
 
 Completion bias is the failure mode where an agent rushes to check off roadmap items or satisfy the test runner by introducing superficial happy-path implementations, hollow file skeletons, or vacuous assertions that cannot fail. All code and tests must uphold the following non-negotiable invariants:
