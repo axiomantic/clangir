@@ -214,7 +214,17 @@ def _struct_to_cffi(decl: Struct, tag_kinds: TagKinds | None = None) -> str | No
 
     lines = []
     if decl.is_packed:
-        lines.append("/* packed */")
+        # cffi has no in-source spelling for packing: its cdef parser rejects
+        # ``__attribute__((packed))`` in either position, and the only
+        # mechanism it offers is ``ffi.cdef(..., packed=True)``, which applies
+        # to every record in the call rather than to one. Measured with cffi:
+        # this record is 6 bytes in C and cdef lays it out at 12 without that
+        # argument. The comment therefore has to say what the reader must do,
+        # because nothing else will fail -- the wrong layout is silent.
+        lines.append("/* HEADERKIT: packed record -- pass packed=True to ffi.cdef() for this")
+        lines.append("   declaration, or cffi will lay it out with padding the header does not")
+        lines.append("   have. packed=True applies to the whole cdef() call, so a header mixing")
+        lines.append("   packed and unpacked records needs them split across separate calls. */")
     if decl.is_typedef:
         lines.append(f"typedef {kind} {decl.name} {{")
     else:

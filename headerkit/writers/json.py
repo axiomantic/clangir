@@ -42,6 +42,12 @@ def _type_to_dict(t: TypeExpr) -> dict[str, Any]:
         d: dict[str, Any] = {"kind": "ctype", "name": t.name}
         if t.qualifiers:
             d["qualifiers"] = list(t.qualifiers)
+        # Tri-state, so ``None`` is a value and not an absence: it means no
+        # parser recorded the spelling, which consumers must refuse on rather
+        # than default. Omitted only when it is already None, which is what the
+        # reader restores.
+        if t.is_elaborated is not None:
+            d["is_elaborated"] = t.is_elaborated
         return d
     elif isinstance(t, Pointer):
         d = {"kind": "pointer", "pointee": _type_to_dict(t.pointee)}
@@ -169,6 +175,10 @@ def _decl_to_dict(decl: Declaration) -> dict[str, Any]:
             "name": decl.name,
             "values": [_enum_value_to_dict(v) for v in decl.values],
         }
+        if decl.underlying_type is not None:
+            d["underlying_type"] = decl.underlying_type
+        if not decl.underlying_type_known:
+            d["underlying_type_known"] = False
         if decl.is_typedef:
             d["is_typedef"] = True
         if decl.location is not None:

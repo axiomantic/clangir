@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import functools
 import glob
 import os
 import re
@@ -82,6 +83,77 @@ from headerkit.ir import (
 _cindex: Any = None
 CursorKind: Any = None
 TypeKind: Any = None
+
+#: How far :meth:`ClangASTConverter._member_natural_align` recurses through
+#: nested aggregates before giving up. Only a pathological header nests deeper,
+#: and a bound is what keeps a cyclic canonical type from looping.
+_NATURAL_ALIGN_MAX_DEPTH = 8
+
+#: Returned when the recursion bound above was reached, so the caller can tell
+#: "no alignment to impose" from "did not finish looking". They are not the
+#: same answer and collapsing them reports a packed record as unpacked.
+_NATURAL_ALIGN_UNKNOWN = -1
+
+#: Probe used to measure whether the target gives an unnamed bit-field's
+#: declared type alignment to the enclosing record. ``a`` and ``b`` pin the
+#: record's own alignment to 1, so anything above 1 came from the bit-field.
+_UNNAMED_BITFIELD_PROBE = "struct _hk_abi_probe { char a; unsigned int : 8; char b; };\n"
+
+#: Index owning every ABI probe translation unit. Held for the life of the
+#: process because clang frees a TU's memory with the index that made it.
+_PROBE_INDEX: Any = None
+
+
+def _get_probe_index() -> Any:
+    """The shared index for ABI probes, created on first use."""
+    global _PROBE_INDEX
+    if _PROBE_INDEX is None:
+        _PROBE_INDEX = _cindex.Index.create()
+    return _PROBE_INDEX
+
+
+@functools.lru_cache(maxsize=256)
+def _unnamed_bitfields_impose_alignment(args: tuple[str, ...], is_cplus: bool) -> bool | None:
+    """Whether this target gives an unnamed bit-field's alignment to its record.
+
+    Measured with clang rather than assumed, because the answer is an ABI
+    choice and does not follow from the architecture alone. Compiled with one
+    clang, ``struct { char a; unsigned int : 8; char b; }`` is size 3 align 1
+    under the Itanium C++ ABI (x86-64 System V, Darwin arm64, riscv64,
+    powerpc64le) and size 4 align 4 under AAPCS (aarch64-linux-gnu,
+    armv7-linux-gnueabihf, arm-none-eabi).
+
+    Getting this wrong is not merely cosmetic. On a target that does impose the
+    alignment, a ``#pragma pack(1)`` record with an anonymous bit-field really
+    is packed -- it measures 3 where the unpacked record measures 4 -- and
+    excluding the bit-field puts the natural figure at 1, hides the packing,
+    and emits a binding whose members are at the wrong offsets.
+
+    Returns None when the probe could not be measured -- a parse error, or a
+    clang that will not accept the arguments -- which the caller records rather
+    than silently taking one ABI's answer for the other's. The result is cached
+    per argument set, so a wrong answer would otherwise be pinned for the life
+    of the process.
+    """
+    try:
+        name = "_hk_abi_probe.cpp" if is_cplus else "_hk_abi_probe.c"
+        # The index must outlive the translation unit it produces: clang frees
+        # a TU's memory with its index, so a temporary one leaves the cursors
+        # below pointing into freed storage. Measured as a segmentation fault
+        # after roughly three subsequent parses in the same process.
+        tu = _get_probe_index().parse(
+            name,
+            args=list(args),
+            unsaved_files=[(name, _UNNAMED_BITFIELD_PROBE)],
+        )
+        if any(d.severity >= _cindex.Diagnostic.Error for d in tu.diagnostics):
+            return None
+        for cursor in tu.cursor.get_children():
+            if cursor.spelling == "_hk_abi_probe":
+                return bool(cursor.type.get_align() > 1)
+    except Exception:  # noqa: BLE001 -- any clang failure means "not measured"
+        return None
+    return None
 
 
 def normalize_path(path: str) -> str:
@@ -1146,12 +1218,19 @@ class ClangASTConverter:
         is_cplus: bool = False,
         allowlist_paths: _PathSet | None = None,
         denylist_paths: _PathSet | None = None,
+        parse_args: tuple[str, ...] = (),
     ) -> None:
         self.filename = filename
         self.project_prefixes = project_prefixes
         self.is_cplus = is_cplus
         self.allowlist_paths = allowlist_paths
         self.denylist_paths = denylist_paths
+        #: Whether this translation unit's target gives an unnamed bit-field's
+        #: alignment to its record. Measured once per argument set; None when
+        #: the probe could not be measured at all, which is reported on any
+        #: record it could have changed the answer for rather than guessed.
+        self._measured_bitfield_align = _unnamed_bitfields_impose_alignment(parse_args, is_cplus)
+        self._unnamed_bitfields_align = bool(self._measured_bitfield_align)
         self.declarations: list[Declaration] = []
         # Track seen declarations to avoid duplicates
         self._seen: set[str] = set()
@@ -2005,6 +2084,165 @@ class ClangASTConverter:
 
         return attrs, is_deprecated
 
+    def _is_packed(self, cursor: Any) -> bool:
+        """Return True when a record's layout drops natural field padding.
+
+        Two independent signals are consulted because clang exposes the two
+        spellings differently. ``__attribute__((packed))`` -- in either the
+        prefix or the suffix position -- arrives as a ``PACKED_ATTR`` child
+        cursor. ``#pragma pack(1)`` arrives as no cursor at all: the pragma is
+        consumed by the preprocessor and survives only in the recorded layout.
+
+        The layout signal is deliberately narrow. It fires only when the record
+        ends up byte-aligned while a member wanted more, which is exactly the
+        condition under which re-emitting ``__attribute__((packed))``
+        reproduces the original layout. An intermediate ``#pragma pack(2)``
+        leaves alignment at 2, is not expressible as a boolean, and is
+        therefore not reported here -- see ``_pack_note``.
+
+        Whether an anonymous bit-field contributes its type's alignment is a
+        property of the target, not a universal rule, so it is measured rather
+        than assumed -- see :func:`_unnamed_bitfields_impose_alignment`.
+        """
+        with contextlib.suppress(Exception):
+            if any("PACKED" in child.kind.name for child in cursor.get_children()):
+                return True
+
+        natural, actual = self._layout_alignments(cursor)
+        if natural is None or actual is None:
+            return False
+        return actual == 1 and natural > 1
+
+    def _pack_note(self, cursor: Any) -> str | None:
+        """Describe an intermediate ``#pragma pack(N)`` the IR cannot express.
+
+        ``is_packed`` is a boolean, so a record squeezed to an alignment
+        between 1 and its natural alignment has no faithful representation.
+        Reporting it as packed would understate the offsets; reporting nothing
+        would lose the fact silently. A note keeps it visible.
+        """
+        with contextlib.suppress(Exception):
+            if any("PACKED" in child.kind.name for child in cursor.get_children()):
+                return None
+        natural, actual = self._layout_alignments(cursor)
+        if natural is None or actual is None:
+            return None
+        if 1 < actual < natural:
+            return (
+                f"Record is laid out with alignment {actual} but its members "
+                f"require {natural}; this is an intermediate '#pragma pack({actual})' "
+                "that is_packed cannot express."
+            )
+        return None
+
+    def _unmeasured_bitfield_align_note(self, cursor: Any) -> str | None:
+        """Report a record whose packing turned on an ABI question clang would not answer.
+
+        Only records carrying an unnamed bit-field are affected: for every other
+        record the two ABIs agree, so an unmeasured probe changes nothing and a
+        note would be noise. Where it does matter, saying so is the difference
+        between a wrong answer and a known-unknown.
+        """
+        if self._measured_bitfield_align is not None:
+            return None
+        with contextlib.suppress(Exception):
+            if not any(f.is_bitfield() and not f.spelling for f in cursor.type.get_fields()):
+                return None
+            return (
+                "Record contains an unnamed bit-field and clang could not be asked whether "
+                "this target gives such a field its type's alignment, so is_packed was "
+                "resolved with the Itanium C++ ABI's answer and is unverified here."
+            )
+        return None
+
+    def _member_natural_align(self, member_type: Any, depth: int = 0) -> int:
+        """Alignment ``member_type`` would impose if nothing had been packed.
+
+        A record that is itself packed reports an alignment of 1, and a
+        container whose widest member is such a record therefore looks
+        unpacked: ``#pragma pack(1)`` wrapped around a family of records -- the
+        standard binary-format header idiom -- packs the inner ones first and
+        leaves nothing on the outer one to detect. Recursing to the leaf
+        scalars restores the figure the members would have imposed.
+        """
+        if depth > _NATURAL_ALIGN_MAX_DEPTH:
+            # Not an alignment of "none". Returning 0 here left the natural
+            # figure at 1, the packed test False and the record emitted at the
+            # unpacked layout with nothing said, which is the collapse of
+            # "unjudgeable" into "correct" that this branch removes elsewhere.
+            return _NATURAL_ALIGN_UNKNOWN
+        with contextlib.suppress(Exception):
+            canonical = member_type.get_canonical()
+            while canonical.kind == TypeKind.CONSTANTARRAY:
+                canonical = canonical.get_array_element_type().get_canonical()
+            declaration = canonical.get_declaration()
+            record_kinds = (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL, CursorKind.CLASS_DECL)
+            if declaration is not None and declaration.kind in record_kinds:
+                best = 0
+                for f in canonical.get_fields():
+                    if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
+                        continue
+                    member = self._member_natural_align(f.type, depth + 1)
+                    if member == _NATURAL_ALIGN_UNKNOWN:
+                        return _NATURAL_ALIGN_UNKNOWN
+                    best = max(best, member)
+                if best > 0:
+                    return best
+            return int(canonical.get_align())
+        return 0
+
+    def _natural_align_unresolved(self, cursor: Any) -> bool:
+        """Whether the members' natural alignment could not be resolved.
+
+        True only when the nesting bound was reached. That is a different
+        answer from "the members impose nothing", and reporting it is what
+        stops a deeply nested packed record from being emitted at the unpacked
+        layout with nothing said about it.
+        """
+        with contextlib.suppress(Exception):
+            for f in cursor.type.get_fields():
+                if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
+                    continue
+                if self._member_natural_align(f.type) == _NATURAL_ALIGN_UNKNOWN:
+                    return True
+        return False
+
+    def _unresolved_alignment_note(self, cursor: Any) -> str | None:
+        """Report a record whose natural alignment the writer stopped short of."""
+        if not self._natural_align_unresolved(cursor):
+            return None
+        return (
+            f"Record nests aggregates more than {_NATURAL_ALIGN_MAX_DEPTH} deep, so the natural "
+            "alignment of its members was not resolved and is_packed could not be decided "
+            "from the layout; it is reported false here and is unverified."
+        )
+
+    def _layout_alignments(self, cursor: Any) -> tuple[int | None, int | None]:
+        """Return (natural alignment of the members, recorded alignment)."""
+        natural: int | None = None
+        actual: int | None = None
+        with contextlib.suppress(Exception):
+            align = cursor.type.get_align()
+            if align > 0:
+                actual = int(align)
+        with contextlib.suppress(Exception):
+            best = 1
+            saw_member = False
+            for f in cursor.type.get_fields():
+                # Whether an anonymous bit-field imposes its type's alignment is
+                # a target property; the measured answer decides.
+                if f.is_bitfield() and not f.spelling and not self._unnamed_bitfields_align:
+                    continue
+                fa = self._member_natural_align(f.type)
+                if fa == _NATURAL_ALIGN_UNKNOWN:
+                    return None, actual
+                if fa > 0:
+                    saw_member = True
+                    best = max(best, fa)
+            if saw_member:
+                natural = best
+        return natural, actual
+
     def _get_alignment(self, cursor: Any) -> int | None:
         """Extract explicit byte alignment from a cursor or type if specified."""
         has_explicit = False
@@ -2410,6 +2648,16 @@ class ClangASTConverter:
 
         attrs, is_deprecated = self._get_attributes(cursor)
         alignment = self._get_alignment(cursor)
+        is_packed = self._is_packed(cursor)
+        pack_note = self._pack_note(cursor)
+        if pack_note is not None:
+            notes.append(pack_note)
+        unmeasured_note = self._unmeasured_bitfield_align_note(cursor)
+        if unmeasured_note is not None:
+            notes.append(unmeasured_note)
+        unresolved_note = self._unresolved_alignment_note(cursor)
+        if unresolved_note is not None:
+            notes.append(unresolved_note)
         vtable_entries = [m for m in methods if m.is_virtual or m.is_pure_virtual]
 
         struct = Struct(
@@ -2418,6 +2666,7 @@ class ClangASTConverter:
             methods=methods,
             is_union=is_union,
             is_cppclass=is_cppclass,
+            is_packed=is_packed,
             namespace=self._current_namespace,
             cpp_name=cpp_name,
             notes=notes,
@@ -2705,8 +2954,35 @@ class ClangASTConverter:
             location=self._get_location(cursor),
             is_scoped=bool(self.is_cplus and cursor.is_scoped_enum()),
             cpp_name=cpp_name,
+            underlying_type=self._enum_fixed_underlying_type(cursor),
         )
         self.declarations.append(enum)
+
+    @staticmethod
+    def _enum_fixed_underlying_type(cursor: Any) -> str | None:
+        """The underlying type an enum *declares*, or None when it declares none.
+
+        ``cursor.enum_type`` is always populated: for an enum with no fixed
+        underlying type it reports whichever integer type the compiler chose,
+        which is a property of this host rather than of the header. Recording
+        that would make the IR -- and every binding generated from it --
+        disagree with the tree-sitter backend, which can only see what the
+        source wrote. So the token stream decides whether there is anything to
+        record, and ``enum_type`` supplies the spelling once there is.
+
+        The declaration head is scanned for a bare ``:`` before the body or the
+        terminating ``;``. libclang tokenises ``::`` as one token, so a
+        qualified name in an attribute cannot be mistaken for the clause.
+        """
+        for token in cursor.get_tokens():
+            spelling = token.spelling
+            if spelling in ("{", ";"):
+                return None
+            if spelling == ":":
+                enum_type = getattr(cursor, "enum_type", None)
+                type_spelling = getattr(enum_type, "spelling", None)
+                return str(type_spelling) if type_spelling else None
+        return None
 
     def _process_function(self, cursor: Any) -> None:
         """Process a function or function template declaration."""
@@ -2957,7 +3233,13 @@ class ClangASTConverter:
                     # If struct name == typedef name, we've already handled it above
                     # Only create separate typedef if names differ
                     if struct_name and struct_name != name:
-                        underlying_type: TypeExpr = CType(name=struct_name)  # Use just the name, not "struct name"
+                        # The tag is dropped from the name, so the flag is the
+                        # only remaining record that the source wrote ``struct
+                        # Gauge`` rather than a bare ``Gauge``. Without it the
+                        # writer cannot tell this alias from one naming an
+                        # ordinary identifier of the same spelling, and refuses
+                        # a ``typedef struct Gauge GaugeRef;`` that main bound.
+                        underlying_type: TypeExpr = CType(name=struct_name, is_elaborated=True)
                         attrs, is_deprecated = self._get_attributes(cursor)
                         typedef = Typedef(
                             name=name,
@@ -3316,6 +3598,16 @@ class ClangASTConverter:
             result = self._convert_type(named_type)
             if result is not None:
                 self._merge_quals(result, quals)
+            # An ELABORATED node carries the spelling the source actually used --
+            # ``struct Gauge`` when written elaborated and ``Gauge`` when written
+            # bare -- in C and C++ alike. Resolving to the named type discards
+            # that, and it is the only place it exists: where a tag and an
+            # ordinary identifier share a name, it is the whole difference
+            # between an eight-byte record and a one-byte integer.
+            if isinstance(result, CType):
+                result.is_elaborated = any(
+                    token in ("struct", "union", "enum") for token in clang_type.spelling.split()
+                )
             return result
 
         # Handle record (struct/union) types
@@ -3323,16 +3615,22 @@ class ClangASTConverter:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
+            # The name synthesised here *is* an elaborated specifier, so the
+            # flag states what the spelling is rather than inferring it. Some
+            # libclang builds route an elaborated member through this arm and
+            # emit no ELABORATED node at all -- the macOS runner is one -- and
+            # without this it reaches the IR spelled ``struct Gauge`` while
+            # claiming nothing is known about its spelling.
             if decl.kind == CursorKind.UNION_DECL:
-                return CType(name=f"union {name}", qualifiers=quals)
-            return CType(name=f"struct {name}", qualifiers=quals)
+                return CType(name=f"union {name}", qualifiers=quals, is_elaborated=True)
+            return CType(name=f"struct {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle enum types
         if kind == TypeKind.ENUM:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
-            return CType(name=f"enum {name}", qualifiers=quals)
+            return CType(name=f"enum {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle typedef types
         if kind == TypeKind.TYPEDEF:
@@ -3340,7 +3638,28 @@ class ClangASTConverter:
             member_alias = self._resolve_member_alias(clang_type, decl)
             if member_alias is not None:
                 return member_alias
-            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type))
+            # A typedef name is an ordinary identifier, never an elaborated type
+            # specifier -- true in C and C++ alike.
+            #
+            # One of AT LEAST FOUR capture points, and which of them a given
+            # type takes depends on the libclang build as well as on the header.
+            # The set is not closed: any ``CType`` this backend builds without
+            # the flag leaves it ``None``, which the writer treats as "not
+            # recorded" and refuses on a contested name -- loud, never a wrong
+            # width. A fifth site is a missing capture, not a new failure mode.
+            # Where an ELABORATED node exists it is authoritative and every use
+            # routes through it; where it does not -- the macOS CI runner --
+            # an elaborated member arrives at the RECORD arm above and a bare
+            # typedef use arrives here.
+            #
+            # None is redundant, and no single machine can show that. On a host
+            # that emits ELABORATED the other two arms are unreachable, so
+            # deleting either leaves the whole suite green; on the runner it is
+            # the ELABORATED assignment that is dead code. The IR assertions in
+            # ``TestElaboratedSpellingIsRecorded`` are what pin them, and they
+            # pin whichever arm the host actually takes -- the RECORD arm was
+            # added only after that test failed on macOS with ``None is True``.
+            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type), is_elaborated=False)
 
         # Handle C++ reference types
         if kind == TypeKind.LVALUEREFERENCE:
@@ -3871,6 +4190,7 @@ class LibclangBackend:
             is_cplus=is_cplus,
             allowlist_paths=allowlist_paths,
             denylist_paths=denylist_paths,
+            parse_args=tuple(args),
         )
         header = converter.convert(tu)
 

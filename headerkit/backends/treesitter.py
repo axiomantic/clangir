@@ -118,6 +118,183 @@ def _node_text(node: Any) -> str:
     return str(raw)
 
 
+_PACKED_SPELLINGS = frozenset({"packed", "__packed__"})
+
+
+def _attribute_names(spec: Any) -> set[str]:
+    """Collect the attribute names inside one ``attribute_specifier``.
+
+    The names are read from the grammar's own nodes, never from the spelling of
+    the specifier as a whole. ``__attribute__((packed))`` puts a bare
+    ``identifier`` under the ``argument_list``; ``__attribute__((aligned(16)))``
+    puts a ``call_expression`` whose first child is the identifier. Reading the
+    specifier's text instead would match ``aligned`` inside a name such as
+    ``packed_size`` and would not survive a macro-spelled attribute.
+    """
+    names: set[str] = set()
+    for arglist in (c for c in spec.children if c.type == "argument_list"):
+        for item in arglist.children:
+            if item.type == "identifier":
+                names.add(_node_text(item))
+            elif item.type == "call_expression":
+                fn = item.child_by_field_name("function")
+                target = fn if fn is not None else (item.children[0] if item.children else None)
+                if target is not None and target.type == "identifier":
+                    names.add(_node_text(target))
+    return names
+
+
+def _record_has_packed_attribute(node: Any) -> bool:
+    """Report whether a record carries ``__attribute__((packed))``.
+
+    Both spellings are covered by scanning every ``attribute_specifier`` child:
+    the prefix form sits between the ``struct`` keyword and the tag name, the
+    suffix form after the field list, and both are children of the same
+    ``struct_specifier``.
+    """
+    return any(
+        _PACKED_SPELLINGS & _attribute_names(child) for child in node.children if child.type == "attribute_specifier"
+    )
+
+
+def _split_pragma_arg(text: str) -> list[str]:
+    """Split a ``preproc_arg`` payload into words, numbers, and punctuation.
+
+    tree-sitter-c does not descend into a pragma's argument: it hands back one
+    opaque ``preproc_arg`` leaf. Only that already-isolated leaf is tokenized
+    here, and its contents (``pack(push, 1)``) are a flat token list, not a
+    context-free construct. No declaration, type, or scope is recovered from
+    source text -- those all still come from the parse tree.
+    """
+    tokens: list[str] = []
+    current = ""
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            current += ch
+            continue
+        if current:
+            tokens.append(current)
+            current = ""
+        if not ch.isspace():
+            tokens.append(ch)
+    if current:
+        tokens.append(current)
+    return tokens
+
+
+#: Nodes whose children are mutually exclusive preprocessor branches. Only one
+#: of them survives translation, and which one is not knowable without
+#: evaluating the condition, so none of them may contribute to a running state.
+_CONDITIONAL_PREPROC = frozenset(
+    {
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_elif",
+        "preproc_else",
+        "preproc_elifdef",
+    }
+)
+
+
+def _pack_pragma_words(node: Any) -> list[str] | None:
+    """The words of a ``#pragma pack`` directive, or None for any other node."""
+    if node.type != "preproc_call":
+        return None
+    directive = node.child_by_field_name("directive")
+    if directive is None or _node_text(directive).strip() != "#pragma":
+        return None
+    arg = node.child_by_field_name("argument")
+    tokens = _split_pragma_arg(_node_text(arg)) if arg is not None else []
+    if not tokens or tokens[0] != "pack":
+        return None
+    return [t for t in tokens[1:] if t not in "(),"]
+
+
+def _first_conditional_pack(node: Any) -> int | None:
+    """Start offset of the first ``#pragma pack`` anywhere under ``node``."""
+    if _pack_pragma_words(node) is not None:
+        offset: int = node.start_byte
+        return offset
+    for child in node.children:
+        found = _first_conditional_pack(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _pack_regions(root: Any) -> tuple[list[tuple[int, int | None]], list[tuple[int, int | None]]]:
+    """Map source positions to the ``#pragma pack`` alignment in force there.
+
+    Returns ``(start_byte, alignment)`` pairs in ascending order, where
+    ``alignment`` is ``None`` for the compiler default, together with the byte
+    ranges over which the pack state is unknown. A record is matched to a
+    region by its own start offset, which is what gives the pragma its scope:
+    ``#pragma pack(1)`` applies to records that carry no attribute of their
+    own, and ``#pragma pack()`` or ``pop`` ends that scope.
+
+    Conditional branches are not descended into. ``#ifdef _MSC_VER / #pragma
+    pack(push, 1) / #else / #pragma pack(4) / #endif`` has two mutually
+    exclusive answers, and walking both would leave whichever ``#endif`` came
+    last in force -- an alignment no translation of the header ever has.
+
+    The uncertainty such a block creates is bounded, not permanent. It ends at
+    the next pragma that states the pack state outright -- ``pack(N)``,
+    ``pack()`` or ``pack(pop)`` -- because from there the alignment is the same
+    whichever branch the preprocessor took. Running the doubt to end of file
+    instead would put a note on every later record in a header using the
+    ordinary ``#ifdef _MSC_VER`` guard, which is most of them.
+    """
+    regions: list[tuple[int, int | None]] = []
+    stack: list[int | None] = []
+    current: int | None = None
+    unknown: list[tuple[int, int | None]] = []
+
+    def visit(node: Any) -> None:
+        nonlocal current
+        if node.type in _CONDITIONAL_PREPROC:
+            found = _first_conditional_pack(node)
+            if found is not None and (not unknown or unknown[-1][1] is not None):
+                unknown.append((found, None))
+            return
+        words = _pack_pragma_words(node)
+        if words is not None:
+            if unknown and unknown[-1][1] is None:
+                unknown[-1] = (unknown[-1][0], node.end_byte)
+            if not words:  # pragma pack() -- reset to default
+                current = None
+            elif words[0] == "push":
+                stack.append(current)
+                # MSVC allows an identifier between ``push`` and the alignment
+                # (``pack(push, mylabel, 1)``), which GCC and Clang accept too
+                # and which is pervasive in Windows-targeting headers. The
+                # alignment is the numeric argument wherever it sits; a bare
+                # ``pack(push)`` carries none and keeps the current value.
+                numbers = [w for w in words[1:] if w.isdigit()]
+                if numbers:
+                    current = int(numbers[-1])
+            elif words[0] == "pop":
+                current = stack.pop() if stack else None
+            elif words[0].isdigit():
+                current = int(words[0])
+            regions.append((node.end_byte, current))
+        for child in node.children:
+            visit(child)
+
+    visit(root)
+    regions.sort(key=lambda r: r[0])
+    return regions, unknown
+
+
+def _pack_at(regions: list[tuple[int, int | None]], offset: int) -> int | None:
+    """Return the ``#pragma pack`` alignment in force at a byte offset."""
+    value: int | None = None
+    for start, alignment in regions:
+        if start > offset:
+            break
+        value = alignment
+    return value
+
+
 def _pointer_qualifiers(node: Node) -> list[str]:
     """Qualifiers borne by the pointer itself, read off a ``pointer_declarator``.
 
@@ -198,9 +375,46 @@ class TreeSitterBackend:
         self._seen_typedefs: set[str] = set()
         self._lifted_declarations: list[Declaration] = []
         self._filled_forward: Struct | None = None
+        self._pack_regions: list[tuple[int, int | None]] = []
+        #: Byte ranges over which a ``#pragma pack`` inside a conditional
+        #: preprocessor branch leaves the alignment unknowable. Each ends at the
+        #: next pragma that states the pack state outright, so the doubt covers
+        #: the records it can actually affect rather than the rest of the file.
+        self._unknown_pack_ranges: list[tuple[int, int | None]] = []
 
     def is_available(self) -> bool:
         return _HAS_TREESITTER and (_HAS_TREESITTER_C or _HAS_TREESITTER_CPP)
+
+    def _pack_notes(self, node: Any, *, has_packed_attribute: bool, pack_alignment: int | None) -> list[str]:
+        """Packing facts about a record that ``is_packed`` cannot carry.
+
+        An attribute on the record settles the question outright, so neither
+        note applies to one that carries it -- the same order the libclang
+        backend uses.
+        """
+        if has_packed_attribute:
+            return []
+        notes: list[str] = []
+        if pack_alignment is not None and pack_alignment > 1:
+            # The libclang backend reaches the same conclusion from the recorded
+            # layout and can compare the members' natural alignment against it;
+            # this backend has no layout engine and reports the pragma itself.
+            # A record whose members are all narrower than the pragma is
+            # therefore noted here and not there.
+            notes.append(
+                f"Record is under an intermediate '#pragma pack({pack_alignment})', "
+                "which squeezes the layout without flattening it; is_packed cannot express that."
+            )
+        if any(
+            start < node.start_byte and (end is None or node.start_byte < end)
+            for start, end in self._unknown_pack_ranges
+        ):
+            notes.append(
+                "A '#pragma pack' appears inside a conditional preprocessor branch "
+                "earlier in this file. Which branch applies is not knowable without "
+                "evaluating the condition, so the packing of this record is unverified."
+            )
+        return notes
 
     def _is_cpp_mode(self, code: str, filename: str, extra_args: list[str] | None = None) -> bool:
         if extra_args:
@@ -301,6 +515,7 @@ class TreeSitterBackend:
         self._seen_typedefs = set()
         self._lifted_declarations = []
         self._filled_forward = None
+        self._pack_regions, self._unknown_pack_ranges = _pack_regions(tree.root_node)
 
         declarations: list[Declaration] = []
         for child in tree.root_node.children:
@@ -1285,6 +1500,16 @@ class TreeSitterBackend:
                                 )
 
         is_cppclass = is_class_keyword or bool(methods) or bool(bases) or bool(constructors) or (destructor is not None)
+        # An attribute on the record wins outright. Failing that the record
+        # inherits any ``#pragma pack(1)`` in force at its own position, which
+        # is how a record carrying no attribute of its own becomes packed.
+        # Only an alignment of exactly 1 is reported: an intermediate
+        # ``#pragma pack(2)`` squeezes the record without flattening it, and a
+        # boolean cannot say so without overstating the result.
+        has_packed_attribute = _record_has_packed_attribute(node)
+        pack_alignment = _pack_at(self._pack_regions, node.start_byte)
+        is_packed = has_packed_attribute or pack_alignment == 1
+        notes = self._pack_notes(node, has_packed_attribute=has_packed_attribute, pack_alignment=pack_alignment)
         loc = SourceLocation(file=filename, line=node.start_point[0] + 1, column=node.start_point[1] + 1)
         record = Struct(
             name=name,
@@ -1295,11 +1520,13 @@ class TreeSitterBackend:
             bases=bases,
             is_union=is_union,
             is_cppclass=is_cppclass,
+            is_packed=is_packed,
             namespace=namespace,
             template_params=template_params or [],
             inner_typedefs=inner_typedefs,
             nested_records=nested_records,
             location=loc,
+            notes=notes,
         )
 
         if forward_target is not None:
@@ -1537,6 +1764,39 @@ class TreeSitterBackend:
         # off the source text would misread ``enum E { classic }``.
         is_scoped = any(child.type in ("class", "struct") for child in node.children)
 
+        # ``enum E : unsigned char`` puts the underlying type in the grammar's
+        # ``base`` field, on scoped and unscoped enums alike. Reading the field
+        # keeps this structural; taking it off the source text would be the
+        # regex-over-AST that AGENTS.md forbids, and would misread a ``:`` in an
+        # attribute or a bit-field. Absent field means the header declared none,
+        # which is the same thing the libclang backend records as None.
+        base_node = node.child_by_field_name("base")
+        underlying_type = _node_text(base_node).strip() if base_node else None
+        # The C grammar has no ``base`` field at all -- ``enum E : long long`` is
+        # C23, which both major compilers accepted as an extension long before --
+        # so a width the header declared reaches this point as no underlying type.
+        # That is indistinguishable from a plain ``enum E`` unless the clause's
+        # own tokens are looked for, and a consumer reading the resulting ``None``
+        # as "declared none" sizes the enum from its enumerators: four bytes where
+        # the compiler laid out one for ``: char``.
+        #
+        # How the clause survives parsing varies by width, so both of its traces
+        # are looked for. ``: char`` and ``: int`` parse *cleanly* -- a ``:``
+        # child and a type node, no error anywhere -- while ``: unsigned char``
+        # keeps the ``:`` and adds an ``ERROR``, and ``: short`` and
+        # ``: long long`` are swallowed whole, leaving an ``ERROR`` and no ``:``
+        # at all. Testing for the error node alone would have missed the two that
+        # parse cleanly, which are the narrow ones, where being wrong reads as
+        # plausible: a four-byte member for a one-byte enum.
+        #
+        # None of them is reconstructed. Only some carry recoverable text, and a
+        # backend that resolved the easy widths and not the rest would produce a
+        # module that differs from libclang's in a way that depends on which type
+        # was written. Unknown is reported for all of them, and the writer refuses.
+        underlying_type_known = base_node is not None or not any(
+            child.type in ("ERROR", ":") for child in node.children
+        )
+
         values: list[EnumValue] = []
         if body_node:
             current_int = 0
@@ -1575,6 +1835,8 @@ class TreeSitterBackend:
             location=loc,
             is_scoped=is_scoped,
             cpp_name=cpp_name,
+            underlying_type=underlying_type,
+            underlying_type_known=underlying_type_known,
         )
 
         # An opaque `enum E : int;` and its later definition are one entity. Emitting
@@ -1641,6 +1903,12 @@ class TreeSitterBackend:
         tokens = text.split()
         quals: list[str] = []
         name_parts: list[str] = []
+        # Recorded here, before the aggregate keyword is dropped below, because
+        # afterwards it is unrecoverable: ``struct Gauge r;`` and ``Gauge s;``
+        # both become the bare name, and where a tag and an ordinary identifier
+        # share a spelling those are an eight-byte record and a one-byte integer.
+        # Reading it off the stripped result later would be guessing.
+        is_elaborated = any(token in ("struct", "enum", "class", "union") for token in tokens)
 
         for token in tokens:
             if token in _FOLDABLE_TYPE_QUALIFIERS or token in _SIGNEDNESS_SPECIFIERS:
@@ -1658,7 +1926,7 @@ class TreeSitterBackend:
             type_name = "int"
         else:
             type_name = text
-        return CType(name=type_name, qualifiers=quals)
+        return CType(name=type_name, qualifiers=quals, is_elaborated=is_elaborated)
 
 
 _BACKEND_INSTANCE = TreeSitterBackend()

@@ -1891,3 +1891,52 @@ class TestBitfieldWidths:
         anon = next(f.anonymous_struct for f in struct.fields if f.anonymous_struct is not None)
 
         assert [(f.name, f.bit_width) for f in anon.fields] == [("lo", 4), ("hi", 4)]
+
+
+@pytest.mark.libclang
+class TestElaboratedSpellingIsRecorded:
+    """``CType.is_elaborated`` must be set on the arms this host actually takes.
+
+    The writer refuses a contested tag whose spelling it does not know, so an
+    unrecorded flag is a member that fails to import rather than one bound to the
+    wrong type. That makes the *absence* of a capture hard to see from the
+    generated-package gates: they pass on any host where some other arm still
+    fires. Two arms set this -- the ELABORATED node and the TYPEDEF fallback --
+    and dropping either one alone left all of ``test_scaffold_runs.py`` green,
+    because whichever remained covered for it on that machine.
+
+    Asserting on the IR directly is what pins them, and it pins them per-host:
+    this runs wherever libclang does, and on a build that produces no ELABORATED
+    node it is the TYPEDEF arm being checked instead.
+    """
+
+    SOURCE = textwrap.dedent("""\
+        struct Gauge { int a; int b; };
+        typedef unsigned char Gauge;
+        struct H { struct Gauge e; Gauge b; };
+    """)
+
+    def _holder_fields(self):
+        unit = LibclangBackend().parse(self.SOURCE, "t.h")
+        holder = next(d for d in unit.declarations if isinstance(d, Struct) and d.name == "H")
+        return holder.fields
+
+    def test_an_elaborated_member_is_recorded_as_elaborated(self):
+        assert self._holder_fields()[0].type.is_elaborated is True
+
+    def test_a_bare_member_is_recorded_as_not_elaborated(self):
+        """The half the macOS runner failed on: its libclang emits no ELABORATED node."""
+        assert self._holder_fields()[1].type.is_elaborated is False
+
+    def test_a_cv_qualified_elaborated_member_is_still_elaborated(self):
+        """``const struct Gauge`` writes an elaborated specifier and must record one.
+
+        Reading the spelling with ``startswith`` answered False here, because the
+        qualifier comes first. Harmless while the keyword also survives in
+        ``name``, and a silently wrong width for anyone who normalises libclang's
+        names the way the tree-sitter backend already does.
+        """
+        source = "struct Gauge { int a; int b; };\nstruct H { const struct Gauge e; };\n"
+        unit = LibclangBackend().parse(source, "t.h")
+        holder = next(d for d in unit.declarations if isinstance(d, Struct) and d.name == "H")
+        assert holder.fields[0].type.is_elaborated is True
