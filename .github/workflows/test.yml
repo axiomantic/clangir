@@ -56,17 +56,25 @@ jobs:
       #
       # Nim arrives from two places, because no single one covers the matrix.
       #
-      # macOS and Linux: asdf-nim, which installs a PRE-COMPILED binary. The
-      # selector is `latest:2.2` on both, and it does not source-build on macOS
-      # arm64 despite there being no official Nim binary for that platform:
-      # asdf_nim_find_exact_nightly_url resolves the stable release to its
-      # commit and fetches the NIGHTLY BUILD OF THAT SAME COMMIT, so the binary
-      # matches the stable source rather than drifting to a newer one. The
-      # plugin's own CI has to set ASDF_NIM_NO_NIGHTLY_FALLBACK=1 to force a
-      # source build out of this exact selector, which is the evidence that the
-      # fallback is what runs by default. One selector for both legs is
-      # therefore correct, and a `ref:` nightly here would pin a *different*
-      # commit from the one Linux gets.
+      # macOS and Linux: asdf-nim, which installs a PRE-COMPILED binary.
+      #
+      # The selector is the exact release rather than `latest:2.2`. This action
+      # writes the selector into .tool-versions and runs a bare `asdf install`,
+      # and asdf v0.20.0 hands the string to the plugin WITHOUT resolving it, so
+      # `latest:2.2` reaches asdf-nim verbatim and dies on
+      # "No download method available for version latest:2.2". The `latest:`
+      # form works through `asdf install nim latest:2.2`, which is the CLI path
+      # asdf-nim's own CI takes; it is not the path this action takes.
+      #
+      # An exact release does not source-build on macOS arm64 either, despite
+      # there being no official Nim binary for that platform:
+      # asdf_nim_find_exact_nightly_url resolves the release to its commit and
+      # fetches the NIGHTLY BUILD OF THAT SAME COMMIT, so the binary matches the
+      # release source rather than drifting to a newer one. The plugin's own CI
+      # has to set ASDF_NIM_NO_NIGHTLY_FALLBACK=1 to force a source build, which
+      # is the evidence that the fallback is what runs by default. A `ref:`
+      # nightly would instead track a moving branch head, so Linux and macOS
+      # could end up on different commits from one day to the next.
       #
       # Windows: asdf-nim states its scope as macOS and Linux, and its CI
       # matrix tests no Windows runner at all, so setup-nim-action keeps that
@@ -77,13 +85,14 @@ jobs:
         uses: asdf-vm/actions/install@v4
         with:
           tool_versions: |
-            nim latest:2.2
+            nim 2.2.12
           github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Pinned to the same release the asdf legs get, so one matrix runs one Nim.
       - name: Install Nim (Windows)
         if: runner.os == 'Windows'
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: 'stable'
+          nim-version: '2.2.12'
           repo-token: ${{ github.token }}
       # On the record, per leg: a version claimed is not a version installed.
       - name: Record the Nim that was installed
