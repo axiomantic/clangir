@@ -13,6 +13,7 @@ from headerkit.backends.libclang import is_system_libclang_available
 from headerkit.ir import BaseSpecifier, Constant, CType, Enum, Function, Reference, Struct, Typedef, Variable
 from headerkit.writers.cython import write_pxd
 from headerkit.writers.json import JsonWriter
+from tests.skip_policy import LIBCLANG_INSTALL, missing_toolchain
 
 libclang = pytest.mark.libclang
 
@@ -21,7 +22,7 @@ libclang = pytest.mark.libclang
 def _skip_if_no_libclang(request: pytest.FixtureRequest) -> None:
     marker = request.node.get_closest_marker("libclang")
     if marker is not None and not is_system_libclang_available():
-        pytest.skip("System libclang not available")
+        missing_toolchain("the system libclang is not available", LIBCLANG_INSTALL)
 
 
 @pytest.mark.allow("subprocess")

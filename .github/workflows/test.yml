@@ -13,7 +13,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
-      fail-fast: true
+      # false, for the same reason -x is gone from the pytest invocation below:
+      # the deliverable of the skip gate is the complete inventory of what did
+      # not run, and cancelling the other legs on the first failure surrenders
+      # exactly the per-platform half of it.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
         python-version: ${{ fromJSON(inputs.full-matrix && '["3.10", "3.11", "3.12", "3.13", "3.14"]' || '["3.10", "3.14"]') }}
@@ -42,14 +46,33 @@ jobs:
         run: |
           clang --version
           which clang || true
+      # The Nim end-to-end gates -- the ones that compile, link and execute the
+      # scaffolded output -- skipped on every leg because no workflow installed
+      # Nim, and a skip is the same colour as a pass.
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: 'stable'
+          repo-token: ${{ github.token }}
       - name: Install package
         shell: bash
         run: pip install -e '.[test,treesitter]'
+      # Fail here, naming the tool, rather than several minutes later inside a
+      # test. Every one of these is a hard requirement of the suite under CI:
+      # tests/skip_policy.py turns a missing one into a failure, and the session
+      # gate in tests/conftest.py fails the run on any skip it did not sanction.
+      - name: Verify the toolchain the suite requires
+        shell: bash
+        run: python scripts/check_test_toolchain.py
       - name: Cache test header downloads
         uses: actions/cache@v6
         with:
           path: ~/.cache/headerkit-test-headers
           key: test-headers-v2
+      # -rs prints skip reasons, which the default output hides entirely.
+      # -x is deliberately absent: the point of the session gate is the full
+      # inventory of what did not run, and stopping at the first failure would
+      # surrender exactly that.
       - name: Run tests
         shell: bash
-        run: pytest -x
+        run: pytest -rs

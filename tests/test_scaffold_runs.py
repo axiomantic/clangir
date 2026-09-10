@@ -62,6 +62,7 @@ from headerkit.backends import get_backend, is_backend_available
 from headerkit.ir import SourceUnit
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from tests.native_build import shared_library_command, shared_library_filename
+from tests.skip_policy import BACKEND_INSTALL, CC_INSTALL, NIM_INSTALL, missing_toolchain, require_program
 
 #: Every parser backend the writers can be driven from. Both are exercised
 #: because the Nim ``importc`` spelling depends on IR each one fills in itself.
@@ -122,17 +123,14 @@ COLLISION_SOURCE = textwrap.dedent("""\
 """)
 
 
-def _require(*programs: str) -> str:
-    """Return the first of ``programs`` on PATH, or skip.
+def _require(*programs: str, install: str) -> str:
+    """Return the first of ``programs`` on PATH.
 
-    The skip is narrow on purpose: a gate that quietly no-ops when its toolchain
-    is missing proves nothing while reporting green.
+    Under CI a miss is a failure naming the tool, not a skip: a gate that quietly
+    no-ops when its toolchain is missing proves nothing while reporting green.
+    Locally it stays a skip, so a contributor without Nim can still run the suite.
     """
-    for candidate in programs:
-        found = shutil.which(candidate)
-        if found:
-            return found
-    pytest.skip(f"none of {', '.join(programs)} on PATH")
+    return require_program(*programs, install=install)
 
 
 @pytest.fixture(params=BACKENDS)
@@ -140,7 +138,7 @@ def backend_name(request: pytest.FixtureRequest) -> str:
     """Run the gate once per installed parser backend."""
     name = str(request.param)
     if not is_backend_available(name):
-        pytest.skip(f"{name} backend not available")
+        missing_toolchain(f"the {name} backend is not available", BACKEND_INSTALL[name])
     return name
 
 
@@ -157,7 +155,7 @@ def _build_c_library(
     basename: str = "probe",
 ) -> Path:
     """Compile ``source`` into a real shared library and return its path."""
-    compiler = _require("cc", "gcc", "clang")
+    compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
     (workdir / f"{basename}.h").write_text(header, encoding="utf-8")
     (workdir / f"{basename}.c").write_text(source, encoding="utf-8")
     out = workdir / shared_library_filename(stem)
@@ -489,8 +487,8 @@ class TestScaffoldedNimPackageCompiles:
         ``importc`` compiles cleanly -- which is exactly how this defect stayed
         invisible.
         """
-        nim = _require("nim")
-        compiler = _require("cc", "gcc", "clang")
+        nim = _require("nim", install=NIM_INSTALL)
+        compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
         root = _scaffold_to("nim", tmp_path, "probe", backend_name=backend_name)
 
         work = tmp_path / "nimrun"
@@ -560,7 +558,7 @@ class TestScaffoldedNimPackageCompiles:
         detects it. Compilation stops at ``--compileOnly``: the tripwire wants
         the shared library at *runtime*, which the ctypes gates already cover.
         """
-        nim = _require("nim")
+        nim = _require("nim", install=NIM_INSTALL)
         root = _scaffold_to("nim", tmp_path, "probe", backend_name=backend_name)
         (root / "probe.h").write_text(FIXTURE_HEADER, encoding="utf-8")
 

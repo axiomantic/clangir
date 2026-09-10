@@ -39,6 +39,7 @@ from headerkit.ir import (
     Typedef,
     Variable,
 )
+from tests.skip_policy import LIBCLANG_INSTALL, missing_toolchain
 
 # Mark all tests that require libclang
 libclang = pytest.mark.libclang
@@ -53,7 +54,7 @@ def _skip_if_no_libclang(request: pytest.FixtureRequest) -> None:
     """
     marker = request.node.get_closest_marker("libclang")
     if marker is not None and not is_system_libclang_available():
-        pytest.skip("System libclang not available")
+        missing_toolchain("the system libclang is not available", LIBCLANG_INSTALL)
 
 
 class TestImportability:

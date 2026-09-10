@@ -21,6 +21,7 @@ from headerkit.writers.diff import DiffWriter
 from headerkit.writers.json import header_to_json, header_to_json_dict
 from headerkit.writers.lua import header_to_lua
 from headerkit.writers.prompt import PromptWriter
+from tests.skip_policy import missing_toolchain
 
 pytestmark = [
     pytest.mark.skipif(
@@ -47,9 +48,17 @@ def _parse_header(
 
 
 def _skip_if_unavailable(fixture_value: Path | None, name: str) -> None:
-    """Skip the test if the header fixture returned None (download failure)."""
+    """Under CI a failed download is a failure; locally it is a skip.
+
+    A download that quietly turns the test green proves nothing about the real
+    header it was supposed to parse, and network flakiness is exactly the kind of
+    absence that reads as fine.
+    """
     if fixture_value is None:
-        pytest.skip(f"{name} header not available (download failed)")
+        missing_toolchain(
+            f"the {name} header could not be downloaded",
+            "check network access from the runner, and the test-header cache step in .github/workflows/test.yml",
+        )
 
 
 def _check_ctypes_write(header: Header, symbol: str) -> None:
