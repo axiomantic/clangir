@@ -866,3 +866,30 @@ class TestNimCppTripwire:
         tripwire = self._tripwire(Header(path="c.h", declarations=[Function(name="add", return_type=CType("int"))]))
         assert "loadLib" in tripwire
         assert 'symAddr("add")' in tripwire
+
+
+class TestGeneratedPathsSurviveNimStringLiterals:
+    """Every path the writer emits lands inside a Nim string literal."""
+
+    #: A Windows path exercising both escapes Nim would otherwise read: `\U` and `\x`.
+    WINDOWS_PATH = "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pkg\\shape.hpp"
+
+    def test_header_pragma_path_has_no_backslash(self) -> None:
+        """`\\U` and `\\x` in a header path are escapes to Nim, not separators.
+
+        Left as-is the generated bindings do not parse at all:
+        ``Error: expected a hex digit, but found: s; maybe prepend with 0``.
+        """
+        out = write_nim(Header(path=self.WINDOWS_PATH, declarations=[Function(name="f", return_type=CType("void"))]))
+        assert "\\" not in out, out
+        assert 'header: "C:/Users/runneradmin/AppData/Local/Temp/pkg/shape.hpp"' in out, out
+
+    def test_cfg_flag_path_has_no_backslash(self) -> None:
+        assert "\\\\" not in _cfg_path_flag("-I", self.WINDOWS_PATH)
+
+    def test_posix_paths_are_untouched(self) -> None:
+        """The normalisation must be a no-op where there is nothing to normalise."""
+        out = write_nim(
+            Header(path="/usr/include/shape.h", declarations=[Function(name="f", return_type=CType("void"))])
+        )
+        assert 'header: "/usr/include/shape.h"' in out, out
