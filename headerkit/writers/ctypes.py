@@ -173,6 +173,30 @@ class _TypeTable:
     record_classes: Mapping[str, str] = field(default_factory=dict)
     scalars: Mapping[str, str] = field(default_factory=dict)
     contested_records: Mapping[str, str] = field(default_factory=dict)
+    record_decls: Mapping[str, Struct] = field(default_factory=dict)
+    #: Memoized ``(ctypes type, C size in bits)`` per emitted class name, or
+    #: None where the record could not be built. Probing is on demand because
+    #: most records in a header are never a member of a packed one, and it is
+    #: memoized because those that are tend to be members of several.
+    _probes: dict[str, tuple[type, int] | None] = field(default_factory=dict, repr=False, compare=False)
+
+    def record_probe(self, class_name: str) -> tuple[type, int] | None:
+        """Size a member declared as a record this header also declares.
+
+        Without this a packed record holding ``struct N n;`` is unmeasurable
+        purely because the writer cannot get from the emitted class *name* back
+        to the declaration, and so is reported unverified while reproducing C
+        exactly. That is the commonest aggregate shape there is, and a report
+        nobody can act on is what teaches a reader to ignore the ones they can.
+        """
+        if class_name not in self._probes:
+            # Seeded before recursing so a record reachable from itself resolves
+            # to "cannot size" rather than recursing without end.
+            self._probes[class_name] = None
+            decl = self.record_decls.get(class_name)
+            if decl is not None:
+                self._probes[class_name] = _probe_record(decl, self)
+        return self._probes[class_name]
 
 
 #: The table for a call with no header context: nothing resolves, every name is
@@ -518,13 +542,11 @@ def _ctypes_member_type(expr: str, nested: dict[str, type] | None = None) -> typ
     writer passes through for a struct- or enum-typed member, which is not
     valid Python either.
     """
-    if nested and expr in nested:
-        return nested[expr]
     base, *lengths = expr.split(" * ")
-    scalar = _ctypes_scalar(base)
-    if scalar is None:
+    resolved = (nested or {}).get(base) or _ctypes_scalar(base)
+    if resolved is None:
         return None
-    member: Any = scalar
+    member: Any = resolved
     for length in lengths:
         # ``c_ubyte * 4 * 4`` is a two-dimensional array and folds the same way.
         if not length.strip().isdigit():
@@ -909,6 +931,23 @@ class _StructBody:
         """
         return self.bit_pos if self.bit_pos is not None else self.padding_bits
 
+    def _register_record_member(self, expr: str) -> None:
+        """Make a member declared as a named record measurable, if it can be.
+
+        An anonymous inner record is registered by ``add_anonymous`` as it is
+        built. A named one is only a *reference* to a class emitted elsewhere in
+        the module, so it is resolved through the header's type table instead --
+        the same treatment, arrived at by a different route.
+        """
+        base = expr.split(" * ")[0]
+        if base in self.nested_types or _ctypes_scalar(base) is not None:
+            return
+        probe = self.types.record_probe(base)
+        if probe is None:
+            return
+        self.nested_types[base] = probe[0]
+        self.nested_c_bits[base] = probe[1]
+
     def add_anonymous(self, f: Field, index: int) -> bool:
         """Emit a C11 transparent member as a nested class plus an _anonymous_ entry."""
         inner = f.anonymous_struct
@@ -989,8 +1028,14 @@ class _StructBody:
         position = 0
         widest = 0
         for name, expr, width in self.flat_layout:
-            if width is None and expr in self.nested_c_bits:
-                info: tuple[int, int] | None = (self.nested_c_bits[expr], 8)
+            if width is None and expr.split(" * ")[0] in self.nested_c_bits:
+                base, *lengths = expr.split(" * ")
+                span_bits = self.nested_c_bits[base]
+                for length in lengths:
+                    if not length.strip().isdigit():
+                        return None
+                    span_bits *= int(length.strip())
+                info: tuple[int, int] | None = (span_bits, 8)
             elif width is None:
                 info = _ctypes_member_bits(expr, self.nested_types)
             else:
@@ -1063,6 +1108,7 @@ class _StructBody:
         self.has_member = True
         self._note_member_align(expr)
         if f.bit_width is None:
+            self._register_record_member(expr)
             self._add_both(_field_to_ctypes_tuple(f, self.types), (f.name, expr, None))
             self._advance_plain(expr)
             return
@@ -2053,6 +2099,11 @@ def _type_table(header: Header) -> _TypeTable:
         records=record_spellings,
         record_classes=record_classes,
         scalars=_scalar_typedef_names(header),
+        record_decls={
+            record_classes[_record_qualified_name(d)]: d
+            for d in header.declarations
+            if isinstance(d, Struct) and _record_qualified_name(d) in record_classes
+        },
         contested_records={
             str(d.name): record_classes[_record_qualified_name(d)]
             for d in header.declarations

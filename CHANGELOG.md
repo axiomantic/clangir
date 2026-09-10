@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `check-release-prep.yml` fails loudly when it cannot read the base ref, instead of reporting a reassuring result it did not measure. Neither step declared a `shell:`, so GitHub ran them under `bash -e {0}` with no `pipefail`; in `git show "origin/$BASE_REF:pyproject.toml" | grep ... | sed ...` the exit status comes from `sed`, so a `fatal: invalid object name` was discarded and the step printed `Version bumped:  -> 0.9.9` and exited 0. The changelog step degraded identically, reporting "CHANGELOG.md has not been modified" off an empty diff. Both steps now declare `shell: bash`, set `-euo pipefail`, and verify the base ref resolves before reading it; a missing version line likewise now emits a diagnostic rather than exiting 1 with no output. A parent branch auto-deleted after merge is the ordinary end of a stacked pull request's life, so this path is reached in normal use rather than only pathologically.
 - CI: the changelog check matches with a `case` statement rather than a pipe into `grep -q`. `grep -q` exits on its first match and closes the pipe; because `CHANGELOG.md` sorts near the top of `git diff --name-only`, on a diff exceeding the 64K pipe buffer the writer was still writing, took SIGPIPE, and `pipefail` reported that as the pipeline's status -- so the check warned that the changelog was untouched when it had in fact been modified. Measured at 24012 and 48012 bytes (correct) against 72012 and 240012 bytes (wrong), with the same input passing under the pre-`pipefail` code, placing the flip at roughly 1300 changed paths. The `case` form has no pipe by construction and is correct at every size tested, with warn-only semantics and exit 0 preserved on a genuine miss.
 
+## [0.42.1] - 2026-09-10
+
+### Fixed
+
+- `ctypes` writer: a packed record holding a member declared as a *named* record -- `struct N n;` -- is no longer reported unverified when it reproduces C exactly, and is no longer laid out wrongly when a bit-field precedes it.
+
+  Such a member arrives as nothing but the class name the module will emit the record under, which the ctypes scalar table cannot resolve, so the writer could not size it. An anonymous inner record was already sized as the enclosing body walked it; a named one is a *reference* to a class emitted elsewhere, and is now resolved through the header's type table instead -- the same treatment reached by a different route. Arrays of such records and records nested inside them resolve the same way, and a table entry that leads back to itself ends as "cannot size" rather than recursing without end.
+
+  The consequences were two, not one. An unsizeable member also stops the running bit offset, so everything after it was spelled from an unknown position: `struct __attribute__((packed)) { unsigned char f0 : 3; struct N n; unsigned short f1 : 3; }` measures 10 bytes with a compiled C probe and generated 11. That record was reported, so it was never silently wrong -- but it was wrong.
+
+  Measured over a 4096-shape sweep against a compiled C probe, on CPython 3.10.20, 3.13.14 and 3.14.6, with identical results on all three: 216 records that reproduce C stopped being reported, and a further 216 that were laid out wrongly became correct. No record moved into the one category that matters -- laid out differently from C and *not* reported -- which was zero before and remains zero.
+
+  This closes a gap that only became reachable when enum- and record-typed members started compiling at all: before that, such a record produced a module that could not be imported, so the spurious report had nothing to be spurious about.
+
 ## [0.42.0] - 2026-09-10
 
 ### Added
@@ -996,7 +1010,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.42.0...HEAD
+[0.42.1]: https://github.com/axiomantic/headerkit/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/axiomantic/headerkit/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/axiomantic/headerkit/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/axiomantic/headerkit/compare/v0.40.0...v0.40.1
