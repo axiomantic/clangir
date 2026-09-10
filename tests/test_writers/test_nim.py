@@ -632,26 +632,33 @@ class TestTypeNameCppDetection:
     """The C++-only test on a type name, at the granularity the parse produces."""
 
     @pytest.mark.parametrize(
-        ("name", "expected"),
+        ("name", "in_cpp_unit", "in_c_unit"),
         [
-            # A C tag keyword settles it: a C header may name a record `vector`.
-            ("struct vector", False),
-            ("union u", False),
-            ("enum e", False),
-            ("int", False),
-            ("unsigned long", False),
-            ("size_t", False),
-            # libclang reports std:: types with the qualifier stripped.
-            ("string", True),
-            ("unique_ptr<int>", True),
-            ("vector<int>", True),
-            # A template-id or a qualified name has no C spelling at all.
-            ("map<int, int>", True),
-            ("ns::Point", True),
+            # Unambiguous in either language: C has no template-id and no `::`.
+            ("map<int, int>", True, True),
+            ("unique_ptr<int>", True, True),
+            ("vector<int>", True, True),
+            ("ns::Point", True, True),
+            # A C tag keyword settles it wherever it appears.
+            ("struct vector", False, False),
+            ("union u", False, False),
+            ("enum e", False, False),
+            # Plain C spellings.
+            ("int", False, False),
+            ("unsigned long", False, False),
+            ("size_t", False, False),
+            # The undecidable ones. libclang reports `std::string` as the bare name
+            # `string`, and a C `typedef struct {...} string;` reports the same, so
+            # only the unit's language separates them.
+            ("string", True, False),
+            ("vector", True, False),
+            ("exception", True, False),
+            ("shared_ptr", True, False),
         ],
     )
-    def test_type_name(self, name: str, expected: bool) -> None:
-        assert _type_name_requires_cpp(name) is expected
+    def test_type_name(self, name: str, in_cpp_unit: bool, in_c_unit: bool) -> None:
+        assert _type_name_requires_cpp(name, unit_is_cpp=True) is in_cpp_unit
+        assert _type_name_requires_cpp(name, unit_is_cpp=False) is in_c_unit
 
 
 class TestNimCfg:

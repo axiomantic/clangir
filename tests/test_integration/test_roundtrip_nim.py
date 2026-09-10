@@ -13,11 +13,33 @@ from headerkit.backends import is_backend_available
 from headerkit.scaffold import ScaffoldOptions
 from headerkit.writers import get_writer
 from headerkit.writers.nim import unit_requires_cpp, write_nim
+from tests.native_build import position_independent_flags
 
 pytestmark = pytest.mark.skipif(
     not is_backend_available("libclang"),
     reason="libclang backend not available",
 )
+
+
+def _require_program(*programs: str, install: str) -> str:
+    """Return the first of ``programs`` on PATH, or skip naming what is missing.
+
+    Every toolchain lookup in this module goes through here, so the policy lives in
+    one place: when `tests/skip_policy.py` lands, this body becomes a call to
+    ``require_program`` and no call site changes.
+    """
+    for candidate in programs:
+        found = shutil.which(candidate)
+        if found:
+            return found
+    names = programs[0] if len(programs) == 1 else "none of " + ", ".join(programs)
+    pytest.skip(f"SKIP(toolchain): {names} is not on PATH; install {install}")
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _archiver() -> str:
+    """The static-library archiver. Absent on a host with no POSIX toolchain."""
+    return _require_program("ar", "llvm-ar", install="binutils, or the platform's build tools")
 
 
 def parse_and_nim(backend: pytest.FixtureRequest, code: str) -> str:
@@ -116,12 +138,8 @@ class TestNimCppBuildConfiguration:
     @staticmethod
     def _require_toolchain() -> tuple[str, str]:
         """Return the ``nim`` and C++ driver paths, skipping visibly if either is absent."""
-        nim_bin = shutil.which("nim")
-        if nim_bin is None:
-            pytest.skip("SKIP(toolchain): the Nim compiler ('nim') is not installed on this host")
-        cxx_bin = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
-        if cxx_bin is None:
-            pytest.skip("SKIP(toolchain): no C++ driver ('c++', 'g++' or 'clang++') is installed on this host")
+        nim_bin = _require_program("nim", install="the Nim compiler (https://nim-lang.org/install.html)")
+        cxx_bin = _require_program("c++", "g++", "clang++", install="a C++ compiler driver")
         return nim_bin, cxx_bin
 
     @staticmethod
@@ -138,9 +156,9 @@ class TestNimCppBuildConfiguration:
         header.write_text(self.HEADER)
         (native / "counter.cpp").write_text(self.SOURCE)
 
-        compiled = self._run([cxx_bin, "-fPIC", "-c", "counter.cpp", "-o", "counter.o"], native)
+        compiled = self._run([cxx_bin, *position_independent_flags(), "-c", "counter.cpp", "-o", "counter.o"], native)
         assert compiled.returncode == 0, f"building the native object failed:\n{compiled.stderr}"
-        archived = self._run([shutil.which("ar") or "ar", "rcs", "libcounter.a", "counter.o"], native)
+        archived = self._run([_archiver(), "rcs", "libcounter.a", "counter.o"], native)
         assert archived.returncode == 0, f"archiving the native library failed:\n{archived.stderr}"
 
         unit = backend.parse(self.HEADER, str(header))
@@ -228,10 +246,10 @@ class TestNimCppBuildConfiguration:
         pkg_dir, native, nim_bin, cxx_bin = self._scaffold(backend, tmp_path)
 
         (native / "empty.cpp").write_text("// defines nothing\n")
-        compiled = self._run([cxx_bin, "-fPIC", "-c", "empty.cpp", "-o", "empty.o"], native)
+        compiled = self._run([cxx_bin, *position_independent_flags(), "-c", "empty.cpp", "-o", "empty.o"], native)
         assert compiled.returncode == 0, compiled.stderr
         (native / "libcounter.a").unlink()
-        archived = self._run([shutil.which("ar") or "ar", "rcs", "libcounter.a", "empty.o"], native)
+        archived = self._run([_archiver(), "rcs", "libcounter.a", "empty.o"], native)
         assert archived.returncode == 0, archived.stderr
         assert (native / "libcounter.a").is_file(), "the archive must exist or this tests the previous case"
 
@@ -258,6 +276,22 @@ CPP_DECISION_SOURCES: list[tuple[str, str, str, bool]] = [
     ("c array field", "struct Buf { char data[16]; };", "u.h", False),
     # A C header may name a record `vector`; the tag keyword is what settles it.
     ("c record named vector", "struct vector { float x; };\nstruct H { struct vector v; };", "u.h", False),
+    # The typedef spelling of every marker. This is how C libraries usually name
+    # records, and a *use* of a typedef carries no tag keyword -- so the name alone
+    # is identical to the C++ spelling and only the unit's language separates them.
+    ("c typedef named string", "typedef struct { int n; char *p; } string;\nint slen(string s);", "u.h", False),
+    ("c typedef named vector", "typedef struct { int n; } vector;\nint vlen(vector s);", "u.h", False),
+    ("c typedef named exception", "typedef struct { int code; } exception;\nint ecode(exception e);", "u.h", False),
+    ("c typedef named wstring", "typedef struct { int n; } wstring;\nint wlen(wstring s);", "u.h", False),
+    (
+        "c typedef named basic_string",
+        "typedef struct { int n; } basic_string;\nint blen(basic_string s);",
+        "u.h",
+        False,
+    ),
+    ("c typedef named unique_ptr", "typedef struct { void *p; } unique_ptr;\nvoid ufree(unique_ptr p);", "u.h", False),
+    ("c typedef named shared_ptr", "typedef struct { void *p; } shared_ptr;\nvoid sfree(shared_ptr p);", "u.h", False),
+    ("c typedef named weak_ptr", "typedef struct { void *p; } weak_ptr;\nvoid wfree(weak_ptr p);", "u.h", False),
     # --- C++, and must select the C++ backend -------------------------------
     ("class", "class C { public: void run(); };", "u.hpp", True),
     ("struct with method", "struct M { void run(); };", "u.hpp", True),
@@ -312,8 +346,36 @@ class TestCppBackendDecisionThroughTheParser:
 #: Each needs no native library, so the compile itself is the whole assertion.
 CPP_COMPILE_SHAPES: list[tuple[str, str, str]] = [
     ("class with a method", "class C { public: void run(); };", "discard sizeof(C)"),
+    ("struct with a base", "struct B { int x; };\nstruct D : B { int y; };", "discard sizeof(D)"),
     ("namespaced struct", "namespace ns { struct Point { int x; }; }", "discard sizeof(Point)"),
+    # One shape per C++ helper type the writer can render. Each is a record whose
+    # field renders to that helper, so building it proves the helper is declared and
+    # not merely referenced.
     ("std::string field", "#include <string>\nstruct S { std::string s; };", "discard sizeof(S)"),
+    ("std::vector field", "#include <vector>\nstruct S { std::vector<int> v; };", "discard sizeof(S)"),
+    ("std::unique_ptr field", "#include <memory>\nstruct S { std::unique_ptr<int> p; };", "discard sizeof(S)"),
+    ("std::shared_ptr field", "#include <memory>\nstruct S { std::shared_ptr<int> p; };", "discard sizeof(S)"),
+    ("std::weak_ptr field", "#include <memory>\nstruct S { std::weak_ptr<int> p; };", "discard sizeof(S)"),
+]
+
+#: C shapes whose generated package must build under the C backend it was given.
+#: The `string`/`vector` names are the ones a spelling-only test misreads as C++;
+#: compiled as C++ their functions come back mangled and the link fails.
+C_COMPILE_SHAPES: list[tuple[str, str, str, str]] = [
+    (
+        "c typedef named vector",
+        "typedef struct { int n; } vector;\nint vlen(vector s);",
+        "int vlen(vector s) { return s.n; }",
+        'var s: vector\ns.n = 5\necho "value=", vlen(s)',
+    ),
+    (
+        "c record tagged string",
+        "struct string { int n; };\nint slen(struct string s);",
+        "int slen(struct string s) { return s.n; }",
+        # Module-qualified: a C record named `string` collides with Nim's builtin.
+        # That collision belongs to the writer and is not what this gate measures.
+        'var s: clib.string\ns.n = 7\necho "value=", slen(s)',
+    ),
 ]
 
 
@@ -430,8 +492,8 @@ class TestTripwireHonesty:
             """)
         )
         run = TestNimCppBuildConfiguration._run
-        assert run([cxx_bin, "-fPIC", "-c", "r.cpp", "-o", "r.o"], native).returncode == 0
-        assert run([shutil.which("ar") or "ar", "rcs", "libr.a", "r.o"], native).returncode == 0
+        assert run([cxx_bin, *position_independent_flags(), "-c", "r.cpp", "-o", "r.o"], native).returncode == 0
+        assert run([_archiver(), "rcs", "libr.a", "r.o"], native).returncode == 0
 
         unit = backend.parse(header_code, str(native / "r.hpp"))
         pkg_dir = tmp_path / "pkg"
@@ -468,8 +530,8 @@ class TestPathsWithSpaces:
         (native / "bump.cpp").write_text('#include "bump.hpp"\nvoid bump(int& x) { x += 3; }\n')
 
         run = TestNimCppBuildConfiguration._run
-        assert run([cxx_bin, "-fPIC", "-c", "bump.cpp", "-o", "bump.o"], native).returncode == 0
-        assert run([shutil.which("ar") or "ar", "rcs", "libbump.a", "bump.o"], native).returncode == 0
+        assert run([cxx_bin, *position_independent_flags(), "-c", "bump.cpp", "-o", "bump.o"], native).returncode == 0
+        assert run([_archiver(), "rcs", "libbump.a", "bump.o"], native).returncode == 0
 
         unit = backend.parse(header_code, str(native / "bump.hpp"))
         pkg_dir = tmp_path / "pk g"
@@ -488,3 +550,86 @@ class TestPathsWithSpaces:
         built = run([nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/consumer.nim"], pkg_dir)
         assert built.returncode == 0, f"a path with a space broke the build:\n{built.stdout}\n{built.stderr}"
         assert "value=13" in built.stdout, built.stdout
+
+
+class TestCShapesStayOnTheCBackend:
+    """A C header misread as C++ links against mangled names and fails.
+
+    The `vector` and `string` cases are the ones a spelling-only test gets wrong.
+    Compiled as C++ the generated package asks for `vlen(vector)` and the C library
+    exports `_vlen`, which the linker reports as an undefined symbol -- so this is a
+    link gate, not a compile gate, and needs a real library.
+    """
+
+    @pytest.mark.parametrize(
+        ("code", "impl", "consumer"),
+        [pytest.param(c, i, u, id=label) for label, c, i, u in C_COMPILE_SHAPES],
+    )
+    def test_c_shape_builds_and_calls_through(
+        self, backend, tmp_path: Path, code: str, impl: str, consumer: str
+    ) -> None:
+        nim_bin, _cxx = TestNimCppBuildConfiguration._require_toolchain()
+        cc_bin = _require_program("cc", "gcc", "clang", install="a C compiler driver")
+
+        native = tmp_path / "native"
+        native.mkdir()
+        (native / "lib.h").write_text(code)
+        (native / "lib.c").write_text(f'#include "lib.h"\n{impl}\n')
+
+        run = TestNimCppBuildConfiguration._run
+        compiled = run([cc_bin, "-x", "c", *position_independent_flags(), "-c", "lib.c", "-o", "lib.o"], native)
+        assert compiled.returncode == 0, compiled.stderr
+        assert run([_archiver(), "rcs", "liblib.a", "lib.o"], native).returncode == 0
+
+        unit = backend.parse(code, str(native / "lib.h"))
+        assert not unit_requires_cpp(unit), "a C header must not be classified C++"
+
+        pkg_dir = tmp_path / "pkg"
+        get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(
+                package_name="clib",
+                target_language="nim",
+                layout="package",
+                options={"library": "lib", "library_dirs": str(native)},
+            ),
+        ).write_to_disk(pkg_dir)
+        assert "--backend:cpp" not in (pkg_dir / "nim.cfg").read_text()
+
+        (pkg_dir / "tests" / "consumer.nim").write_text(f"import clib\n{consumer}\n")
+        built = run([nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/consumer.nim"], pkg_dir)
+        assert built.returncode == 0, f"the C package did not build or link:\n{built.stdout}\n{built.stderr}"
+        assert "value=" in built.stdout, built.stdout
+
+
+class TestInconclusiveTripwireReasons:
+    """The reason a tripwire is inconclusive must reach the reader."""
+
+    def test_reasons_are_printed_not_merely_written(self, backend, tmp_path: Path) -> None:
+        """`checkpoint` prints only on failure, so on a skip it is dead text."""
+        nim_bin, _cxx = TestNimCppBuildConfiguration._require_toolchain()
+        code = "template <typename T> T identity(T v);\n"
+        header = tmp_path / "tmpl.hpp"
+        header.write_text(code)
+        pkg_dir = tmp_path / "pkg"
+        get_writer("nim").write_layout(
+            backend.parse(code, str(header)),
+            ScaffoldOptions(package_name="tmpllib", target_language="nim", layout="package"),
+        ).write_to_disk(pkg_dir)
+
+        built = TestNimCppBuildConfiguration._run(
+            [nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/test_tripwire.nim"], pkg_dir
+        )
+        assert "TRIPWIRE INCONCLUSIVE" in built.stdout, "the reasons never reached the reader:\n" + built.stdout
+        assert "establishes that the native library links" in built.stdout, built.stdout
+
+    def test_generated_file_warns_that_it_exits_zero(self, backend, tmp_path: Path) -> None:
+        """std/unittest counts failures only, so a skipped tripwire exits 0."""
+        code = "template <typename T> T identity(T v);\n"
+        layout = get_writer("nim").write_layout(
+            backend.parse(code, str(tmp_path / "tmpl.hpp")),
+            ScaffoldOptions(package_name="tmpllib", target_language="nim", layout="package"),
+        )
+        tripwire = next(f.content for f in layout.files if f.path == "tests/test_tripwire.nim")
+        assert "exits 0" in tripwire, tripwire
+        assert "Do not treat it as link verification" in tripwire, tripwire

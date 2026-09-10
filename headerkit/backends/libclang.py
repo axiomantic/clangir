@@ -4234,6 +4234,13 @@ class LibclangBackend:
         self._apply_final_macro_state(header, tu, converter)
         self._drop_undefined_macros(header, filename, code, args)
 
+        # Record the language clang actually parsed this unit as. Writers need it:
+        # a `std::string` field and a C `typedef struct {...} string;` reach the IR
+        # as the identical `CType(name="string")`, and nothing else in the IR tells
+        # them apart. `_detect_cplus` is already the authority that chose the parse
+        # mode, so this records that decision rather than re-deriving one.
+        header.language = "cpp" if is_cplus else "c"
+
         return header
 
     def _drop_undefined_macros(self, header: Header, filename: str, code: str, args: list[str]) -> None:

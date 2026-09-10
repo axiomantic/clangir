@@ -250,6 +250,41 @@ def _escape_ident(name: str) -> str:
     return clean
 
 
+#: The Nim declaration, and any companion procs, for each C++ helper type
+#: :meth:`NimWriter._format_type` can produce. The renderer records which helpers it
+#: emitted and this table turns that record into declarations, so the set declared is
+#: the set referenced by construction rather than by a second predicate that has to
+#: agree with the first.
+CPP_HELPER_DECLARATIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "CppString": ('CppString* {.importcpp: "std::string", header: "<string>".} = object', ()),
+    "CppVector": ('CppVector*[T] {.importcpp: "std::vector<\'0>", header: "<vector>".} = object', ()),
+    "UniquePtr": (
+        'UniquePtr*[T] {.importcpp: "std::unique_ptr<\'0>", header: "<memory>".} = object',
+        (
+            'proc `=copy`*[T](dst: var UniquePtr[T], src: UniquePtr[T]) {.error: "std::unique_ptr cannot be copied in Nim; use std/moves.move() or sink".}',
+            'proc move*[T](p: var UniquePtr[T]): UniquePtr[T] {.importcpp: "std::move(@)", header: "<utility>".}',
+            'proc get*[T](p: UniquePtr[T]): ptr T {.importcpp: "#.get()", header: "<memory>".}',
+            'proc reset*[T](p: var UniquePtr[T]) {.importcpp: "#.reset()", header: "<memory>".}',
+        ),
+    ),
+    "SharedPtr": (
+        'SharedPtr*[T] {.importcpp: "std::shared_ptr<\'0>", header: "<memory>".} = object',
+        (
+            'proc get*[T](p: SharedPtr[T]): ptr T {.importcpp: "#.get()", header: "<memory>".}',
+            'proc reset*[T](p: var SharedPtr[T]) {.importcpp: "#.reset()", header: "<memory>".}',
+            'proc useCount*[T](p: SharedPtr[T]): clong {.importcpp: "#.use_count()", header: "<memory>".}',
+        ),
+    ),
+    "WeakPtr": (
+        'WeakPtr*[T] {.importcpp: "std::weak_ptr<\'0>", header: "<memory>".} = object',
+        ('proc lock*[T](p: WeakPtr[T]): SharedPtr[T] {.importcpp: "#.lock()", header: "<memory>".}',),
+    ),
+}
+
+#: Helpers whose companion procs name another helper, which must therefore be
+#: declared alongside them.
+_CPP_HELPER_REQUIRES: dict[str, tuple[str, ...]] = {"WeakPtr": ("SharedPtr",)}
+
 #: Tag keywords that mark a name as a C record or enumeration rather than a C++ one.
 _C_TAG_PREFIXES: tuple[str, ...] = ("struct ", "union ", "enum ")
 
@@ -348,12 +383,10 @@ def _bare_type_head(raw: str) -> str:
 def _decl_contains_exact(d: object, head: str) -> bool:
     """Whether ``d`` references a type whose unqualified head is exactly ``head``.
 
-    The substring form above cannot serve here. libclang reports a ``std::string``
-    field as the bare name ``string``, so probing for ``"std::string"`` matches
-    nothing; probing for ``"string"`` as a substring would match ``wstring`` and any
-    C type merely containing those letters. The head comparison is exact, and a C
-    tag keeps its ``struct ``/``union ``/``enum `` keyword so it never reaches here
-    looking like a standard-library name.
+    The substring form cannot serve: libclang reports a ``std::string`` field as
+    the bare name ``string``, and a substring test for it also matches ``wstring``
+    and any C type containing those letters. The head comparison is exact, and a C
+    tag keeps its keyword so it never looks like a library name.
     """
     return _decl_matches(d, lambda name: not name.strip().startswith(_C_TAG_PREFIXES) and _bare_type_head(name) == head)
 
@@ -382,42 +415,50 @@ CPP_STDLIB_MARKERS: frozenset[str] = frozenset(
 )
 
 
-def _type_name_requires_cpp(raw: str) -> bool:
+def _type_name_requires_cpp(raw: str, *, unit_is_cpp: bool) -> bool:
     """Whether a type *name* is one only C++ can spell.
 
-    Three structural signals, in order of generality. A ``<`` means a template-id
-    and a ``::`` means a qualified name; neither exists in C. Only when a name
-    carries neither is it compared against :data:`CPP_STDLIB_MARKERS`, and only
-    when it carries no C tag keyword -- ``struct vector`` is a C record whatever
-    it is named, while a bare ``vector`` at this point came from ``std::``.
+    Two of the three signals are unambiguous and hold in any unit: a ``<`` is a
+    template-id and a ``::`` is a qualified name, and C has neither.
+
+    The third -- a bare name in :data:`CPP_STDLIB_MARKERS` -- is not decidable from
+    spelling at all: a ``std::string`` field and a C ``typedef struct {...} string;``
+    reach the IR as the identical ``CType(name="string")``. A tag keyword does not
+    separate them either, because a *use of a typedef* carries no tag. So that
+    branch is gated on ``unit_is_cpp``, the language the parser chose for the
+    translation unit; in a C unit a bare ``string`` is a C typedef and nothing else.
     """
     name = raw.strip()
     if "<" in name or "::" in name:
         return True
-    if name.startswith(_C_TAG_PREFIXES):
+    if not unit_is_cpp or name.startswith(_C_TAG_PREFIXES):
         return False
     return _bare_type_head(name) in CPP_STDLIB_MARKERS
 
 
-def _type_requires_cpp(t: TypeExpr) -> bool:
+def _type_requires_cpp(t: TypeExpr, *, unit_is_cpp: bool) -> bool:
     """Whether rendering ``t`` produces Nim that only the C++ backend can build."""
     if isinstance(t, Reference):
         # Rendered as `var T`, which is a C++ reference. C has no such parameter.
         return True
     if isinstance(t, CType):
-        return _type_name_requires_cpp(t.name)
+        return _type_name_requires_cpp(t.name, unit_is_cpp=unit_is_cpp)
     if isinstance(t, Pointer):
-        return _type_requires_cpp(t.pointee)
+        return _type_requires_cpp(t.pointee, unit_is_cpp=unit_is_cpp)
     if isinstance(t, Array):
-        return _type_requires_cpp(t.element_type)
+        return _type_requires_cpp(t.element_type, unit_is_cpp=unit_is_cpp)
     if isinstance(t, FunctionPointer):
-        return _type_requires_cpp(t.return_type) or any(_type_requires_cpp(p.type) for p in t.parameters)
+        return _type_requires_cpp(t.return_type, unit_is_cpp=unit_is_cpp) or any(
+            _type_requires_cpp(p.type, unit_is_cpp=unit_is_cpp) for p in t.parameters
+        )
     return False
 
 
-def _signature_requires_cpp(f: Function) -> bool:
+def _signature_requires_cpp(f: Function, *, unit_is_cpp: bool) -> bool:
     """Whether a function's return type or any parameter type is C++-only."""
-    return _type_requires_cpp(f.return_type) or any(_type_requires_cpp(p.type) for p in f.parameters)
+    return _type_requires_cpp(f.return_type, unit_is_cpp=unit_is_cpp) or any(
+        _type_requires_cpp(p.type, unit_is_cpp=unit_is_cpp) for p in f.parameters
+    )
 
 
 def _struct_requires_cpp(s: Struct) -> bool:
@@ -432,18 +473,16 @@ def _struct_requires_cpp(s: Struct) -> bool:
     )
 
 
-def _function_requires_cpp(f: Function) -> bool:
+def _function_requires_cpp(f: Function, *, unit_is_cpp: bool = True) -> bool:
     """Whether this free function is rendered with ``importcpp`` rather than ``importc``.
 
     A C++-only *signature* belongs here alongside namespace and template, because
-    the pragma and the rendered parameter types have to agree. The writer already
-    renders an ``int&`` parameter as ``var cint``; under ``importc`` Nim passes
-    that as ``int*`` and the C++ compiler rejects the call with ``no matching
-    function for call to 'bump'``. Under ``importcpp`` it passes an lvalue and the
-    call binds. Measured both ways against a real library: ``importc`` fails to
-    compile, ``importcpp`` returns the value the native function computed.
+    the pragma and the rendered parameter types have to agree. An ``int&``
+    parameter renders as ``var cint``; under ``importc`` Nim passes ``int*`` and
+    the C++ compiler rejects the call, while ``importcpp`` passes an lvalue and it
+    binds.
     """
-    return bool(f.namespace or f.template_params or _signature_requires_cpp(f))
+    return bool(f.namespace or f.template_params or _signature_requires_cpp(f, unit_is_cpp=unit_is_cpp))
 
 
 def unit_requires_cpp(unit: SourceUnit | Header) -> bool:
@@ -463,28 +502,31 @@ def unit_requires_cpp(unit: SourceUnit | Header) -> bool:
     The test is structural rather than an enumerated list of shapes: any
     reference, any template-id, any qualified name, any namespace, any scoped
     enumeration. A shape nobody thought to enumerate is still caught if it is one
-    of those.
+    of those. The one test that spelling cannot settle -- a bare ``string`` being
+    ``std::string`` or a C typedef of that name -- is settled by the language the
+    parser recorded for the unit; see :func:`_type_name_requires_cpp`.
     """
+    unit_is_cpp = getattr(unit, "language", "c") == "cpp"
     for decl in unit.declarations:
         if isinstance(decl, Struct):
             if _struct_requires_cpp(decl):
                 return True
-            if any(_type_requires_cpp(f.type) for f in decl.fields):
+            if any(_type_requires_cpp(f.type, unit_is_cpp=unit_is_cpp) for f in decl.fields):
                 return True
-            if any(_signature_requires_cpp(m) for m in decl.methods + decl.constructors):
+            if any(_signature_requires_cpp(m, unit_is_cpp=unit_is_cpp) for m in decl.methods + decl.constructors):
                 return True
         elif isinstance(decl, Function):
-            if _function_requires_cpp(decl):
+            if _function_requires_cpp(decl, unit_is_cpp=unit_is_cpp):
                 return True
         elif isinstance(decl, Enum):
             # `enum class` has no C spelling at all, scoped or otherwise.
             if decl.is_scoped or decl.namespace:
                 return True
         elif isinstance(decl, Typedef):
-            if _type_requires_cpp(decl.underlying_type):
+            if _type_requires_cpp(decl.underlying_type, unit_is_cpp=unit_is_cpp):
                 return True
         elif isinstance(decl, Variable):
-            if _type_requires_cpp(decl.type):
+            if _type_requires_cpp(decl.type, unit_is_cpp=unit_is_cpp):
                 return True
         if getattr(decl, "namespace", None):
             return True
@@ -528,6 +570,7 @@ class NimWriter(BaseWriter):
 
     def __init__(self, *, header_path: str | None = None) -> None:
         self.header_path = header_path
+        self._used_helpers: set[str] = set()
 
     def hash_comment_format(self) -> str:
         """Return format string for wrapping TOML cache metadata in Nim comments."""
@@ -552,6 +595,9 @@ class NimWriter(BaseWriter):
         types_section: list[str] = []
         procs_section: list[str] = []
         consts_section: list[str] = []
+        # Reset per render: the helper declarations emitted below are exactly the
+        # helpers `_format_type` reports having produced while rendering this unit.
+        self._used_helpers = set()
 
         has_std_exception = any(
             isinstance(decl, Struct) and any("std::exception" in b.name for b in decl.bases)
@@ -563,64 +609,6 @@ class NimWriter(BaseWriter):
                 'std_exception* {.importcpp: "std::exception", header: "<exception>".} = object of RootObj'
             )
             emitted_types.add("std_exception")
-
-        has_cpp_string = any(
-            (
-                _decl_contains(decl, "std::string")
-                or _decl_contains(decl, "string<")
-                or _decl_contains_exact(decl, "string")
-            )
-            for decl in header.declarations
-        )
-        if has_cpp_string:
-            types_section.append('CppString* {.importcpp: "std::string", header: "<string>".} = object')
-            emitted_types.add("CppString")
-
-        has_unique_ptr = any(
-            (
-                _decl_contains(decl, "std::unique_ptr")
-                or _decl_contains(decl, "unique_ptr<")
-                or _decl_contains_exact(decl, "unique_ptr")
-            )
-            for decl in header.declarations
-        )
-        if has_unique_ptr:
-            types_section.append('UniquePtr*[T] {.importcpp: "std::unique_ptr<\'0>", header: "<memory>".} = object')
-            emitted_types.add("UniquePtr")
-            procs_section.extend(
-                [
-                    "",
-                    'proc `=copy`*[T](dst: var UniquePtr[T], src: UniquePtr[T]) {.error: "std::unique_ptr cannot be copied in Nim; use std/moves.move() or sink".}',
-                    "",
-                    'proc move*[T](p: var UniquePtr[T]): UniquePtr[T] {.importcpp: "std::move(@)", header: "<utility>".}',
-                    "",
-                    'proc get*[T](p: UniquePtr[T]): ptr T {.importcpp: "#.get()", header: "<memory>".}',
-                    "",
-                    'proc reset*[T](p: var UniquePtr[T]) {.importcpp: "#.reset()", header: "<memory>".}',
-                ]
-            )
-
-        has_shared_ptr = any(
-            (
-                _decl_contains(decl, "std::shared_ptr")
-                or _decl_contains(decl, "shared_ptr<")
-                or _decl_contains_exact(decl, "shared_ptr")
-            )
-            for decl in header.declarations
-        )
-        if has_shared_ptr:
-            types_section.append('SharedPtr*[T] {.importcpp: "std::shared_ptr<\'0>", header: "<memory>".} = object')
-            emitted_types.add("SharedPtr")
-            procs_section.extend(
-                [
-                    "",
-                    'proc get*[T](p: SharedPtr[T]): ptr T {.importcpp: "#.get()", header: "<memory>".}',
-                    "",
-                    'proc reset*[T](p: var SharedPtr[T]) {.importcpp: "#.reset()", header: "<memory>".}',
-                    "",
-                    'proc useCount*[T](p: SharedPtr[T]): clong {.importcpp: "#.use_count()", header: "<memory>".}',
-                ]
-            )
 
         for decl in header.declarations:
             if isinstance(decl, Struct):
@@ -646,6 +634,23 @@ class NimWriter(BaseWriter):
             elif isinstance(decl, Variable):
                 procs_section.extend(self._write_variable(decl, header_file))
 
+        # Helper declarations come from the render itself, not from a second
+        # predicate over the IR: whatever `_format_type` produced is declared, and
+        # nothing else. They are prepended so a helper is declared before the
+        # record whose field names it.
+        helper_types: list[str] = []
+        helper_procs: list[str] = []
+        for helper in sorted(self._used_helpers):
+            if helper in emitted_types:
+                continue
+            declaration, companions = CPP_HELPER_DECLARATIONS[helper]
+            helper_types.append(declaration)
+            emitted_types.add(helper)
+            for companion in companions:
+                helper_procs.extend(["", companion])
+        types_section = helper_types + types_section
+        procs_section = helper_procs + procs_section
+
         if types_section:
             lines.append("type")
             for t_line in types_section:
@@ -665,28 +670,45 @@ class NimWriter(BaseWriter):
         output = "\n".join(lines).rstrip() + "\n"
         return output
 
+    def _use_helper(self, helper: str) -> str:
+        """Record that this render referenced ``helper``, and return its name.
+
+        The declaration set is built from these records, so a helper cannot be
+        referenced without also being declared.
+        """
+        self._used_helpers.add(helper)
+        for required in _CPP_HELPER_REQUIRES.get(helper, ()):
+            self._used_helpers.add(required)
+        return helper
+
     def _format_type(self, t: TypeExpr, *, in_param: bool = False) -> str:
         """Convert IR TypeExpr to a Nim type representation."""
         if isinstance(t, CType):
+            # A name still carrying a C tag keyword is a C record, whatever it is
+            # called, so it must not be matched against the standard-library
+            # spellings below: `struct string` is not `std::string`.
+            has_c_tag = t.name.strip().startswith(_C_TAG_PREFIXES)
             name = t.name.removeprefix("struct ").removeprefix("union ").removeprefix("enum ")
             if "(anonymous" in name or "(unnamed" in name:
                 return "pointer"
 
             # C++ Smart Pointers & Containers mapping
-            if name.startswith("std::shared_ptr<") or name.startswith("shared_ptr<"):
+            if has_c_tag:
+                pass
+            elif name.startswith("std::shared_ptr<") or name.startswith("shared_ptr<"):
                 inner = name[name.index("<") + 1 : name.rindex(">")].strip()
-                return f"SharedPtr[{self._format_type(CType(inner))}]"
+                return f"{self._use_helper('SharedPtr')}[{self._format_type(CType(inner))}]"
             elif name.startswith("std::unique_ptr<") or name.startswith("unique_ptr<"):
                 inner = name[name.index("<") + 1 : name.rindex(">")].strip()
-                return f"UniquePtr[{self._format_type(CType(inner))}]"
+                return f"{self._use_helper('UniquePtr')}[{self._format_type(CType(inner))}]"
             elif name.startswith("std::weak_ptr<") or name.startswith("weak_ptr<"):
                 inner = name[name.index("<") + 1 : name.rindex(">")].strip()
-                return f"WeakPtr[{self._format_type(CType(inner))}]"
+                return f"{self._use_helper('WeakPtr')}[{self._format_type(CType(inner))}]"
             elif name.startswith("std::vector<") or name.startswith("vector<"):
                 inner = name[name.index("<") + 1 : name.rindex(">")].strip()
-                return f"CppVector[{self._format_type(CType(inner))}]"
+                return f"{self._use_helper('CppVector')}[{self._format_type(CType(inner))}]"
             elif name.startswith("std::string") or name == "string":
-                return "CppString"
+                return self._use_helper("CppString")
 
             if "::" in name:
                 name = name.replace("::", "_")
@@ -1009,7 +1031,11 @@ class NimWriter(BaseWriter):
             return []
         if isinstance(value, str):
             return [value] if value else []
-        if isinstance(value, list | tuple | set):
+        if isinstance(value, set | frozenset):
+            # Sorted, not iteration-ordered: an unordered option would reorder the
+            # generated flags between runs and defeat regenerate-and-diff.
+            return sorted(str(v) for v in value if str(v))
+        if isinstance(value, list | tuple):
             return [str(v) for v in value if str(v)]
         return [str(value)]
 
@@ -1048,7 +1074,9 @@ class NimWriter(BaseWriter):
         lines.extend(f"--passC:{_cfg_path_flag('-I', d)}" for d in include_dirs)
         lines.extend(f'--passC:"-D{d}"' for d in self._as_list(options.extra_context.get("defines")))
 
-        library_dirs = self._as_list(options.get_option("library_dirs"))
+        # Resolved for the same reason include_dirs are: a relative -L resolves
+        # against the linker's working directory, not the package's.
+        library_dirs = [str(Path(d).resolve()) for d in self._as_list(options.get_option("library_dirs"))]
         libraries = self._as_list(options.get_option("library"))
         lines.extend(f"--passL:{_cfg_path_flag('-L', d)}" for d in library_dirs)
         lines.extend(f'--passL:"-l{lib}"' for lib in libraries)
@@ -1093,19 +1121,13 @@ class NimWriter(BaseWriter):
     def _is_probeable(f: Function) -> bool:
         """Whether a link probe may reference this member.
 
-        Access is the load-bearing clause. A probe referencing a private or
-        protected member does not fail to *link* -- it fails to **compile**, with
-        ``error: 'secret' is a private member of 'R'``, and takes the whole
-        generated package down with it. The writer emits an ``importcpp`` binding
-        for such a member regardless of access; before a probe existed that
-        declaration was inert, because Nim emits nothing for an ``importcpp`` proc
-        nobody calls. Probing it is what would turn a latent writer gap into a hard
-        build failure, so the probe collector declines rather than the writer
-        changing what it declares. An access the backend left unset is treated as
-        public, which is what C members are.
+        A probe referencing a non-public member fails to **compile**, not to link,
+        which takes the whole generated package down. The writer declares such a
+        member regardless of access, so the collector declines instead. An access
+        the backend left unset is public, which is what C members are.
 
-        Templates are skipped for a different reason: a generic binding has no
-        symbol to link until it is instantiated, so probing one proves nothing.
+        A template is skipped for a different reason: a generic emits no symbol
+        until it is instantiated, so probing one establishes nothing.
         """
         if (f.access or "public") != "public":
             return False
@@ -1216,18 +1238,11 @@ class NimWriter(BaseWriter):
     def _build_inconclusive_tripwire(pkg: str) -> str:
         """Render a tripwire for a unit that offers nothing a tripwire can check.
 
-        A unit binding only templates has no symbol to link -- a generic is not
-        emitted until it is instantiated -- and no complete class to size. The
-        previous fallback asserted ``check declared(<pkg>)``, which is true by
-        construction, under a test named "every bound entry point compiles and
-        links". Measured with no native library built and no ``-l`` flag at all,
-        that reported ``[OK] every bound entry point compiles and links``: a pass
-        stating the opposite of what it checked, which is the green mirage
-        ``AGENTS.md`` forbids outright.
-
-        Reporting *skipped* is the honest outcome. It cannot be mistaken for a
-        verified link, and the checkpoint names the reason so the reader is not
-        left guessing why the suite is quiet.
+        A unit binding only templates has no symbol to link -- a generic emits none
+        until it is instantiated -- and no complete class to size. Reporting
+        *skipped* is the only honest outcome: a pass here would assert a linkage
+        nothing checked. The reason is echoed so the reader is not left guessing
+        why the suite is quiet.
         """
         return textwrap.dedent(f"""\
             # Tripwire for a C++ target that binds no linkable entry point.
@@ -1238,6 +1253,10 @@ class NimWriter(BaseWriter):
             # therefore reports skipped rather than passing: a pass would say the
             # entry points link, and nothing here has checked that.
             #
+            # NOTE: this file exits 0. std/unittest counts failures only, and a skip
+            # is not one, so a CI step reading the exit status of this tripwire alone
+            # learns nothing about linkage. Do not treat it as link verification.
+            #
             # Instantiate the generics you use in a test of your own, and that test
             # will establish the linkage this one cannot.
             import std/unittest
@@ -1245,8 +1264,8 @@ class NimWriter(BaseWriter):
 
             suite "Tripwire Compile & Link Verification":
               test "linkage of '{pkg}' is not established by this tripwire":
-                checkpoint "No non-generic entry point and no complete class is bound by '{pkg}'"
-                checkpoint "Nothing here can establish that the native library links"
+                echo "TRIPWIRE INCONCLUSIVE: no non-generic entry point and no complete class is bound by '{pkg}'"
+                echo "TRIPWIRE INCONCLUSIVE: nothing here establishes that the native library links"
                 skip()
             """)
 

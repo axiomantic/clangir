@@ -78,7 +78,20 @@ from the file extension -- a `.h` declaring a class is C++, and a `.hpp` declari
 only C functions is not. The test is structural rather than a list of known shapes:
 any C++ reference, any template-id, any qualified name, any namespace, any scoped
 enumeration. It is deliberately broader than the `importc`/`importcpp` choice, since
-a record can keep an `importc` pragma while a field of it renders as `CppString`. The flag is set in `nim.cfg` rather than in the `.nimble`
+a record can keep an `importc` pragma while a field of it renders as `CppString`.
+
+One case cannot be decided from the IR's type names at all: libclang reports a
+`std::string` field and a C `typedef struct { ... } string;` as the identical
+`CType(name="string")`. HeaderKit settles it with the language the *parser* chose for
+the translation unit, which both backends record on the IR. A C header naming a record
+`vector` therefore stays on the C backend, where its functions link by their unmangled
+names.
+
+Not every C++ shape can be *compile-gated*. A shape earns a place in the compile gate
+only when the C backend genuinely rejects it; a scoped enumeration, for instance, needs
+the C++ backend the moment it is used but builds under either when only its size is
+taken, so gating it would be a check that cannot fail. The decision matrix therefore
+covers many more shapes than the compile gate does, and that is deliberate. The flag is set in `nim.cfg` rather than in the `.nimble`
 test task because a backend selected in the config also overrides a plain `nim c`.
 
 #### Naming the native library
@@ -104,8 +117,11 @@ unmangled name to look up, and a header-only or statically linked library has no
 shared object at all -- such a tripwire fails for a reason unrelated to the bindings.
 
 A unit that binds nothing linkable -- one declaring only templates, which emit no
-symbol until instantiated -- gets a tripwire that reports *skipped* and names the
-reason. It cannot report success, because there is nothing there whose linkage it
+symbol until instantiated -- gets a tripwire that reports *skipped* and echoes the
+reason. **Such a tripwire exits 0**, because Nim's `std/unittest` counts failures and
+a skip is not one, so a CI step reading its exit status alone learns nothing about
+linkage. The generated file says so in a comment. Do not read it as link
+verification; instantiate the generics you use in a test of your own instead. It cannot report success, because there is nothing there whose linkage it
 could have established. A private or protected member is not probed either: the
 probe would fail to compile rather than fail to link, taking the whole package with
 it.
