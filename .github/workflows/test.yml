@@ -16,6 +16,9 @@ jobs:
     # as the plugin's own CI example does.
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # One Nim release for the whole matrix, named once so the two provisioning
+      # paths below cannot drift apart.
+      NIM_VERSION: '2.2.12'
     strategy:
       # false, for the same reason -x is gone from the pytest invocation below:
       # the deliverable of the skip gate is the complete inventory of what did
@@ -36,9 +39,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
-      - name: Install libclang (Ubuntu)
+      # gcc-14 alongside libclang, and cc/c++ pointed at it. ubuntu-24.04's
+      # default cc is gcc-13, which predates C23's `enum E : type`; the four
+      # fixed-underlying-type gates probe for it with -std=c23 and passed
+      # themselves over on every Ubuntu run, silently. That is a missing
+      # toolchain, not a property of the tests, so it is installed rather than
+      # allowlisted.
+      - name: Install libclang and a C23-capable compiler (Ubuntu)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+          cc --version
       - name: Install libclang (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -85,14 +102,28 @@ jobs:
         uses: asdf-vm/actions/install@v4
         with:
           tool_versions: |
-            nim 2.2.12
+            nim ${{ env.NIM_VERSION }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+      # asdf puts SHIMS on PATH, and a shim resolves its version by walking up
+      # from the CURRENT WORKING DIRECTORY for a .tool-versions file. The Nim
+      # gates compile in a pytest tmp_path outside the repo, so the shim found
+      # nothing and every one of them died on "No version is set for command
+      # nim" -- while `which nim` and `nim --version` in the repo both looked
+      # fine. The real install directory has no such dependence on cwd.
+      - name: Put the real Nim binary on PATH, not the asdf shim
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$(asdf where nim "$NIM_VERSION")/bin"
+          test -x "$bin/nim" || { echo "asdf reported $bin but there is no nim in it"; exit 1; }
+          echo "$bin" >> "$GITHUB_PATH"
       # Pinned to the same release the asdf legs get, so one matrix runs one Nim.
       - name: Install Nim (Windows)
         if: runner.os == 'Windows'
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.12'
+          nim-version: ${{ env.NIM_VERSION }}
           repo-token: ${{ github.token }}
       # On the record, per leg: a version claimed is not a version installed.
       - name: Record the Nim that was installed
