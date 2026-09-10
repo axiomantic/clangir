@@ -30,7 +30,6 @@ from headerkit.writers.nim import (
     NimWriter,
     _cfg_path_flag,
     _type_name_requires_cpp,
-    unit_requires_cpp,
     write_nim,
 )
 from tests.skip_policy import NIM_INSTALL, require_program

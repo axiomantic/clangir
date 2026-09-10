@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -14,6 +13,7 @@ from headerkit.scaffold import ScaffoldOptions
 from headerkit.writers import get_writer
 from headerkit.writers.nim import unit_requires_cpp, write_nim
 from tests.native_build import position_independent_flags
+from tests.skip_policy import CC_INSTALL, CXX_INSTALL, NIM_INSTALL, require_program
 
 pytestmark = pytest.mark.skipif(
     not is_backend_available("libclang"),
@@ -21,25 +21,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _require_program(*programs: str, install: str) -> str:
-    """Return the first of ``programs`` on PATH, or skip naming what is missing.
-
-    Every toolchain lookup in this module goes through here, so the policy lives in
-    one place: when `tests/skip_policy.py` lands, this body becomes a call to
-    ``require_program`` and no call site changes.
-    """
-    for candidate in programs:
-        found = shutil.which(candidate)
-        if found:
-            return found
-    names = programs[0] if len(programs) == 1 else "none of " + ", ".join(programs)
-    pytest.skip(f"SKIP(toolchain): {names} is not on PATH; install {install}")
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
 def _archiver() -> str:
-    """The static-library archiver. Absent on a host with no POSIX toolchain."""
-    return _require_program("ar", "llvm-ar", install="binutils, or the platform's build tools")
+    """The static-library archiver these gates build their fixtures with.
+
+    ``ar`` ships with the same package as the C compiler on every platform the
+    matrix covers, so it is reported with that remedy rather than a separate one.
+    """
+    return require_program("ar", "llvm-ar", install=CC_INSTALL)
 
 
 def parse_and_nim(backend: pytest.FixtureRequest, code: str) -> str:
@@ -138,8 +126,8 @@ class TestNimCppBuildConfiguration:
     @staticmethod
     def _require_toolchain() -> tuple[str, str]:
         """Return the ``nim`` and C++ driver paths, skipping visibly if either is absent."""
-        nim_bin = _require_program("nim", install="the Nim compiler (https://nim-lang.org/install.html)")
-        cxx_bin = _require_program("c++", "g++", "clang++", install="a C++ compiler driver")
+        nim_bin = require_program("nim", install=NIM_INSTALL)
+        cxx_bin = require_program("c++", "g++", "clang++", install=CXX_INSTALL)
         return nim_bin, cxx_bin
 
     @staticmethod
@@ -574,7 +562,7 @@ class TestCShapesStayOnTheCBackend:
         self, backend, tmp_path: Path, code: str, impl: str, consumer: str
     ) -> None:
         nim_bin, _cxx = TestNimCppBuildConfiguration._require_toolchain()
-        cc_bin = _require_program("cc", "gcc", "clang", install="a C compiler driver")
+        cc_bin = require_program("cc", "gcc", "clang", install=CC_INSTALL)
 
         native = tmp_path / "native"
         native.mkdir()
