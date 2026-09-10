@@ -12,6 +12,10 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    # asdf-nim reads GITHUB_TOKEN directly for release lookups and rate limits,
+    # as the plugin's own CI example does.
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       # false, for the same reason -x is gone from the pytest invocation below:
       # the deliverable of the skip gate is the complete inventory of what did
@@ -50,20 +54,41 @@ jobs:
       # scaffolded output -- skipped on every leg because no workflow installed
       # Nim, and a skip is the same colour as a pass.
       #
-      # macOS takes the Homebrew bottle rather than the action. No official Nim
-      # binary exists for macOS arm64, so the action falls back to building Nim
-      # from source, and that bootstrap compiles chronos/bearssl, which Apple
-      # clang now rejects outright (-Wincompatible-pointer-types is an error).
-      # The failure is upstream of this repo and unrelated to what the gates test.
-      - name: Install Nim (macOS)
-        if: runner.os == 'macOS'
-        run: brew install nim
-      - name: Install Nim
-        if: runner.os != 'macOS'
+      # Nim arrives from two places, because no single one covers the matrix.
+      #
+      # macOS and Linux: asdf-nim, which installs a PRE-COMPILED binary. The
+      # selector is `latest:2.2` on both, and it does not source-build on macOS
+      # arm64 despite there being no official Nim binary for that platform:
+      # asdf_nim_find_exact_nightly_url resolves the stable release to its
+      # commit and fetches the NIGHTLY BUILD OF THAT SAME COMMIT, so the binary
+      # matches the stable source rather than drifting to a newer one. The
+      # plugin's own CI has to set ASDF_NIM_NO_NIGHTLY_FALLBACK=1 to force a
+      # source build out of this exact selector, which is the evidence that the
+      # fallback is what runs by default. One selector for both legs is
+      # therefore correct, and a `ref:` nightly here would pin a *different*
+      # commit from the one Linux gets.
+      #
+      # Windows: asdf-nim states its scope as macOS and Linux, and its CI
+      # matrix tests no Windows runner at all, so setup-nim-action keeps that
+      # leg. It has official prebuilt Windows binaries and was never the leg
+      # that failed.
+      - name: Install Nim (macOS, Linux)
+        if: runner.os != 'Windows'
+        uses: asdf-vm/actions/install@v4
+        with:
+          tool_versions: |
+            nim latest:2.2
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Nim (Windows)
+        if: runner.os == 'Windows'
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
           repo-token: ${{ github.token }}
+      # On the record, per leg: a version claimed is not a version installed.
+      - name: Record the Nim that was installed
+        shell: bash
+        run: nim --version
       - name: Install package
         shell: bash
         run: pip install -e '.[test,treesitter]'

@@ -36,7 +36,11 @@ def main() -> int:
     findings: list[tuple[str, str | None, str]] = []
 
     findings.append(
-        ("Nim compiler", _first_on_path("nim"), "jiro4989/setup-nim-action, or https://nim-lang.org/install.html")
+        (
+            "Nim compiler",
+            _first_on_path("nim"),
+            "the Nim install step in .github/workflows/test.yml, or https://nim-lang.org/install.html",
+        )
     )
     findings.append(
         (

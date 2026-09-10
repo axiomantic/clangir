@@ -41,7 +41,7 @@ import pytest
 #: command rather than describing it.
 CC_INSTALL = "apt-get install build-essential (Linux), xcode-select --install (macOS)"
 CXX_INSTALL = CC_INSTALL
-NIM_INSTALL = "https://nim-lang.org/install.html, or the setup-nim step in .github/workflows/test.yml"
+NIM_INSTALL = "https://nim-lang.org/install.html, or the Nim install step in .github/workflows/test.yml"
 LIBCLANG_INSTALL = "apt-get install libclang-dev (Linux), brew install llvm (macOS), or `headerkit install-libclang`"
 TREESITTER_INSTALL = "pip install 'headerkit[treesitter]'"
 CYTHON_INSTALL = "pip install 'headerkit[test]'"
