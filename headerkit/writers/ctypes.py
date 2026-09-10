@@ -1007,7 +1007,18 @@ def _typedef_to_ctypes(decl: Typedef, types: _TypeTable) -> str | None:
             # cannot size. An alias to it would itself be the wrong width, and
             # a name that is never bound fails loudly where it is used.
             return f"# typedef {underlying} -> {decl.name} (enum of unprovable width)"
-        # Strip struct/union prefix for the alias target
+        # Strip struct/union prefix for the alias target.
+        #
+        # No table lookup here, though a contested tag is emitted under a mangled
+        # class and this looks like the place that would need to know. It is not:
+        # the only input that reaches this branch is an *opaque* ``typedef struct
+        # Op OpRef;`` under libclang, which declares no record and so has no class
+        # to find. A defined record's alias never arrives spelled ``struct Foo``
+        # at all -- libclang strips the keyword when it builds the typedef's
+        # underlying type, and tree-sitter delivers it bare -- so both route
+        # through ``type_to_ctypes`` instead. A lookup was added here first and
+        # mutation showed it could not change an outcome; the reachability was
+        # then checked directly rather than argued from the language.
         for prefix in ("struct ", "union "):
             if name.startswith(prefix):
                 target = name[len(prefix) :]

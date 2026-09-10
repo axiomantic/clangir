@@ -418,3 +418,49 @@ class TestErrorHandling:
         d = {"path": "t.h", "declarations": [{"name": "x"}]}
         with pytest.raises(ValueError, match="missing 'kind'"):
             json_to_header(d)
+
+
+class TestTriStateFieldsSurviveTheRoundTrip:
+    """The three fields the ctypes writer refuses on must survive JSON.
+
+    Each is tri-state, and the third state is "no parser recorded this". A
+    round trip that drops the field silently substitutes ``None`` for a real
+    observation, and a consumer reading the restored IR then refuses a type it
+    could have resolved -- or, for ``underlying_type_known``, stops refusing one
+    it should.
+
+    This was found by a C++ test that compares whole declaration lists and
+    happened to contain a typedef of a tag. Nothing asserted the fields
+    themselves, so a round trip that dropped every one of them would have gone
+    unnoticed the moment that unrelated fixture changed.
+    """
+
+    def test_is_elaborated_survives_in_all_three_states(self):
+        header = Header(
+            path="t.h",
+            declarations=[
+                Typedef(name="Elab", underlying_type=CType("Gauge", is_elaborated=True)),
+                Typedef(name="Bare", underlying_type=CType("Gauge", is_elaborated=False)),
+                Typedef(name="Unset", underlying_type=CType("Gauge")),
+            ],
+        )
+        restored = _round_trip_json_str(header)
+        got = [d.underlying_type.is_elaborated for d in restored.declarations]
+        assert got == [True, False, None]
+
+    def test_an_enums_declared_width_survives(self):
+        header = Header(
+            path="t.h",
+            declarations=[Enum(name="W", values=[EnumValue("A", 0)], underlying_type="unsigned long long")],
+        )
+        restored = _round_trip_json_str(header)
+        assert restored.declarations[0].underlying_type == "unsigned long long"
+
+    def test_a_width_the_parser_could_not_see_survives_as_unknown(self):
+        """``False`` here is the whole point: restoring the default would resolve it."""
+        header = Header(
+            path="t.h",
+            declarations=[Enum(name="W", values=[EnumValue("A", 0)], underlying_type_known=False)],
+        )
+        restored = _round_trip_json_str(header)
+        assert restored.declarations[0].underlying_type_known is False

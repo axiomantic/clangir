@@ -398,6 +398,8 @@ TAG_COLLIDE_HEADER = textwrap.dedent("""\
     typedef struct { Gauge s; } ByBareUser;
     typedef struct { struct Gauge g; Gauge s; } BothUser;
 
+    typedef struct Gauge GaugeRef;
+
     struct Foo { int a; int b; };
     typedef unsigned char Level;
     typedef struct { struct Foo f; } PlainRecordUser;
@@ -411,6 +413,7 @@ TAG_COLLIDE_HEADER = textwrap.dedent("""\
     int both_s(BothUser v);
     int plain_record_size(void);
     int plain_scalar_size(void);
+    int gauge_ref_size(void);
 
     #endif
 """)
@@ -426,6 +429,7 @@ TAG_COLLIDE_SOURCE = textwrap.dedent("""\
     int both_s(BothUser v) { return (int)v.s; }
     int plain_record_size(void) { return (int)sizeof(PlainRecordUser); }
     int plain_scalar_size(void) { return (int)sizeof(PlainScalarUser); }
+    int gauge_ref_size(void) { return (int)sizeof(GaugeRef); }
 """)
 
 #: A C enum with an enumerator too wide for an ``int``. The C compiler widens the
@@ -1866,6 +1870,20 @@ class TestScaffoldedCtypesPackageRuns:
                 f"both-member record is {ctypes.sizeof(b.BothUser)} bytes, C says {lib.both_size()}"
             )
             assert lib.both_s(b.BothUser(g=record(lo=1, hi=2), s=9)) == 9, "the scalar half did not survive"
+
+            # An alias OF the contested tag. C says GaugeRef is the record, and
+            # the record is emitted under a mangled name, so the alias has to
+            # reach that name rather than the tag it was written with. Emitting
+            # the tag verbatim bound nothing -- and only under libclang, which
+            # delivers this alias target already stripped of its keyword, so the
+            # two backends disagreed as well. main bound it correctly, which
+            # makes it the one shape where the mangling could regress a working
+            # header rather than repair a broken one.
+            assert ctypes.sizeof(b.GaugeRef) == lib.gauge_ref_size(), (
+                f"GaugeRef is {ctypes.sizeof(b.GaugeRef)} bytes, C says {lib.gauge_ref_size()}"
+            )
+            assert lib.gauge_ref_size() == 8, "fixture no longer discriminates"
+            assert b.GaugeRef is record, "the alias does not name the same class the tag member got"
 
             # Controls: no collision, nothing should have changed.
             assert ctypes.sizeof(b.PlainRecordUser) == lib.plain_record_size()

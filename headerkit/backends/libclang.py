@@ -2984,7 +2984,13 @@ class ClangASTConverter:
                     # If struct name == typedef name, we've already handled it above
                     # Only create separate typedef if names differ
                     if struct_name and struct_name != name:
-                        underlying_type: TypeExpr = CType(name=struct_name)  # Use just the name, not "struct name"
+                        # The tag is dropped from the name, so the flag is the
+                        # only remaining record that the source wrote ``struct
+                        # Gauge`` rather than a bare ``Gauge``. Without it the
+                        # writer cannot tell this alias from one naming an
+                        # ordinary identifier of the same spelling, and refuses
+                        # a ``typedef struct Gauge GaugeRef;`` that main bound.
+                        underlying_type: TypeExpr = CType(name=struct_name, is_elaborated=True)
                         attrs, is_deprecated = self._get_attributes(cursor)
                         typedef = Typedef(
                             name=name,
@@ -3386,8 +3392,12 @@ class ClangASTConverter:
             # A typedef name is an ordinary identifier, never an elaborated type
             # specifier -- true in C and C++ alike.
             #
-            # One of THREE capture points, and which of them a given member
-            # takes depends on the libclang build rather than on the header.
+            # One of AT LEAST FOUR capture points, and which of them a given
+            # type takes depends on the libclang build as well as on the header.
+            # The set is not closed: any ``CType`` this backend builds without
+            # the flag leaves it ``None``, which the writer treats as "not
+            # recorded" and refuses on a contested name -- loud, never a wrong
+            # width. A fifth site is a missing capture, not a new failure mode.
             # Where an ELABORATED node exists it is authoritative and every use
             # routes through it; where it does not -- the macOS CI runner --
             # an elaborated member arrives at the RECORD arm above and a bare
