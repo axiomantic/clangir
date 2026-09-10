@@ -427,6 +427,8 @@ def _type_name_requires_cpp(raw: str, *, unit_is_cpp: bool) -> bool:
     separate them either, because a *use of a typedef* carries no tag. So that
     branch is gated on ``unit_is_cpp``, the language the parser chose for the
     translation unit; in a C unit a bare ``string`` is a C typedef and nothing else.
+    No heuristic over the name can substitute: the two are not merely hard to tell
+    apart, they are the same object.
     """
     name = raw.strip()
     if "<" in name or "::" in name:

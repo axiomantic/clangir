@@ -409,6 +409,11 @@ class TestCppShapesNeedTheCppBackend:
         (pkg_dir / "tests" / "consumer.nim").write_text(f"import shape\n{consumer}\n")
 
         run = TestNimCppBuildConfiguration._run
+        # A full build, deliberately. `nim c -c` / `--compileOnly` generates the .c or
+        # .cpp and stops without ever invoking the C compiler, so a gate built on it
+        # passes for both backends and measures nothing: the only difference it can
+        # see is the generated file's extension. These shapes need no native library,
+        # so a full build costs a link of nothing and is a real compile.
         as_generated = run(
             [nim_bin, "c", "--hints:off", f"--nimcache:{tmp_path / 'nc_cpp'}", "tests/consumer.nim"], pkg_dir
         )
