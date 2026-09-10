@@ -25,7 +25,13 @@ from headerkit.ir import (
 )
 from headerkit.scaffold import ScaffoldOptions
 from headerkit.writers import get_writer
-from headerkit.writers.nim import NimWriter, unit_requires_cpp, write_nim
+from headerkit.writers.nim import (
+    NimWriter,
+    _cfg_path_flag,
+    _type_name_requires_cpp,
+    unit_requires_cpp,
+    write_nim,
+)
 from tests.skip_policy import NIM_INSTALL, require_program
 
 
@@ -603,55 +609,48 @@ def _nim_cfg(header: Header, **options: object) -> str:
     """Scaffold ``header`` as a package and return the generated ``nim.cfg``."""
     layout = get_writer("nim").write_layout(
         header,
-        ScaffoldOptions(package_name="pkg", target_language="nim", layout="package", options=dict(options)),
+        ScaffoldOptions(package_name="demo", target_language="nim", layout="package", options=dict(options)),
     )
     return next(f.content for f in layout.files if f.path == "nim.cfg")
 
 
-#: One IR shape per ``importcpp`` emission site, plus the C shapes that must not
-#: trigger one. Each entry is (label, declaration, whether it needs the C++ backend).
-CPP_DECISION_CASES: list[tuple[str, object, bool]] = [
-    ("plain C function", Function(name="add", return_type=CType("int")), False),
-    ("plain C struct", Struct(name="Point", fields=[Field("x", CType("int"))]), False),
-    ("C union", Struct(name="U", is_union=True, fields=[Field("x", CType("int"))]), False),
-    ("C typedef", Typedef(name="u32", underlying_type=CType("unsigned int")), False),
-    ("C enum", Enum(name="Color", values=[EnumValue("RED", 0)]), False),
-    ("class flag", Struct(name="C", is_cppclass=True), True),
-    ("struct with a method", Struct(name="M", methods=[Function(name="run", return_type=CType("void"))]), True),
-    ("struct with a base", Struct(name="D", bases=[BaseSpecifier(name="B")]), True),
-    ("struct with a constructor", Struct(name="K", constructors=[Function(name="K", return_type=CType("void"))]), True),
-    ("struct with a destructor", Struct(name="T", destructor=Function(name="~T", return_type=CType("void"))), True),
-    ("namespaced function", Function(name="f", return_type=CType("void"), namespace="ns"), True),
-    ("template function", Function(name="g", return_type=CType("void"), template_params=["T"]), True),
-    ("std::string field", Struct(name="S", fields=[Field("s", CType("std::string"))]), True),
-    ("std::unique_ptr field", Struct(name="P", fields=[Field("p", CType("std::unique_ptr<int>"))]), True),
-]
+class TestCfgPathQuoting:
+    """A path with a space must survive Nim's config parsing."""
+
+    def test_path_is_single_quoted(self) -> None:
+        """Nim strips the outer quotes and word-splits; the inner quotes survive."""
+        assert _cfg_path_flag("-I", "/opt/na me") == "\"-I'/opt/na me'\""
+
+    def test_single_quote_in_path_is_refused(self) -> None:
+        """No quoting of this exists in the format, so say so rather than emit a wrong flag."""
+        with pytest.raises(ValueError, match="single quote"):
+            _cfg_path_flag("-I", "/opt/it's")
 
 
-class TestNimCppDetection:
-    """The C++ backend decision is read off the IR, and matches what is emitted."""
+class TestTypeNameCppDetection:
+    """The C++-only test on a type name, at the granularity the parse produces."""
 
     @pytest.mark.parametrize(
-        ("decl", "expected"),
-        [pytest.param(decl, expected, id=label) for label, decl, expected in CPP_DECISION_CASES],
+        ("name", "expected"),
+        [
+            # A C tag keyword settles it: a C header may name a record `vector`.
+            ("struct vector", False),
+            ("union u", False),
+            ("enum e", False),
+            ("int", False),
+            ("unsigned long", False),
+            ("size_t", False),
+            # libclang reports std:: types with the qualifier stripped.
+            ("string", True),
+            ("unique_ptr<int>", True),
+            ("vector<int>", True),
+            # A template-id or a qualified name has no C spelling at all.
+            ("map<int, int>", True),
+            ("ns::Point", True),
+        ],
     )
-    def test_predicate_matches_the_emitted_pragma(self, decl: object, expected: bool) -> None:
-        """``unit_requires_cpp`` answers True exactly when the writer emits ``importcpp``.
-
-        This is what keeps the build configuration honest as the emitters change: a
-        writer that starts emitting ``importcpp`` for a shape the predicate calls C
-        would scaffold a package that cannot compile, and this case goes red.
-        """
-        header = Header(path="probe.hpp", declarations=[decl])
-        assert unit_requires_cpp(header) is expected
-        assert ("importcpp" in write_nim(header, header_path="probe.hpp")) is expected
-
-    def test_extension_does_not_decide(self) -> None:
-        """A .h holding a class is C++, and a .hpp holding only C functions is not."""
-        cpp_in_a_dot_h = Header(path="legacy.h", declarations=[Struct(name="C", is_cppclass=True)])
-        c_in_a_dot_hpp = Header(path="modern.hpp", declarations=[Function(name="add", return_type=CType("int"))])
-        assert unit_requires_cpp(cpp_in_a_dot_h)
-        assert not unit_requires_cpp(c_in_a_dot_hpp)
+    def test_type_name(self, name: str, expected: bool) -> None:
+        assert _type_name_requires_cpp(name) is expected
 
 
 class TestNimCfg:
@@ -676,7 +675,7 @@ class TestNimCfg:
             library_dirs="/opt/counter/lib",
         )
         assert '--passL:"-lcounter"' in cfg
-        assert '--passL:"-L/opt/counter/lib"' in cfg
+        assert "--passL:\"-L'/opt/counter/lib'\"" in cfg
 
     def test_multiple_libraries_each_get_a_flag(self) -> None:
         cfg = _nim_cfg(Header(path="c.h", declarations=[]), library=["a", "b"])
@@ -694,20 +693,20 @@ class TestNimCfg:
         header.parent.mkdir()
         header.write_text("")
         cfg = _nim_cfg(Header(path=str(header), declarations=[]))
-        assert f'--passC:"-I{header.parent}"' in cfg
+        assert f"--passC:\"-I'{header.parent}'\"" in cfg
 
     def test_parse_include_dirs_and_defines_reach_the_config(self) -> None:
         layout = get_writer("nim").write_layout(
             Header(path="c.h", declarations=[]),
             ScaffoldOptions(
-                package_name="pkg",
+                package_name="demo",
                 target_language="nim",
                 layout="package",
                 extra_context={"include_dirs": ["/usr/local/include"], "defines": ["FOO=1"]},
             ),
         )
         cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
-        assert '--passC:"-I/usr/local/include"' in cfg
+        assert "--passC:\"-I'/usr/local/include'\"" in cfg
         assert '--passC:"-DFOO=1"' in cfg
 
 

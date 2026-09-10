@@ -15,6 +15,7 @@ Features
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -249,89 +250,243 @@ def _escape_ident(name: str) -> str:
     return clean
 
 
+#: Tag keywords that mark a name as a C record or enumeration rather than a C++ one.
+_C_TAG_PREFIXES: tuple[str, ...] = ("struct ", "union ", "enum ")
+
+
+def _cfg_path_flag(flag: str, path: str) -> str:
+    """Render a ``-I``/``-L`` flag for ``nim.cfg`` so a path with spaces survives.
+
+    Nim strips the outer quotes from a config value and passes the result to the
+    C compiler after word-splitting it, so ``--passC:"-I/opt/na me"`` reaches
+    clang as ``-I/opt/na`` and ``me`` and fails with ``no such file or
+    directory: 'me'``. The inner single quotes survive that split and are removed
+    by the compiler driver. A path containing a single quote cannot be expressed
+    this way and is rejected rather than emitted in a form that silently means
+    something else.
+    """
+    if "'" in path:
+        raise ValueError(
+            f"cannot place {path!r} in nim.cfg: a single quote in an include or library "
+            f"path cannot be quoted in Nim's config format"
+        )
+    return f"\"{flag}'{path}'\""
+
+
+def _type_matches(t: TypeExpr, pred: Callable[[str], bool]) -> bool:
+    """Whether any type name inside ``t`` satisfies ``pred``."""
+    if isinstance(t, CType):
+        return pred(t.name)
+    elif isinstance(t, Pointer):
+        return _type_matches(t.pointee, pred)
+    elif isinstance(t, Reference):
+        return _type_matches(t.target, pred)
+    elif isinstance(t, Array):
+        return _type_matches(t.element_type, pred)
+    elif isinstance(t, FunctionPointer):
+        if _type_matches(t.return_type, pred):
+            return True
+        return any(_type_matches(p.type, pred) for p in t.parameters)
+    return False
+
+
+def _decl_matches(d: object, pred: Callable[[str], bool]) -> bool:
+    """Whether any type name reachable from declaration ``d`` satisfies ``pred``."""
+    if isinstance(d, Struct):
+        for f in d.fields:
+            if _type_matches(f.type, pred):
+                return True
+        for m in d.methods + d.constructors:
+            if _type_matches(m.return_type, pred):
+                return True
+            if any(_type_matches(p.type, pred) for p in m.parameters):
+                return True
+        if d.destructor and any(_type_matches(p.type, pred) for p in d.destructor.parameters):
+            return True
+    elif isinstance(d, Function):
+        if _type_matches(d.return_type, pred):
+            return True
+        if any(_type_matches(p.type, pred) for p in d.parameters):
+            return True
+    elif isinstance(d, Typedef):
+        if _type_matches(d.underlying_type, pred):
+            return True
+    elif isinstance(d, Variable):
+        if _type_matches(d.type, pred):
+            return True
+    return False
+
+
 def _type_contains(t: TypeExpr, target_prefix: str) -> bool:
     """Check structurally whether a TypeExpr contains target_prefix in its type names."""
-    if isinstance(t, CType):
-        return target_prefix in t.name
-    elif isinstance(t, Pointer):
-        return _type_contains(t.pointee, target_prefix)
-    elif isinstance(t, Reference):
-        return _type_contains(t.target, target_prefix)
-    elif isinstance(t, Array):
-        return _type_contains(t.element_type, target_prefix)
-    elif isinstance(t, FunctionPointer):
-        if _type_contains(t.return_type, target_prefix):
-            return True
-        return any(_type_contains(p.type, target_prefix) for p in t.parameters)
-    return False
+    return _type_matches(t, lambda name: target_prefix in name)
 
 
 def _decl_contains(d: object, target_prefix: str) -> bool:
     """Check structurally whether a Declaration references target_prefix."""
-    if isinstance(d, Struct):
-        for f in d.fields:
-            if _type_contains(f.type, target_prefix):
-                return True
-        for m in d.methods + d.constructors:
-            if _type_contains(m.return_type, target_prefix):
-                return True
-            if any(_type_contains(p.type, target_prefix) for p in m.parameters):
-                return True
-        if d.destructor and any(_type_contains(p.type, target_prefix) for p in d.destructor.parameters):
-            return True
-    elif isinstance(d, Function):
-        if _type_contains(d.return_type, target_prefix):
-            return True
-        if any(_type_contains(p.type, target_prefix) for p in d.parameters):
-            return True
-    elif isinstance(d, Typedef):
-        if _type_contains(d.underlying_type, target_prefix):
-            return True
-    elif isinstance(d, Variable):
-        if _type_contains(d.type, target_prefix):
-            return True
-    return False
+    return _decl_matches(d, lambda name: target_prefix in name)
 
 
-#: The ``std::`` names the writer recognises and renders as a C++ helper type
-#: (``CppString``, ``UniquePtr``, ``SharedPtr``, ``WeakPtr``, ``CppVector``) or as an
-#: ``importcpp`` base object. A unit mentioning one of these needs the C++ backend
-#: even when no declaration in it is itself a C++ class.
-CPP_STDLIB_MARKERS: tuple[str, ...] = (
-    "std::exception",
-    "std::string",
-    "std::unique_ptr",
-    "std::shared_ptr",
-    "std::weak_ptr",
-    "std::vector",
+def _bare_type_head(raw: str) -> str:
+    """Strip qualifiers, tag keywords and template arguments down to the head name.
+
+    The tag keyword is stripped here so that the *caller* decides what a tag means,
+    rather than the answer depending on this function happening to leave one in
+    place. ``_type_name_requires_cpp`` is the one place that decision is made.
+    """
+    name = raw.strip()
+    for qualifier in ("const ", "volatile "):
+        while name.startswith(qualifier):
+            name = name[len(qualifier) :].strip()
+    for tag in _C_TAG_PREFIXES:
+        if name.startswith(tag):
+            name = name[len(tag) :].strip()
+            break
+    return name.split("<", 1)[0].rsplit("::", 1)[-1].strip()
+
+
+def _decl_contains_exact(d: object, head: str) -> bool:
+    """Whether ``d`` references a type whose unqualified head is exactly ``head``.
+
+    The substring form above cannot serve here. libclang reports a ``std::string``
+    field as the bare name ``string``, so probing for ``"std::string"`` matches
+    nothing; probing for ``"string"`` as a substring would match ``wstring`` and any
+    C type merely containing those letters. The head comparison is exact, and a C
+    tag keeps its ``struct ``/``union ``/``enum `` keyword so it never reaches here
+    looking like a standard-library name.
+    """
+    return _decl_matches(d, lambda name: not name.strip().startswith(_C_TAG_PREFIXES) and _bare_type_head(name) == head)
+
+
+#: Standard-library names the writer renders as a C++ helper type (``CppString``,
+#: ``UniquePtr``, ``SharedPtr``, ``WeakPtr``, ``CppVector``) or as an ``importcpp``
+#: base object.
+#:
+#: These are **unqualified heads**, because that is the shape the parse produces:
+#: libclang reports a ``std::string`` field as the bare name ``string``, so a
+#: ``std::``-qualified entry here would match nothing a backend ever emits. A C tag
+#: is distinguishable from these without ambiguity -- it keeps its ``struct ``,
+#: ``union `` or ``enum `` keyword -- so a C header declaring ``struct vector`` is
+#: not mistaken for ``std::vector``. See :func:`_type_name_requires_cpp`.
+CPP_STDLIB_MARKERS: frozenset[str] = frozenset(
+    {
+        "exception",
+        "string",
+        "wstring",
+        "basic_string",
+        "unique_ptr",
+        "shared_ptr",
+        "weak_ptr",
+        "vector",
+    }
 )
 
 
+def _type_name_requires_cpp(raw: str) -> bool:
+    """Whether a type *name* is one only C++ can spell.
+
+    Three structural signals, in order of generality. A ``<`` means a template-id
+    and a ``::`` means a qualified name; neither exists in C. Only when a name
+    carries neither is it compared against :data:`CPP_STDLIB_MARKERS`, and only
+    when it carries no C tag keyword -- ``struct vector`` is a C record whatever
+    it is named, while a bare ``vector`` at this point came from ``std::``.
+    """
+    name = raw.strip()
+    if "<" in name or "::" in name:
+        return True
+    if name.startswith(_C_TAG_PREFIXES):
+        return False
+    return _bare_type_head(name) in CPP_STDLIB_MARKERS
+
+
+def _type_requires_cpp(t: TypeExpr) -> bool:
+    """Whether rendering ``t`` produces Nim that only the C++ backend can build."""
+    if isinstance(t, Reference):
+        # Rendered as `var T`, which is a C++ reference. C has no such parameter.
+        return True
+    if isinstance(t, CType):
+        return _type_name_requires_cpp(t.name)
+    if isinstance(t, Pointer):
+        return _type_requires_cpp(t.pointee)
+    if isinstance(t, Array):
+        return _type_requires_cpp(t.element_type)
+    if isinstance(t, FunctionPointer):
+        return _type_requires_cpp(t.return_type) or any(_type_requires_cpp(p.type) for p in t.parameters)
+    return False
+
+
+def _signature_requires_cpp(f: Function) -> bool:
+    """Whether a function's return type or any parameter type is C++-only."""
+    return _type_requires_cpp(f.return_type) or any(_type_requires_cpp(p.type) for p in f.parameters)
+
+
 def _struct_requires_cpp(s: Struct) -> bool:
-    """Whether this record is rendered with ``importcpp`` rather than ``importc``."""
-    return bool(s.is_cppclass or s.methods or s.bases or s.constructors or s.destructor or s.template_params)
+    """Whether this record is rendered with ``importcpp`` rather than ``importc``.
+
+    ``namespace`` belongs here rather than only in :func:`unit_requires_cpp`: a
+    record in a namespace has no C tag to import, and the emitter already spells
+    its ``importcpp`` pattern as ``ns::Name`` once it takes this branch.
+    """
+    return bool(
+        s.is_cppclass or s.methods or s.bases or s.constructors or s.destructor or s.template_params or s.namespace
+    )
 
 
 def _function_requires_cpp(f: Function) -> bool:
-    """Whether this free function is rendered with ``importcpp`` rather than ``importc``."""
-    return bool(f.namespace or f.template_params)
+    """Whether this free function is rendered with ``importcpp`` rather than ``importc``.
+
+    A C++-only *signature* belongs here alongside namespace and template, because
+    the pragma and the rendered parameter types have to agree. The writer already
+    renders an ``int&`` parameter as ``var cint``; under ``importc`` Nim passes
+    that as ``int*`` and the C++ compiler rejects the call with ``no matching
+    function for call to 'bump'``. Under ``importcpp`` it passes an lvalue and the
+    call binds. Measured both ways against a real library: ``importc`` fails to
+    compile, ``importcpp`` returns the value the native function computed.
+    """
+    return bool(f.namespace or f.template_params or _signature_requires_cpp(f))
 
 
 def unit_requires_cpp(unit: SourceUnit | Header) -> bool:
     """Whether the Nim bindings for ``unit`` need the C++ backend to compile.
 
     The answer is read off the IR, never off the file extension: a ``.h`` may
-    declare a class and a ``.hpp`` may declare nothing but C functions. Each
-    clause mirrors one ``importcpp`` emission site, and both sides call the same
-    predicate, so an emitter cannot start emitting ``importcpp`` for a shape this
-    function still answers ``False`` for.
+    declare a class and a ``.hpp`` may declare nothing but C functions.
+
+    This is deliberately a **superset** of the ``importc``/``importcpp`` pragma
+    decision, because the two questions are different. A record whose pragma is
+    ``importc`` still forces the C++ backend if one of its fields is a
+    ``std::string``, since the field renders as ``CppString``; and a free function
+    keeps its ``importc`` pragma while taking an ``int&``, which renders as
+    ``var cint``. Both are C++-only Nim emitted under a C pragma, so asking only
+    "which pragma" would answer C for a unit the C backend cannot build.
+
+    The test is structural rather than an enumerated list of shapes: any
+    reference, any template-id, any qualified name, any namespace, any scoped
+    enumeration. A shape nobody thought to enumerate is still caught if it is one
+    of those.
     """
     for decl in unit.declarations:
-        if isinstance(decl, Struct) and _struct_requires_cpp(decl):
-            return True
-        if isinstance(decl, Function) and _function_requires_cpp(decl):
-            return True
-        if any(_decl_contains(decl, marker) for marker in CPP_STDLIB_MARKERS):
+        if isinstance(decl, Struct):
+            if _struct_requires_cpp(decl):
+                return True
+            if any(_type_requires_cpp(f.type) for f in decl.fields):
+                return True
+            if any(_signature_requires_cpp(m) for m in decl.methods + decl.constructors):
+                return True
+        elif isinstance(decl, Function):
+            if _function_requires_cpp(decl):
+                return True
+        elif isinstance(decl, Enum):
+            # `enum class` has no C spelling at all, scoped or otherwise.
+            if decl.is_scoped or decl.namespace:
+                return True
+        elif isinstance(decl, Typedef):
+            if _type_requires_cpp(decl.underlying_type):
+                return True
+        elif isinstance(decl, Variable):
+            if _type_requires_cpp(decl.type):
+                return True
+        if getattr(decl, "namespace", None):
             return True
     return False
 
@@ -409,12 +564,26 @@ class NimWriter(BaseWriter):
             )
             emitted_types.add("std_exception")
 
-        has_cpp_string = any(_decl_contains(decl, "std::string") for decl in header.declarations)
+        has_cpp_string = any(
+            (
+                _decl_contains(decl, "std::string")
+                or _decl_contains(decl, "string<")
+                or _decl_contains_exact(decl, "string")
+            )
+            for decl in header.declarations
+        )
         if has_cpp_string:
             types_section.append('CppString* {.importcpp: "std::string", header: "<string>".} = object')
             emitted_types.add("CppString")
 
-        has_unique_ptr = any(_decl_contains(decl, "std::unique_ptr") for decl in header.declarations)
+        has_unique_ptr = any(
+            (
+                _decl_contains(decl, "std::unique_ptr")
+                or _decl_contains(decl, "unique_ptr<")
+                or _decl_contains_exact(decl, "unique_ptr")
+            )
+            for decl in header.declarations
+        )
         if has_unique_ptr:
             types_section.append('UniquePtr*[T] {.importcpp: "std::unique_ptr<\'0>", header: "<memory>".} = object')
             emitted_types.add("UniquePtr")
@@ -431,7 +600,14 @@ class NimWriter(BaseWriter):
                 ]
             )
 
-        has_shared_ptr = any(_decl_contains(decl, "std::shared_ptr") for decl in header.declarations)
+        has_shared_ptr = any(
+            (
+                _decl_contains(decl, "std::shared_ptr")
+                or _decl_contains(decl, "shared_ptr<")
+                or _decl_contains_exact(decl, "shared_ptr")
+            )
+            for decl in header.declarations
+        )
         if has_shared_ptr:
             types_section.append('SharedPtr*[T] {.importcpp: "std::shared_ptr<\'0>", header: "<memory>".} = object')
             emitted_types.add("SharedPtr")
@@ -858,21 +1034,23 @@ class NimWriter(BaseWriter):
             # because a config backend selection also overrides a plain `nim c`.
             lines.append("--backend:cpp")
 
-        include_dirs = self._as_list(options.extra_context.get("include_dirs"))
+        include_dirs = [str(Path(d).resolve()) for d in self._as_list(options.extra_context.get("include_dirs"))]
         # The header's own directory: the one include path the writer always knows,
-        # and the one a header's quoted includes of its siblings need.
+        # and the one a header's quoted includes of its siblings need. Compared
+        # after resolving both sides, or a relatively-passed `-I` naming the same
+        # directory is emitted twice.
         unit_path = getattr(unit, "path", "") or ""
         if unit_path:
             parent = str(Path(unit_path).resolve().parent)
             if parent not in include_dirs:
                 include_dirs = [*include_dirs, parent]
 
-        lines.extend(f'--passC:"-I{d}"' for d in include_dirs)
+        lines.extend(f"--passC:{_cfg_path_flag('-I', d)}" for d in include_dirs)
         lines.extend(f'--passC:"-D{d}"' for d in self._as_list(options.extra_context.get("defines")))
 
         library_dirs = self._as_list(options.get_option("library_dirs"))
         libraries = self._as_list(options.get_option("library"))
-        lines.extend(f'--passL:"-L{d}"' for d in library_dirs)
+        lines.extend(f"--passL:{_cfg_path_flag('-L', d)}" for d in library_dirs)
         lines.extend(f'--passL:"-l{lib}"' for lib in libraries)
         if not libraries:
             lines.append(
@@ -911,12 +1089,30 @@ class NimWriter(BaseWriter):
         body = f"discard {call}" if returns != "void" else call
         return f"proc hkLinkProbe{index}({', '.join(probe_params)}) =\n  {body}"
 
-    def _collect_link_probes(self, unit: SourceUnit | Header) -> tuple[list[str], list[str], list[str]]:
-        """Return the probe definitions, their call sites, and the complete C++ types.
+    @staticmethod
+    def _is_probeable(f: Function) -> bool:
+        """Whether a link probe may reference this member.
 
-        Templates are skipped: a generic binding has no symbol to link until it is
-        instantiated, so probing one would prove nothing about the native library.
+        Access is the load-bearing clause. A probe referencing a private or
+        protected member does not fail to *link* -- it fails to **compile**, with
+        ``error: 'secret' is a private member of 'R'``, and takes the whole
+        generated package down with it. The writer emits an ``importcpp`` binding
+        for such a member regardless of access; before a probe existed that
+        declaration was inert, because Nim emits nothing for an ``importcpp`` proc
+        nobody calls. Probing it is what would turn a latent writer gap into a hard
+        build failure, so the probe collector declines rather than the writer
+        changing what it declares. An access the backend left unset is treated as
+        public, which is what C members are.
+
+        Templates are skipped for a different reason: a generic binding has no
+        symbol to link until it is instantiated, so probing one proves nothing.
         """
+        if (f.access or "public") != "public":
+            return False
+        return not (f.template_params or f.name.startswith("operator"))
+
+    def _collect_link_probes(self, unit: SourceUnit | Header) -> tuple[list[str], list[str], list[str]]:
+        """Return the probe definitions, their call sites, and the complete C++ types."""
         probes: list[str] = []
         calls: list[str] = []
         complete_types: list[str] = []
@@ -934,11 +1130,13 @@ class NimWriter(BaseWriter):
                 struct_type = _escape_ident(decl.name)
                 complete_types.append(struct_type)
                 for m in decl.methods:
-                    if m.template_params or m.name.startswith("operator"):
+                    if not self._is_probeable(m):
                         continue
                     self_type = None if m.is_static else struct_type
                     add(_escape_ident(m.name), self_type, m.parameters, self._format_type(m.return_type))
                 for ctor in decl.constructors:
+                    if not self._is_probeable(ctor):
+                        continue
                     add(f"construct{decl.name}", None, ctor.parameters, struct_type)
 
         return probes, calls, complete_types
@@ -961,11 +1159,18 @@ class NimWriter(BaseWriter):
         """
         probes, calls, complete_types = self._collect_link_probes(unit)
 
+        if not probes and not complete_types:
+            return self._build_inconclusive_tripwire(pkg)
+
         probe_block = "\n\n".join(probes) if probes else ""
         call_block = "\n".join(f"    {call}" for call in calls) if calls else "    discard"
+        # No fallback assertion when a unit binds entry points but no complete class:
+        # the probes carry the claim, and `check declared(pkg)` is true by
+        # construction, so adding it would weaken the suite rather than strengthen it.
         size_checks = "\n".join(f"    check sizeof({t}) > 0" for t in complete_types)
-        if not size_checks:
-            size_checks = f"    check declared({pkg})"
+        title = "every bound entry point compiles and links against"
+        if not probes:
+            title = "every bound class is a complete type in"
 
         # The template is dedented before the blocks go in: dedent() strips the
         # common prefix of every line it is given, and an interpolated block that
@@ -995,7 +1200,7 @@ class NimWriter(BaseWriter):
             {call_block}
 
             suite "Tripwire Compile & Link Verification":
-              test "every bound entry point compiles and links against '{pkg}'":
+              test "{title} '{pkg}'":
                 hkForceLinkage()
             {size_checks}
             """)
@@ -1004,7 +1209,46 @@ class NimWriter(BaseWriter):
             probe_block=probe_block,
             call_block=call_block,
             size_checks=size_checks,
+            title=title,
         )
+
+    @staticmethod
+    def _build_inconclusive_tripwire(pkg: str) -> str:
+        """Render a tripwire for a unit that offers nothing a tripwire can check.
+
+        A unit binding only templates has no symbol to link -- a generic is not
+        emitted until it is instantiated -- and no complete class to size. The
+        previous fallback asserted ``check declared(<pkg>)``, which is true by
+        construction, under a test named "every bound entry point compiles and
+        links". Measured with no native library built and no ``-l`` flag at all,
+        that reported ``[OK] every bound entry point compiles and links``: a pass
+        stating the opposite of what it checked, which is the green mirage
+        ``AGENTS.md`` forbids outright.
+
+        Reporting *skipped* is the honest outcome. It cannot be mistaken for a
+        verified link, and the checkpoint names the reason so the reader is not
+        left guessing why the suite is quiet.
+        """
+        return textwrap.dedent(f"""\
+            # Tripwire for a C++ target that binds no linkable entry point.
+            #
+            # Every binding in this package is a template or has no complete class
+            # behind it. A generic emits no symbol until it is instantiated, so there
+            # is nothing here whose linkage a tripwire could establish. This file
+            # therefore reports skipped rather than passing: a pass would say the
+            # entry points link, and nothing here has checked that.
+            #
+            # Instantiate the generics you use in a test of your own, and that test
+            # will establish the linkage this one cannot.
+            import std/unittest
+            import {pkg}
+
+            suite "Tripwire Compile & Link Verification":
+              test "linkage of '{pkg}' is not established by this tripwire":
+                checkpoint "No non-generic entry point and no complete class is bound by '{pkg}'"
+                checkpoint "Nothing here can establish that the native library links"
+                skip()
+            """)
 
     def _write_package_layout(
         self,

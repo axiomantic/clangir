@@ -99,6 +99,8 @@ class TestNimCppBuildConfiguration:
         private:
             int total;
         };
+
+        void bumpBy(int& target, int amount);
     """)
 
     SOURCE = textwrap.dedent("""\
@@ -108,6 +110,7 @@ class TestNimCppBuildConfiguration:
         void Counter::add(int n) { total += n; }
         void Counter::addFrom(int& source) { total += source; }
         int Counter::value() const { return total; }
+        void bumpBy(int& target, int amount) { target += amount; }
     """)
 
     @staticmethod
@@ -183,13 +186,20 @@ class TestNimCppBuildConfiguration:
                 c.add(5)
                 var seven = 7.cint
                 c.addFrom(seven)
+                var free = 0.cint
+                bumpBy(free, 4)
                 echo "value=", c.value()
+                echo "free=", free
             """)
         )
         built = self._run([nim_bin, "c", "-r", "--hints:off", "tests/consumer.nim"], pkg_dir)
         assert built.returncode == 0, f"the consumer failed to build:\n{built.stdout}\n{built.stderr}"
         # 10 + 5 + 7, computed by the real C++ library rather than by Nim.
         assert "value=22" in built.stdout, f"the call did not reach the native library:\n{built.stdout}"
+        # A free function taking `int&`: the writer renders `var cint`, which only
+        # links under an `importcpp` pragma. Under `importc` Nim passes `int*` and
+        # the C++ compiler rejects the call outright.
+        assert "free=4" in built.stdout, f"the reference parameter did not reach the library:\n{built.stdout}"
 
     def test_tripwire_fails_loudly_when_the_native_library_is_missing(self, backend, tmp_path: Path) -> None:
         """Deleting the library must break the build.
@@ -231,15 +241,250 @@ class TestNimCppBuildConfiguration:
             f"so it does not establish that they link:\n{built.stdout}\n{built.stderr}"
         )
 
-    def test_c_only_unit_does_not_select_the_cpp_backend(self, backend, tmp_path: Path) -> None:
-        """The backend choice follows the IR, so a C unit keeps the C backend."""
-        self._require_toolchain()
-        unit = backend.parse("int add(int a, int b);", str(tmp_path / "plain.h"))
-        assert not unit_requires_cpp(unit)
 
+#: Source that must and must not select the C++ backend, as (label, code, filename,
+#: needs_cpp). Every case goes through a real parse: a hand-built ``CType("std::string")``
+#: asserts against a shape libclang never produces -- it reports that field as the bare
+#: name ``string`` -- so a fixture built by hand can pass while the feature is inert.
+CPP_DECISION_SOURCES: list[tuple[str, str, str, bool]] = [
+    # --- C, and must stay C -------------------------------------------------
+    ("c function", "int add(int a, int b);", "u.h", False),
+    ("c struct", "struct Point { int x; int y; };", "u.h", False),
+    ("c union", "union U { int i; float f; };", "u.h", False),
+    ("c enum", "enum Color { RED, GREEN };", "u.h", False),
+    ("c typedef", "typedef unsigned int u32;", "u.h", False),
+    ("c function pointer", "typedef void (*cb)(int, double);", "u.h", False),
+    ("c pointer param", "void take(const char *s);", "u.h", False),
+    ("c array field", "struct Buf { char data[16]; };", "u.h", False),
+    # A C header may name a record `vector`; the tag keyword is what settles it.
+    ("c record named vector", "struct vector { float x; };\nstruct H { struct vector v; };", "u.h", False),
+    # --- C++, and must select the C++ backend -------------------------------
+    ("class", "class C { public: void run(); };", "u.hpp", True),
+    ("struct with method", "struct M { void run(); };", "u.hpp", True),
+    ("struct with base", "struct B { int x; };\nstruct D : B { int y; };", "u.hpp", True),
+    ("struct with constructor", "struct K { K(int v); int v; };", "u.hpp", True),
+    ("struct with destructor", "struct T { ~T(); };", "u.hpp", True),
+    ("namespaced struct", "namespace ns { struct Point { int x; }; }", "u.hpp", True),
+    ("namespaced function", "namespace ns { void f(); }", "u.hpp", True),
+    ("template function", "template <typename T> T identity(T v);", "u.hpp", True),
+    ("scoped enum", "enum class Color { Red, Green };", "u.hpp", True),
+    ("reference parameter", "void bump(int& x);", "u.hpp", True),
+    ("reference return", "int& pick(int* p);", "u.hpp", True),
+    # One case per entry in CPP_STDLIB_MARKERS, each through a real parse.
+    ("std::string field", "#include <string>\nstruct S { std::string s; };", "u.hpp", True),
+    ("std::exception base", "#include <exception>\nstruct E : std::exception { int x; };", "u.hpp", True),
+    ("std::unique_ptr field", "#include <memory>\nstruct S { std::unique_ptr<int> p; };", "u.hpp", True),
+    ("std::shared_ptr field", "#include <memory>\nstruct S { std::shared_ptr<int> p; };", "u.hpp", True),
+    ("std::weak_ptr field", "#include <memory>\nstruct S { std::weak_ptr<int> p; };", "u.hpp", True),
+    ("std::vector field", "#include <vector>\nstruct S { std::vector<int> v; };", "u.hpp", True),
+    ("std::map field", "#include <map>\nstruct S { std::map<int, int> m; };", "u.hpp", True),
+]
+
+
+class TestCppBackendDecisionThroughTheParser:
+    """`unit_requires_cpp` is measured against IR the backend actually produces."""
+
+    @pytest.mark.parametrize(
+        ("code", "filename", "needs_cpp"),
+        [pytest.param(c, f, n, id=label) for label, c, f, n in CPP_DECISION_SOURCES],
+    )
+    def test_decision(self, backend, code: str, filename: str, needs_cpp: bool) -> None:
+        unit = backend.parse(code, filename)
+        assert unit.declarations, "the fixture must parse into something or it asserts nothing"
+        assert unit_requires_cpp(unit) is needs_cpp
+
+    @pytest.mark.parametrize(
+        ("code", "filename"),
+        [pytest.param(c, f, id=label) for label, c, f, n in CPP_DECISION_SOURCES if not n],
+    )
+    def test_c_sources_do_not_select_the_cpp_backend(self, backend, code: str, filename: str) -> None:
+        """The C path needs no toolchain, so this assertion runs everywhere the suite does."""
         layout = get_writer("nim").write_layout(
-            unit,
+            backend.parse(code, filename),
             ScaffoldOptions(package_name="plain", target_language="nim", layout="package"),
         )
         cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
         assert "--backend:cpp" not in cfg
+
+
+#: Header shapes whose Nim bindings the C backend genuinely cannot build, paired with a
+#: consumer line that forces the emitted type into the generated translation unit.
+#: Each needs no native library, so the compile itself is the whole assertion.
+CPP_COMPILE_SHAPES: list[tuple[str, str, str]] = [
+    ("class with a method", "class C { public: void run(); };", "discard sizeof(C)"),
+    ("namespaced struct", "namespace ns { struct Point { int x; }; }", "discard sizeof(Point)"),
+    ("std::string field", "#include <string>\nstruct S { std::string s; };", "discard sizeof(S)"),
+]
+
+
+class TestCppShapesNeedTheCppBackend:
+    """Compile-gate the decision instead of asserting on the text of nim.cfg.
+
+    Each shape is built twice from the same generated package: once as generated,
+    and once with ``--backend:c`` forced on the command line. The first must build
+    and the second must fail. A predicate that wrongly answered "C" for one of these
+    would ship a package in exactly the state the second column measures.
+    """
+
+    @pytest.mark.parametrize(
+        ("code", "consumer"),
+        [pytest.param(c, u, id=label) for label, c, u in CPP_COMPILE_SHAPES],
+    )
+    def test_cpp_shape_builds_only_under_the_cpp_backend(
+        self, backend, tmp_path: Path, code: str, consumer: str
+    ) -> None:
+        nim_bin, _cxx = TestNimCppBuildConfiguration._require_toolchain()
+        header = tmp_path / "shape.hpp"
+        header.write_text(code)
+        unit = backend.parse(code, str(header))
+        assert unit_requires_cpp(unit), "this shape must be classified C++ or the case tests nothing"
+
+        pkg_dir = tmp_path / "pkg"
+        get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(package_name="shape", target_language="nim", layout="package"),
+        ).write_to_disk(pkg_dir)
+        (pkg_dir / "tests" / "consumer.nim").write_text(f"import shape\n{consumer}\n")
+
+        run = TestNimCppBuildConfiguration._run
+        as_generated = run(
+            [nim_bin, "c", "--hints:off", f"--nimcache:{tmp_path / 'nc_cpp'}", "tests/consumer.nim"], pkg_dir
+        )
+        assert as_generated.returncode == 0, (
+            f"the generated package did not build:\n{as_generated.stdout}\n{as_generated.stderr}"
+        )
+
+        forced_c = run(
+            [nim_bin, "c", "--backend:c", "--hints:off", f"--nimcache:{tmp_path / 'nc_c'}", "tests/consumer.nim"],
+            pkg_dir,
+        )
+        assert forced_c.returncode != 0, (
+            "the C backend built this shape, so it does not establish that the C++ backend "
+            f"is required:\n{forced_c.stdout}\n{forced_c.stderr}"
+        )
+
+
+class TestTripwireHonesty:
+    """A tripwire must never report success for a property it did not check."""
+
+    def test_template_only_unit_does_not_report_a_verified_link(self, backend, tmp_path: Path) -> None:
+        """No library, no -l flag, no linkable symbol: the only honest result is skipped.
+
+        Before this was fixed the same package printed
+        ``[OK] every bound entry point compiles and links`` -- a pass asserting
+        ``check declared(<pkg>)``, which is true by construction.
+        """
+        nim_bin, _cxx = TestNimCppBuildConfiguration._require_toolchain()
+        code = "template <typename T> T identity(T v);\n"
+        header = tmp_path / "tmpl.hpp"
+        header.write_text(code)
+        unit = backend.parse(code, str(header))
+        assert unit_requires_cpp(unit)
+
+        pkg_dir = tmp_path / "pkg"
+        get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(package_name="tmpllib", target_language="nim", layout="package"),
+        ).write_to_disk(pkg_dir)
+        cfg = (pkg_dir / "nim.cfg").read_text()
+        assert '--passL:"-l' not in cfg, "this case is only meaningful with no library named"
+
+        built = TestNimCppBuildConfiguration._run(
+            [nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/test_tripwire.nim"], pkg_dir
+        )
+        assert built.returncode == 0, f"the tripwire must still build:\n{built.stdout}\n{built.stderr}"
+        assert "[OK]" not in built.stdout, (
+            "the tripwire reported success with no library present and nothing linkable bound:\n" + built.stdout
+        )
+        assert "[SKIPPED]" in built.stdout, f"expected a visible skip, got:\n{built.stdout}"
+
+    def test_private_method_does_not_break_the_generated_package(self, backend, tmp_path: Path) -> None:
+        """A probe may not reference a private member: that is a compile error, not a link one.
+
+        The writer emits an ``importcpp`` binding for a private method regardless of
+        access. Before a probe existed that declaration was inert. Probing it turns a
+        latent writer gap into a package that cannot build at all, so the probe
+        collector declines rather than the writer changing what it declares.
+        """
+        nim_bin, cxx_bin = TestNimCppBuildConfiguration._require_toolchain()
+        header_code = textwrap.dedent("""\
+            #pragma once
+            class R {
+            public:
+                R(int v);
+                int pub() const;
+            private:
+                void secret();
+                int held;
+            };
+        """)
+        native = tmp_path / "native"
+        native.mkdir()
+        (native / "r.hpp").write_text(header_code)
+        (native / "r.cpp").write_text(
+            textwrap.dedent("""\
+                #include "r.hpp"
+                R::R(int v) : held(v) {}
+                int R::pub() const { return held; }
+                void R::secret() {}
+            """)
+        )
+        run = TestNimCppBuildConfiguration._run
+        assert run([cxx_bin, "-fPIC", "-c", "r.cpp", "-o", "r.o"], native).returncode == 0
+        assert run([shutil.which("ar") or "ar", "rcs", "libr.a", "r.o"], native).returncode == 0
+
+        unit = backend.parse(header_code, str(native / "r.hpp"))
+        pkg_dir = tmp_path / "pkg"
+        get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(
+                package_name="rlib",
+                target_language="nim",
+                layout="package",
+                options={"library": "r", "library_dirs": str(native)},
+            ),
+        ).write_to_disk(pkg_dir)
+
+        tripwire = (pkg_dir / "tests" / "test_tripwire.nim").read_text()
+        assert "secret" not in tripwire, f"a private member must not be probed:\n{tripwire}"
+        assert "pub(self[])" in tripwire, "the public members must still be probed"
+
+        built = run(
+            [nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/test_tripwire.nim"], pkg_dir
+        )
+        assert built.returncode == 0, f"a private method broke the generated package:\n{built.stdout}\n{built.stderr}"
+
+
+class TestPathsWithSpaces:
+    """An include or library path containing a space must survive Nim's config parsing."""
+
+    def test_package_in_a_directory_with_spaces_builds_and_runs(self, backend, tmp_path: Path) -> None:
+        """Nim word-splits config values, so an unquoted -I reaches clang in pieces."""
+        nim_bin, cxx_bin = TestNimCppBuildConfiguration._require_toolchain()
+        native = tmp_path / "na tive"
+        native.mkdir()
+        header_code = "#pragma once\nvoid bump(int& x);\n"
+        (native / "bump.hpp").write_text(header_code)
+        (native / "bump.cpp").write_text('#include "bump.hpp"\nvoid bump(int& x) { x += 3; }\n')
+
+        run = TestNimCppBuildConfiguration._run
+        assert run([cxx_bin, "-fPIC", "-c", "bump.cpp", "-o", "bump.o"], native).returncode == 0
+        assert run([shutil.which("ar") or "ar", "rcs", "libbump.a", "bump.o"], native).returncode == 0
+
+        unit = backend.parse(header_code, str(native / "bump.hpp"))
+        pkg_dir = tmp_path / "pk g"
+        get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(
+                package_name="bumplib",
+                target_language="nim",
+                layout="package",
+                options={"library": "bump", "library_dirs": str(native)},
+            ),
+        ).write_to_disk(pkg_dir)
+        assert f"-I'{native}'" in (pkg_dir / "nim.cfg").read_text()
+
+        (pkg_dir / "tests" / "consumer.nim").write_text('import bumplib\nvar v = 10.cint\nbump(v)\necho "value=", v\n')
+        built = run([nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/consumer.nim"], pkg_dir)
+        assert built.returncode == 0, f"a path with a space broke the build:\n{built.stdout}\n{built.stderr}"
+        assert "value=13" in built.stdout, built.stdout

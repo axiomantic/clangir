@@ -66,16 +66,19 @@ is invariant, derived from the parsed IR, or supplied by you. Nothing is guessed
 | `--mm:orc`, `--threads:on`, `--styleCheck:hint` | Invariant. |
 | `--path:"$config/src"` | Invariant. Lets the package build with a bare `nim c`, not only under `nimble`. |
 | `--backend:cpp` | Emitted when the parsed unit needs the C++ backend. |
-| `--passC:"-I..."` | The header's own directory, plus every `-I` passed to the parse. |
+| `--passC:"-I'...'"` | The header's own directory, plus every `-I` passed to the parse. Single-quoted so a path containing a space survives Nim's word-splitting of config values. |
 | `--passC:"-D..."` | Every `-D` passed to the parse. |
-| `--passL:"-l..."`, `--passL:"-L..."` | The `library` and `library_dirs` writer options. |
+| `--passL:"-l..."`, `--passL:"-L'...'"` | The `library` and `library_dirs` writer options. |
 
 #### The C++ backend
 
 Nim's default C backend cannot build `importcpp` bindings: it hands a C++ header to
 the C compiler, which rejects `class` outright. HeaderKit decides from the IR, not
 from the file extension -- a `.h` declaring a class is C++, and a `.hpp` declaring
-only C functions is not. The flag is set in `nim.cfg` rather than in the `.nimble`
+only C functions is not. The test is structural rather than a list of known shapes:
+any C++ reference, any template-id, any qualified name, any namespace, any scoped
+enumeration. It is deliberately broader than the `importc`/`importcpp` choice, since
+a record can keep an `importc` pragma while a field of it renders as `CppString`. The flag is set in `nim.cfg` rather than in the `.nimble`
 test task because a backend selected in the config also overrides a plain `nim c`.
 
 #### Naming the native library
@@ -99,6 +102,13 @@ For a C target, `tests/test_tripwire.nim` loads the shared library and resolves 
 exported symbol. That check cannot serve a C++ target: an `importcpp` binding has no
 unmangled name to look up, and a header-only or statically linked library has no
 shared object at all -- such a tripwire fails for a reason unrelated to the bindings.
+
+A unit that binds nothing linkable -- one declaring only templates, which emit no
+symbol until instantiated -- gets a tripwire that reports *skipped* and names the
+reason. It cannot report success, because there is nothing there whose linkage it
+could have established. A private or protected member is not probed either: the
+probe would fail to compile rather than fail to link, taking the whole package with
+it.
 
 For a C++ target the tripwire's assertion is its own build. It compiles, which proves
 the bindings are valid C++ against the real header; it links, which proves every
