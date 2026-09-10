@@ -3343,6 +3343,14 @@ class ClangASTConverter:
             result = self._convert_type(named_type)
             if result is not None:
                 self._merge_quals(result, quals)
+            # An ELABORATED node carries the spelling the source actually used --
+            # ``struct Gauge`` when written elaborated and ``Gauge`` when written
+            # bare -- in C and C++ alike. Resolving to the named type discards
+            # that, and it is the only place it exists: where a tag and an
+            # ordinary identifier share a name, it is the whole difference
+            # between an eight-byte record and a one-byte integer.
+            if isinstance(result, CType):
+                result.is_elaborated = clang_type.spelling.startswith(("struct ", "union ", "enum "))
             return result
 
         # Handle record (struct/union) types

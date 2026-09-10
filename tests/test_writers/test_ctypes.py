@@ -29,6 +29,7 @@ from headerkit.writers.ctypes import (
     _enum_ctype,
     _library_loader,
     _normalised_c_integer,
+    _type_table,
     header_to_ctypes,
     type_to_ctypes,
 )
@@ -1440,3 +1441,46 @@ class TestEnumWidthEstablishment:
         """
         decl = Enum(name="E", values=[EnumValue("A", 0)], underlying_type=spelling)
         assert _enum_ctype(decl) == expected
+
+
+class TestContestedTagElaboration:
+    """``is_elaborated`` decides a contested tag, and ``None`` decides nothing.
+
+    ``struct Gauge { ... };`` beside ``typedef unsigned char Gauge;`` is legal C
+    naming two types, and the use site's spelling is the only thing that says
+    which is meant. Both backends record it, so the unknown case is not
+    reachable through either -- but the whole point of the flag is that a
+    consumer must not pick a side without it, and an implementation that
+    defaulted either way would pass every execution gate in the suite.
+    """
+
+    @staticmethod
+    def _contested_header():
+        return Header(
+            path="t.h",
+            declarations=[
+                Struct(name="Gauge", fields=[Field(name="lo", type=CType("int")), Field(name="hi", type=CType("int"))]),
+                Typedef(name="Gauge", underlying_type=CType("unsigned char")),
+            ],
+        )
+
+    def test_an_elaborated_use_gets_the_record(self):
+        table = _type_table(self._contested_header())
+        assert type_to_ctypes(CType("Gauge", is_elaborated=True), table) == "Gauge_struct"
+
+    def test_a_bare_use_gets_the_ordinary_identifier(self):
+        table = _type_table(self._contested_header())
+        assert type_to_ctypes(CType("Gauge", is_elaborated=False), table) == "ctypes.c_ubyte"
+
+    def test_an_unrecorded_spelling_resolves_to_neither(self):
+        """The refusal. Neither the record nor the scalar -- the name is left alone.
+
+        Left alone it is unbound in the generated module and the import fails,
+        which is recoverable. Picking either side is a wrong width that imports
+        cleanly, and this writer has shipped that twice.
+        """
+        table = _type_table(self._contested_header())
+        resolved = type_to_ctypes(CType("Gauge", is_elaborated=None), table)
+        assert resolved == "Gauge", f"an unrecorded spelling was resolved to {resolved!r}"
+        assert resolved != "Gauge_struct"
+        assert resolved != "ctypes.c_ubyte"

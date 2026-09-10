@@ -1676,6 +1676,12 @@ class TreeSitterBackend:
         tokens = text.split()
         quals: list[str] = []
         name_parts: list[str] = []
+        # Recorded here, before the aggregate keyword is dropped below, because
+        # afterwards it is unrecoverable: ``struct Gauge r;`` and ``Gauge s;``
+        # both become the bare name, and where a tag and an ordinary identifier
+        # share a spelling those are an eight-byte record and a one-byte integer.
+        # Reading it off the stripped result later would be guessing.
+        is_elaborated = any(token in ("struct", "enum", "class", "union") for token in tokens)
 
         for token in tokens:
             if token in _FOLDABLE_TYPE_QUALIFIERS or token in _SIGNEDNESS_SPECIFIERS:
@@ -1693,7 +1699,7 @@ class TreeSitterBackend:
             type_name = "int"
         else:
             type_name = text
-        return CType(name=type_name, qualifiers=quals)
+        return CType(name=type_name, qualifiers=quals, is_elaborated=is_elaborated)
 
 
 _BACKEND_INSTANCE = TreeSitterBackend()

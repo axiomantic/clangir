@@ -153,6 +153,11 @@ class _TypeTable:
         by its qualified C++ name. Usually the tag itself; a record whose tag is
         contested gets a distinct name instead, so that both meanings of the
         contested spelling survive. See :func:`_record_type_names`.
+    :param contested_records: Tags an ordinary identifier in this header also
+        binds, mapped to the class the record was emitted under. Reached only
+        through ``CType.is_elaborated``: the bare spelling of such a tag means
+        the *other* declaration, so the two are told apart by how the use site
+        was written rather than by the name, which is identical for both.
     :param scalars: Typedef names that resolve to a ctypes scalar, mapped to it.
         ``typedef unsigned char Level;`` renders as a comment and so binds no
         ``Level`` at all, which made every member declared ``Level v;`` a
@@ -165,6 +170,7 @@ class _TypeTable:
     records: Mapping[str, str] = field(default_factory=dict)
     record_classes: Mapping[str, str] = field(default_factory=dict)
     scalars: Mapping[str, str] = field(default_factory=dict)
+    contested_records: Mapping[str, str] = field(default_factory=dict)
 
 
 #: The table for a call with no header context: nothing resolves, every name is
@@ -313,6 +319,20 @@ def type_to_ctypes(t: TypeExpr, types: _TypeTable = _EMPTY_TYPES) -> str:
         # a bare ``int8_t`` still has to mean the one-byte integer. Consulting
         # the tables first handed it the eight-byte record instead -- silently,
         # since the module imports either way.
+        # A tag an ordinary identifier also binds: ``struct Gauge { ... };``
+        # beside ``typedef unsigned char Gauge;``. The name alone cannot say
+        # which is meant -- C keeps them in separate namespaces and both are
+        # legal -- so the spelling at the *use site* decides, and an unrecorded
+        # spelling is refused rather than guessed. Getting this wrong is a
+        # one-byte scalar where C laid out an eight-byte record, imported
+        # cleanly, which is why it does not fall back to either meaning.
+        contested = types.contested_records.get(base_name)
+        if contested is not None:
+            if t.is_elaborated is True:
+                return contested
+            if t.is_elaborated is not False:
+                return base_name
+
         enum_ctype = types.enums.get(base_name)
         if enum_ctype is not None:
             return enum_ctype
@@ -1443,7 +1463,7 @@ def _typedef_aliases_its_own_tag(decl: Typedef, header: Header) -> bool:
     return any(isinstance(d, Struct) and d.name == target for d in header.declarations)
 
 
-def _scalar_typedef_names(header: Header, contested: frozenset[str] = frozenset()) -> dict[str, str]:
+def _scalar_typedef_names(header: Header) -> dict[str, str]:
     """Typedef names that resolve to a ctypes scalar, mapped to that scalar.
 
     ``_typedef_to_ctypes`` renders ``typedef unsigned char Level;`` as a bare
@@ -1459,27 +1479,16 @@ def _scalar_typedef_names(header: Header, contested: frozenset[str] = frozenset(
     an enum is already answered by the other two tables, and one onto anything
     this writer has no spelling for is left alone to fail loudly.
 
-    A name that is also a *contested* record tag is withheld, and this is the
-    one place the writer has to reason about its own input rather than about C.
-    C is unambiguous -- an unprefixed ``Gauge`` is the typedef -- and under
-    libclang so is the IR, which spells the record member ``struct Gauge``. But
-    tree-sitter strips the aggregate keyword from every type spelling
-    (``_parse_type_str``), so both members arrive as bare ``Gauge`` and the
-    distinction is gone before the writer sees it. Resolving the bare name would
-    then be right under one backend and silently wrong under the other -- a
-    one-byte scalar where C laid out an eight-byte record, imported cleanly.
-    Neither is resolved instead, so the name is unbound and fails loudly on both.
-
-    Restoring the bare direction needs the elaboration recorded in the IR (a
-    flag on ``CType``, set from the grammar by both backends, the same shape as
-    ``Enum.underlying_type``). That is a schema change and is deliberately not
-    made here.
+    A name that is also a contested record tag stays listed here. Both backends
+    record ``CType.is_elaborated``, so a bare ``Gauge`` is known to mean this
+    typedef and an elaborated ``struct Gauge`` the record; see
+    :func:`type_to_ctypes`. Before that flag existed neither could be resolved,
+    because tree-sitter strips the aggregate keyword and the two arrived
+    identical.
     """
     scalars: dict[str, str] = {}
     for d in header.declarations:
         if not isinstance(d, Typedef) or not d.name or not isinstance(d.underlying_type, CType):
-            continue
-        if d.name in contested:
             continue
         underlying = d.underlying_type
         non_cv = [q for q in underlying.qualifiers if q not in ("const", "volatile", "restrict")]
@@ -1497,7 +1506,12 @@ def _type_table(header: Header) -> _TypeTable:
         enums=_enum_type_names(header),
         records=record_spellings,
         record_classes=record_classes,
-        scalars=_scalar_typedef_names(header, contested),
+        scalars=_scalar_typedef_names(header),
+        contested_records={
+            str(d.name): record_classes[_record_qualified_name(d)]
+            for d in header.declarations
+            if isinstance(d, Struct) and d.name in contested and _record_qualified_name(d) in record_classes
+        },
     )
 
 

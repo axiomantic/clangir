@@ -105,6 +105,25 @@ class CType:
 
     :param name: The base type name (e.g., ``"int"``, ``"long"``, ``"char"``).
     :param qualifiers: Type qualifiers (e.g., ``["const"]``, ``["unsigned"]``).
+    :param is_elaborated: Whether the source wrote an *elaborated* type specifier
+        -- ``struct X``, ``union X``, ``enum X`` -- rather than the bare ``X``.
+        None when no parser recorded it.
+
+        C keeps tags and ordinary identifiers in separate namespaces, so
+        ``struct Gauge { ... };`` and ``typedef unsigned char Gauge;`` are both
+        legal in one unit and name different types: the elaborated spelling is
+        the eight-byte record and the bare one is a one-byte integer. The
+        distinction lives only in how the *use site* was written, so a consumer
+        that receives ``"Gauge"`` for both cannot recover it -- and choosing
+        either meaning is silently wrong for the other.
+
+        Three states, not two. ``True`` and ``False`` are observations; ``None``
+        means nobody looked, and a consumer facing a contested name must refuse
+        rather than assume. That is the same contract as
+        :attr:`Enum.underlying_type_known`, for the same reason: twice now a
+        consumer of this IR has had to answer a question the IR did not record,
+        and both times treating "absent" as "fine" produced a wrong ABI that
+        imported cleanly.
 
     Examples
     --------
@@ -124,6 +143,7 @@ class CType:
 
     name: str
     qualifiers: list[str] = field(default_factory=list)
+    is_elaborated: bool | None = None
 
     def __str__(self) -> str:
         if self.qualifiers:

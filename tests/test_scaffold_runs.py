@@ -379,31 +379,8 @@ OTHER_COLLIDE_SOURCE = textwrap.dedent("""\
     int othercol_size(void) { return (int)sizeof(OtherUser); }
 """)
 
-#: The same collision reached through the **bare** spelling, which is what C says
-#: means the typedef. It is in its own header because one unresolvable member
-#: makes the whole module unimportable, which would hide the other direction's
-#: result entirely.
-BARE_COLLIDE_HEADER = textwrap.dedent("""\
-    #ifndef BARECOL_H
-    #define BARECOL_H
-
-    struct Gauge { int lo; int hi; };
-    typedef unsigned char Gauge;
-
-    typedef struct { Gauge g; } ByBareUser;
-
-    int barecol_size(void);
-
-    #endif
-""")
-
-BARE_COLLIDE_SOURCE = textwrap.dedent("""\
-    #include "barecol.h"
-
-    int barecol_size(void) { return (int)sizeof(ByBareUser); }
-""")
-
-#: A record tag an ordinary identifier also binds. Tags and ordinary identifiers
+#: A record tag an ordinary identifier also binds -- **both** directions, plus
+#: the two non-competing controls. Tags and ordinary identifiers
 #: are separate C namespaces, so both are legal in one unit and mean different
 #: types -- 8 bytes and 1. Python has one namespace, so binding the class takes
 #: the name from the typedef and a ``Gauge g;`` member silently becomes the
@@ -418,9 +395,22 @@ TAG_COLLIDE_HEADER = textwrap.dedent("""\
     typedef unsigned char Gauge;
 
     typedef struct { struct Gauge g; } ByTagUser;
+    typedef struct { Gauge s; } ByBareUser;
+    typedef struct { struct Gauge g; Gauge s; } BothUser;
+
+    struct Foo { int a; int b; };
+    typedef unsigned char Level;
+    typedef struct { struct Foo f; } PlainRecordUser;
+    typedef struct { Level v; } PlainScalarUser;
 
     int gauge_size(void);
     int bytag_hi(ByTagUser v);
+    int bybare_size(void);
+    int bybare_s(ByBareUser v);
+    int both_size(void);
+    int both_s(BothUser v);
+    int plain_record_size(void);
+    int plain_scalar_size(void);
 
     #endif
 """)
@@ -430,6 +420,12 @@ TAG_COLLIDE_SOURCE = textwrap.dedent("""\
 
     int gauge_size(void) { return (int)sizeof(struct Gauge); }
     int bytag_hi(ByTagUser v) { return v.g.hi; }
+    int bybare_size(void) { return (int)sizeof(ByBareUser); }
+    int bybare_s(ByBareUser v) { return (int)v.s; }
+    int both_size(void) { return (int)sizeof(BothUser); }
+    int both_s(BothUser v) { return (int)v.s; }
+    int plain_record_size(void) { return (int)sizeof(PlainRecordUser); }
+    int plain_scalar_size(void) { return (int)sizeof(PlainScalarUser); }
 """)
 
 #: A C enum with an enumerator too wide for an ``int``. The C compiler widens the
@@ -1762,36 +1758,28 @@ class TestScaffoldedCtypesPackageRuns:
         """``struct Gauge`` is the 8-byte record; bare ``Gauge`` is the 1-byte typedef.
 
         Tags and ordinary identifiers are separate namespaces in C, so both are
-        legal in one unit and mean different types. Python has one namespace, so
-        the record is emitted under a distinct class name and only ``struct
-        Gauge`` maps to it -- the bare name is left to the typedef, exactly as C
-        reads it. Nothing that worked before stops working: the elaborated
-        spelling still gets the record.
+        legal in one unit and name different types. Python has one namespace, so
+        the record is emitted under a distinct class and only the elaborated
+        spelling maps to it; the bare name resolves to the typedef. Which is
+        meant is decided by ``CType.is_elaborated``, recorded by both backends
+        from the grammar -- without it the two arrive identical under tree-sitter,
+        which strips the aggregate keyword from every spelling.
 
-        **The bare direction is the half an earlier revision of this branch left
-        untested, and it is deliberately not resolved.** C is unambiguous here
-        and so is libclang, which spells the record member ``struct Gauge``. But
-        tree-sitter strips the aggregate keyword from every type spelling, so
-        both members reach the writer as bare ``Gauge`` and the distinction is
-        gone. Resolving it would be right under one backend and a one-byte scalar
-        where C laid out an eight-byte record under the other -- imported
-        cleanly. So it is refused on both, and this gate pins the refusal rather
-        than a wrong answer. Restoring it needs the elaboration recorded in the
-        IR; see ``_scalar_typedef_names``.
+        **The two assertions have to disagree with each other.** A member typed
+        ``struct Gauge`` must come back 8 bytes and a member typed ``Gauge`` must
+        come back 1, from the same header, in the same module. Either one alone
+        passes under an implementation that resolves everything to the same
+        thing, which is what every previous revision of this branch did in one
+        direction or the other. ``BothUser`` puts them in one record, so a
+        wrong answer moves a size the C compiler also reports.
+
+        The last two are controls with no collision at all: an ordinary
+        ``struct Foo`` member and an ordinary ``Level`` typedef member must be
+        untouched by any of this.
         """
         library = _build_c_library(
             tmp_path, "tagcol", header=TAG_COLLIDE_HEADER, source=TAG_COLLIDE_SOURCE, basename="tagcol"
         )
-        probe = textwrap.dedent("""\
-            import ctypes, os
-            lib = ctypes.CDLL(os.environ["PROBE_LIB"])
-            lib.gauge_size.restype = ctypes.c_int
-            print(lib.gauge_size())
-        """)
-        measured = _run_python(probe, cwd=tmp_path, env={"PROBE_LIB": str(library)})
-        assert measured.returncode == 0, f"could not read the compiled size:\n{measured.stderr}"
-        assert int(measured.stdout.strip()) == 8, "fixture no longer discriminates the two meanings"
-
         root = _scaffold_to(
             "ctypes",
             tmp_path,
@@ -1804,30 +1792,41 @@ class TestScaffoldedCtypesPackageRuns:
             import ctypes
             from tagcol import _bindings as b
 
-            assert ctypes.sizeof(b.ByTagUser) == b._lib.gauge_size(), (
-                f"ctypes lays out {ctypes.sizeof(b.ByTagUser)} bytes, the C compiler lays out "
-                f"{b._lib.gauge_size()} -- the tag lost to the typedef"
+            lib = b._lib
+
+            # The elaborated spelling: the record.
+            assert ctypes.sizeof(b.ByTagUser) == lib.gauge_size(), (
+                f"struct Gauge member is {ctypes.sizeof(b.ByTagUser)} bytes, C says {lib.gauge_size()}"
             )
             record = b.ByTagUser._fields_[0][1]
-            assert b._lib.bytag_hi(b.ByTagUser(g=record(lo=1, hi=6))) == 6, (
-                "the tag-spelled member did not survive the call"
+            assert lib.bytag_hi(b.ByTagUser(g=record(lo=1, hi=6))) == 6, "the record member did not survive"
+
+            # The bare spelling: the typedef. This must DISAGREE with the above.
+            assert ctypes.sizeof(b.ByBareUser) == lib.bybare_size(), (
+                f"bare Gauge member is {ctypes.sizeof(b.ByBareUser)} bytes, C says {lib.bybare_size()}"
             )
+            assert lib.bybare_size() == 1, "fixture no longer discriminates the two meanings"
+            assert lib.bybare_s(b.ByBareUser(s=7)) == 7, "the scalar member did not survive"
+            assert ctypes.sizeof(b.ByTagUser) != ctypes.sizeof(b.ByBareUser), (
+                "both spellings resolved to the same type, so neither assertion above proves anything"
+            )
+
+            # Both meanings in one record, so a wrong answer moves a real size.
+            assert ctypes.sizeof(b.BothUser) == lib.both_size(), (
+                f"both-member record is {ctypes.sizeof(b.BothUser)} bytes, C says {lib.both_size()}"
+            )
+            assert lib.both_s(b.BothUser(g=record(lo=1, hi=2), s=9)) == 9, "the scalar half did not survive"
+
+            # Controls: no collision, nothing should have changed.
+            assert ctypes.sizeof(b.PlainRecordUser) == lib.plain_record_size()
+            assert ctypes.sizeof(b.PlainScalarUser) == lib.plain_scalar_size()
             print("TAGCOL-MATCH")
         """)
         result = _run_python(
             script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "TAGCOL_LIBRARY": str(library)}
         )
-        if backend_name == "libclang":
-            assert result.returncode == 0, f"the elaborated spelling lost its record:\n{result.stderr}"
-            assert "TAGCOL-MATCH" in result.stdout
-        else:
-            assert result.returncode != 0, (
-                "tree-sitter resolved a spelling it cannot distinguish from the bare one; if it now "
-                "records elaboration, this gate should assert the success branch instead"
-            )
-            assert "Gauge" in result.stderr, (
-                f"the import failed without naming the contested identifier:\n{result.stderr}"
-            )
+        assert result.returncode == 0, f"the two meanings are not both usable:\n{result.stderr}"
+        assert "TAGCOL-MATCH" in result.stdout
 
     def test_a_typedef_onto_a_different_record_contests_the_tag(self, tmp_path: Path, backend_name: str) -> None:
         """``typedef struct Other Gauge;`` contests ``struct Gauge`` just as much.
@@ -1872,54 +1871,6 @@ class TestScaffoldedCtypesPackageRuns:
         assert result.returncode != 0, (
             f"the package imported, so the contested name was resolved -- C lays this member out "
             f"at {real} byte(s) and the record it collides with is 8"
-        )
-        assert "Gauge" in result.stderr, f"the import failed without naming the contested identifier:\n{result.stderr}"
-
-    def test_the_bare_side_of_a_contested_tag_is_refused(self, tmp_path: Path, backend_name: str) -> None:
-        """A bare ``Gauge`` member is refused rather than guessed at. On both backends.
-
-        C says this member is the one-byte typedef, and under libclang the IR says
-        so too. Under tree-sitter it is indistinguishable from the eight-byte
-        record, because the aggregate keyword is stripped before the writer sees
-        it. A writer cannot tell the two IRs apart, so resolving the name would
-        be a guess that is silently wrong half the time -- and this is a size
-        change with no exception raised, the failure mode this whole change
-        exists to remove. It stays unbound and the import fails.
-
-        This is the gate that will go red first if elaboration is ever recorded
-        in the IR, which is the point: it should be, and then this becomes a
-        success assertion.
-        """
-        library = _build_c_library(
-            tmp_path, "barecol", header=BARE_COLLIDE_HEADER, source=BARE_COLLIDE_SOURCE, basename="barecol"
-        )
-        probe = textwrap.dedent("""\
-            import ctypes, os
-            lib = ctypes.CDLL(os.environ["PROBE_LIB"])
-            lib.barecol_size.restype = ctypes.c_int
-            print(lib.barecol_size())
-        """)
-        measured = _run_python(probe, cwd=tmp_path, env={"PROBE_LIB": str(library)})
-        assert measured.returncode == 0, f"could not read the compiled size:\n{measured.stderr}"
-        real = int(measured.stdout.strip())
-        assert real == 1, f"fixture no longer discriminates: C lays the bare member out at {real} bytes, not 1"
-
-        root = _scaffold_to(
-            "ctypes",
-            tmp_path,
-            "barecol",
-            backend_name=backend_name,
-            header=BARE_COLLIDE_HEADER,
-            filename="barecol.h",
-        )
-        result = _run_python(
-            "import barecol",
-            cwd=tmp_path,
-            env={"PYTHONPATH": str(root / "src"), "BARECOL_LIBRARY": str(library)},
-        )
-        assert result.returncode != 0, (
-            f"the package imported, so the bare name was resolved to something -- C lays this "
-            f"member out at {real} byte(s), and the record it collides with is 8"
         )
         assert "Gauge" in result.stderr, f"the import failed without naming the contested identifier:\n{result.stderr}"
 
