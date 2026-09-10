@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
 from pathlib import Path
 
+import headerkit.ir as ir
 from headerkit._cache_key import (
     _IR_SCHEMA_VERSION,
     ParsedArgs,
@@ -241,9 +244,55 @@ class TestComputeOutputCacheKey:
 class TestIrSchemaVersion:
     """Tests for IR schema version changes."""
 
-    def test_ir_schema_version_is_3(self) -> None:
-        """IR schema version should be '3' after the v0.14.0 bump."""
-        assert _IR_SCHEMA_VERSION == "3"
+    #: sha256 over ``{dataclass name: sorted field names}`` for every dataclass
+    #: in ``headerkit.ir``. Recorded, not computed at import, so that a change to
+    #: the IR has to be acknowledged here rather than silently absorbed.
+    IR_SHAPE_FINGERPRINT = "11f0711273afba27"
+
+    @staticmethod
+    def _ir_shape_fingerprint() -> str:
+        """Fingerprint the IR dataclasses by name and field names.
+
+        Field *order* is deliberately not included: reordering does not change
+        what a serialised document contains or how it reads back. Adding,
+        removing or renaming a field does, and each of those moves the hash.
+        """
+        shape = {
+            name: sorted(f.name for f in dataclasses.fields(obj))
+            for name, obj in sorted(vars(ir).items())
+            if dataclasses.is_dataclass(obj) and isinstance(obj, type) and obj.__module__ == ir.__name__
+        }
+        return hashlib.sha256(json.dumps(shape, sort_keys=True).encode()).hexdigest()[:16]
+
+    def test_ir_schema_version_moves_with_the_ir_dataclasses(self) -> None:
+        """Changing the IR shape must change the cache schema version with it.
+
+        The deserialiser fills an absent key with the dataclass default, so a
+        cached document written before a field existed comes back carrying that
+        default as if a parser had reported it. Whether that is safe depends
+        entirely on which way the default falls, and the two tri-states this IR
+        already has fall opposite ways: ``CType.is_elaborated`` defaults to
+        ``None`` and the ctypes writer refuses on it, while
+        ``Enum.underlying_type_known`` defaults to ``True`` and the writer then
+        sizes the enum from its enumerators -- four bytes where the compiler laid
+        out eight, imported cleanly, from nothing worse than a warm cache.
+
+        Nothing in ``compute_ir_cache_key`` encodes the headerkit version, so an
+        old entry and a new one hash identically and the stale document is simply
+        read. Bumping ``_IR_SCHEMA_VERSION`` is what makes it miss.
+
+        This is a check rather than a note in the field docs because a note is
+        the weakest mechanism available: it fails silently and exactly like an
+        absent one. AGENTS.md permits a checked-in number precisely when
+        something reads and verifies it, which is what this does.
+        """
+        assert self._ir_shape_fingerprint() == self.IR_SHAPE_FINGERPRINT, (
+            "The IR dataclasses changed shape. A cached document written by an older headerkit is "
+            "missing the new field, and the deserialiser will substitute its default -- which is a "
+            "silently wrong value rather than a refusal whenever that default resolves to something. "
+            "Bump _IR_SCHEMA_VERSION so warm caches miss, then update IR_SHAPE_FINGERPRINT here."
+        )
+        assert _IR_SCHEMA_VERSION == "4"
 
     def test_old_schema_version_2_cache_miss(self, tmp_path: Path, caplog: logging.LogCaptureFixture) -> None:
         """A metadata.json with ir_schema_version '2' results in a cache miss and warning."""

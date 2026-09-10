@@ -326,6 +326,6 @@ class TestCtypesCompleteHeader:
             # Function Prototypes
             # ============================================================
 
-            _lib.buffer_read.argtypes = [ctypes.POINTER(struct Buffer), ctypes.c_char_p, ctypes.c_int]
+            _lib.buffer_read.argtypes = [ctypes.POINTER(Buffer), ctypes.c_char_p, ctypes.c_int]
             _lib.buffer_read.restype = ctypes.c_int
         """)

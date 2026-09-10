@@ -42,6 +42,7 @@ def _dict_to_ctype(d: dict[str, Any]) -> CType:
     return CType(
         name=d["name"],
         qualifiers=d.get("qualifiers", []),
+        is_elaborated=d.get("is_elaborated"),
     )
 
 
@@ -182,6 +183,8 @@ def _dict_to_enum(d: dict[str, Any]) -> Enum:
         values=[_dict_to_enum_value(v) for v in d.get("values", [])],
         is_typedef=d.get("is_typedef", False),
         location=_dict_to_location(d["location"]) if "location" in d else None,
+        underlying_type=d.get("underlying_type"),
+        underlying_type_known=d.get("underlying_type_known", True),
     )
 
 

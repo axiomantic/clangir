@@ -105,6 +105,25 @@ class CType:
 
     :param name: The base type name (e.g., ``"int"``, ``"long"``, ``"char"``).
     :param qualifiers: Type qualifiers (e.g., ``["const"]``, ``["unsigned"]``).
+    :param is_elaborated: Whether the source wrote an *elaborated* type specifier
+        -- ``struct X``, ``union X``, ``enum X`` -- rather than the bare ``X``.
+        None when no parser recorded it.
+
+        C keeps tags and ordinary identifiers in separate namespaces, so
+        ``struct Gauge { ... };`` and ``typedef unsigned char Gauge;`` are both
+        legal in one unit and name different types: the elaborated spelling is
+        the eight-byte record and the bare one is a one-byte integer. The
+        distinction lives only in how the *use site* was written, so a consumer
+        that receives ``"Gauge"`` for both cannot recover it -- and choosing
+        either meaning is silently wrong for the other.
+
+        Three states, not two. ``True`` and ``False`` are observations; ``None``
+        means nobody looked, and a consumer facing a contested name must refuse
+        rather than assume. That is the same contract as
+        :attr:`Enum.underlying_type_known`, for the same reason: twice now a
+        consumer of this IR has had to answer a question the IR did not record,
+        and both times treating "absent" as "fine" produced a wrong ABI that
+        imported cleanly.
 
     Examples
     --------
@@ -124,6 +143,7 @@ class CType:
 
     name: str
     qualifiers: list[str] = field(default_factory=list)
+    is_elaborated: bool | None = None
 
     def __str__(self) -> str:
         if self.qualifiers:
@@ -476,6 +496,40 @@ class Enum:
         the top level and loses its enclosing record, so ``class C { enum M; }``
         records ``C::M`` here; ``None`` means ``namespace``-plus-``name`` is the
         whole spelling.
+    :param underlying_type: The integer type the enum is represented as, as a C
+        type spelling such as ``"unsigned char"`` or ``"long long"``, or None
+        when the parser did not report one.
+
+        C leaves this implementation-defined, requiring only that it represent
+        every enumerator, and both C++11 forms may fix it explicitly -- on a
+        scoped enum (``enum class E : unsigned char``) *and* on an unscoped one
+        (``enum E : unsigned long long``). It cannot be reconstructed from the
+        enumerators: they constrain the width from below and say nothing about a
+        type chosen to be wider, and an opaque declaration such as
+        ``enum Fwd : long long;`` has no enumerators at all. A consumer that
+        must know the width -- any binding generator, since this is the size and
+        signedness of every value crossing the ABI -- has to be told, so it is
+        recorded here rather than guessed at downstream.
+
+        ``None`` means *the header declared none*, and is only trustworthy when
+        ``underlying_type_known`` is True. See that field.
+    :param underlying_type_known: Whether ``underlying_type`` is an observation
+        or an absence of one.
+
+        A parser can fail to see a clause that is there. tree-sitter's **C**
+        grammar has no production for ``enum E : long long`` -- C23 standardised
+        it and both major compilers accepted it as an extension for years -- so
+        it parses as an ``ERROR`` node with no ``base`` field, which is
+        indistinguishable from a plain ``enum E`` if only ``underlying_type`` is
+        consulted. A consumer that reads the resulting ``None`` as "declared
+        none" falls back to guessing the width from the enumerators, and
+        ``enum E : long long { A = 0 };`` becomes a four-byte type where the
+        compiler laid out eight.
+
+        False means the parser found something it could not represent, so the
+        width is unknown rather than absent, and a consumer must refuse rather
+        than infer. It defaults to True because "declared none" is the ordinary
+        case and every parser reports *that* reliably.
 
     Examples
     --------
@@ -499,6 +553,8 @@ class Enum:
     location: SourceLocation | None = None
     is_scoped: bool = False
     cpp_name: str | None = None
+    underlying_type: str | None = None
+    underlying_type_known: bool = True
 
     @property
     def qualified_name(self) -> str | None:
