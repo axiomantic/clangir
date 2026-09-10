@@ -583,6 +583,35 @@ NS_RECORD_SOURCE = textwrap.dedent("""\
     extern "C" int nsrec_size(void) { return static_cast<int>(sizeof(NsRecHolder)); }
 """)
 
+#: An enum whose declared underlying type this writer has no ctypes spelling
+#: for. ``u64`` is a perfectly ordinary typedef, and resolving *through* it would
+#: mean following header typedefs; until that exists the honest answer is that
+#: the width is not established, so the enum is refused and fails loudly.
+#:
+#: This is the one refusal that is **structural**: it turns on the declared
+#: spelling not being in ``CTYPES_TYPE_MAP``, not on any enumerator value, so
+#: unlike the over-wide cases it cannot be passed over on a host whose parser and
+#: compiler disagree about widths. It is what keeps the refusal path exercised
+#: everywhere. Real size 8 against the 4 a wrongly-resolved member would give.
+ODD_HEADER = textwrap.dedent("""\
+    #ifndef ODDENUM_H
+    #define ODDENUM_H
+
+    typedef unsigned long long u64;
+    enum Odd : u64 { ODD_LOW = 0, ODD_HIGH = 1 };
+    struct OddHolder { Odd m; };
+
+    extern "C" int oddholder_size(void);
+
+    #endif
+""")
+
+ODD_SOURCE = textwrap.dedent("""\
+    #include "oddenum.h"
+
+    extern "C" int oddholder_size(void) { return static_cast<int>(sizeof(OddHolder)); }
+""")
+
 #: An enumerator below ``INT32_MIN``. Every other refusal fixture is over-wide
 #: at the *top* of the range, so the lower bound of the check would otherwise be
 #: proven by nothing -- and a check broken only at the bottom would pass them
@@ -1193,6 +1222,53 @@ class TestScaffoldedCtypesPackageRuns:
         assert result.returncode == 0, f"a declared underlying type is not honoured:\n{result.stderr}"
         assert "UNDERLYING-MATCH" in result.stdout
 
+    def test_an_unmappable_underlying_type_is_refused(self, tmp_path: Path, backend_name: str) -> None:
+        """A declared underlying type with no ctypes spelling is a refusal, not a guess.
+
+        ``enum Odd : u64`` names its width through a header typedef. Following
+        that typedef is machinery this writer does not have, so the width is not
+        established -- and the rule is that an unestablished width is refused
+        rather than defaulted to ``c_int``, which here would be 4 bytes against a
+        real 8.
+
+        This gate exists as much for *where* it runs as for what it asserts. It
+        is the only refusal case that turns on no enumerator value, so it is the
+        one that cannot be passed over on a host whose libclang and C compiler
+        disagree about enum widths -- which is every Windows runner. Without it
+        the refusal path would go unexercised there entirely.
+        """
+        library = _build_cpp_library(tmp_path, "oddenum", header=ODD_HEADER, source=ODD_SOURCE, basename="oddenum")
+        probe = textwrap.dedent("""\
+            import ctypes, os
+            lib = ctypes.CDLL(os.environ["PROBE_LIB"])
+            lib.oddholder_size.restype = ctypes.c_int
+            print(lib.oddholder_size())
+        """)
+        measured = _run_python(probe, cwd=tmp_path, env={"PROBE_LIB": str(library)})
+        assert measured.returncode == 0, f"could not read the compiled size:\n{measured.stderr}"
+        real = int(measured.stdout.strip())
+        assert real != ctypes.sizeof(ctypes.c_int), (
+            f"fixture no longer discriminates: C++ lays out {real} bytes, which resolving to c_int would give"
+        )
+
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "oddenum",
+            backend_name=backend_name,
+            header=ODD_HEADER,
+            filename="oddenum.hpp",
+        )
+        result = _run_python(
+            "import oddenum",
+            cwd=tmp_path,
+            env={"PYTHONPATH": str(root / "src"), "ODDENUM_LIBRARY": str(library)},
+        )
+        assert result.returncode != 0, (
+            f"the package imported, so an enum of unestablished width was bound as c_int -- C++ lays out {real} bytes"
+        )
+        assert "Odd" in result.stderr, f"the import failed without naming the refused enum:\n{result.stderr}"
+
     def test_a_record_tag_does_not_capture_a_standard_type_name(self, tmp_path: Path, backend_name: str) -> None:
         """``struct size_t`` must not make a bare ``size_t`` mean the record.
 
@@ -1427,11 +1503,16 @@ class TestScaffoldedCtypesPackageRuns:
                 f"so it may have failed for an unrelated reason:\n{result.stderr}"
             )
 
-        # A gate that passed over some cases and reported green would be
-        # asserting less than it claims, so every case is required by name
-        # rather than the count being trusted.
-        assert exercised == [pkg for pkg, *_ in cases], (
-            f"only {exercised} of {[pkg for pkg, *_ in cases]} ran; passed over: {skipped}"
+        # Every case must be accounted for by name -- run, or passed over with
+        # the premise that failed stated. A count would let a case vanish
+        # silently, which is the failure mode this whole gate is about. Every
+        # case here is value-based, so a host whose parser and compiler disagree
+        # about widths can legitimately pass over all of them; the refusal path
+        # is kept exercised everywhere by the structural gate above, which turns
+        # on no enumerator value at all.
+        accounted = sorted(exercised + [reason.split(":", 1)[0] for reason in skipped])
+        assert accounted == sorted(pkg for pkg, *_ in cases), (
+            f"cases went missing: ran {exercised}, passed over {skipped}, expected {[pkg for pkg, *_ in cases]}"
         )
 
     def test_an_implicit_enumerator_past_int_range_is_refused(self, tmp_path: Path, backend_name: str) -> None:
