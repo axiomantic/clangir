@@ -31,10 +31,10 @@ they stay visible instead of being silently tolerated.
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,6 +50,14 @@ from headerkit.writers.cffi import header_to_cffi
 from headerkit.writers.cython import write_pxd
 from headerkit.writers.nim import write_nim
 from tests.native_build import PYTHON_INCLUDE_DIR, compile_object_command, link_extension_command
+from tests.skip_policy import (
+    BACKEND_INSTALL,
+    CC_INSTALL,
+    CXX_INSTALL,
+    CYTHON_INSTALL,
+    missing_toolchain,
+    require_program,
+)
 
 libclang = pytest.mark.libclang
 treesitter = pytest.mark.treesitter
@@ -66,18 +74,21 @@ def _pxd(backend_name: str, code: str, filename: str = "test.h", extra_args: lis
     return write_pxd(backend.parse(code, filename, extra_args=extra_args or []))
 
 
-def _require_c_toolchain() -> str:
-    """Skip unless both Cython and a C compiler are present; return the compiler path.
+def _require_cython() -> None:
+    """Fail under CI, skip locally, unless Cython is importable."""
+    if importlib.util.find_spec("Cython") is None:
+        missing_toolchain("Cython, required to verify generated C, is not importable", CYTHON_INSTALL)
 
-    The skip is narrow and explicit on purpose. A compile check that quietly
-    no-ops when the toolchain is absent proves nothing while looking green.
+
+def _require_c_toolchain() -> str:
+    """Require both Cython and a C compiler; return the compiler path.
+
+    Under CI a missing tool is a failure naming it, not a skip. A compile check
+    that quietly no-ops when the toolchain is absent proves nothing while looking
+    green.
     """
-    pytest.importorskip("Cython", reason="Cython is required to verify generated C")
-    for candidate in ("cc", "gcc", "clang"):
-        found = shutil.which(candidate)
-        if found:
-            return found
-    pytest.skip("no C compiler (cc/gcc/clang) on PATH")
+    _require_cython()
+    return require_program("cc", "gcc", "clang", install=CC_INSTALL)
 
 
 def _cythonize(workdir: Path, header: str, pxd: str, pyx: str, stem: str = "mod") -> str:
@@ -684,10 +695,8 @@ class TestR10DependentMemberAliases:
         unusable.  This one links a real extension module and calls all three
         functions, asserting the values C++ actually computed.
         """
-        pytest.importorskip("Cython", reason="Cython is required to verify generated C++")
-        compiler = shutil.which("clang++") or shutil.which("g++")
-        if compiler is None:
-            pytest.skip("no C++ compiler (clang++/g++) on PATH")
+        _require_cython()
+        compiler = require_program("clang++", "g++", install=CXX_INSTALL)
 
         (tmp_path / "dep.hpp").write_text(_DEPENDENT_HEADER)
         (tmp_path / "defs.pxd").write_text(self._parse(tmp_path))
@@ -1366,7 +1375,7 @@ class TestR13PaddingLayoutMatchesC:
     @staticmethod
     def _generated(backend_name: str, source: str, struct_name: str) -> type:
         if not is_backend_available(backend_name):
-            pytest.skip(f"{backend_name} backend unavailable")
+            missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
         unit = get_backend(backend_name).parse(source, "layout.h")
         code = get_writer("ctypes").write(unit)
         namespace: dict[str, object] = {}
@@ -1491,7 +1500,7 @@ class TestR14AllPaddingLayoutIsResolvedOnImport:
     @staticmethod
     def _generate(backend_name: str, source: str) -> str:
         if not is_backend_available(backend_name):
-            pytest.skip(f"{backend_name} backend unavailable")
+            missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
         return get_writer("ctypes").write(get_backend(backend_name).parse(source, "layout.h"))
 
     @pytest.mark.parametrize(

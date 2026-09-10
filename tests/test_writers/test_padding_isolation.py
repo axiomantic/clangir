@@ -17,6 +17,7 @@ import pytest
 from headerkit.backends import get_backend, is_backend_available
 from headerkit.ir import CType, Field, Header, Struct
 from headerkit.writers import get_writer, list_writers
+from tests.skip_policy import BACKEND_INSTALL, missing_toolchain
 
 SOURCE = "struct pad_probe { unsigned int a : 3; unsigned int : 4; unsigned int b : 5; };"
 
@@ -92,7 +93,7 @@ def test_generated_source_gains_no_nameless_member(writer_name: str, backend_nam
     a nested record it reaches by another path, so the output itself is checked.
     """
     if not is_backend_available(backend_name):
-        pytest.skip(f"{backend_name} backend unavailable")
+        missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
     unit = get_backend(backend_name).parse(SOURCE, "pad.h")
 
     output = get_writer(writer_name).write(unit)

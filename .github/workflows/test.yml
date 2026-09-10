@@ -12,8 +12,20 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      # One Nim release for the whole matrix, named once so the two provisioning
+      # paths below cannot drift apart. GITHUB_TOKEN is deliberately NOT here:
+      # job-level env reaches `pip install`, `pytest`, and every artifact the
+      # suite compiles and executes -- which on a pull request is code the pull
+      # request authored. Only the two Nim steps need it, and they take it
+      # themselves.
+      NIM_VERSION: '2.2.12'
     strategy:
-      fail-fast: true
+      # false, for the same reason -x is gone from the pytest invocation below:
+      # the deliverable of the skip gate is the complete inventory of what did
+      # not run, and cancelling the other legs on the first failure surrenders
+      # exactly the per-platform half of it.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
         python-version: ${{ fromJSON(inputs.full-matrix && '["3.10", "3.11", "3.12", "3.13", "3.14"]' || '["3.10", "3.14"]') }}
@@ -28,28 +40,118 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
-      - name: Install libclang (Ubuntu)
+      # gcc-14 alongside libclang, and cc/c++ pointed at it. ubuntu-24.04's
+      # default cc is gcc-13, which predates C23's `enum E : type`; the four
+      # fixed-underlying-type gates probe for it with -std=c23 and passed
+      # themselves over on every Ubuntu run, silently. That is a missing
+      # toolchain, not a property of the tests, so it is installed rather than
+      # allowlisted.
+      - name: Install libclang and a C23-capable compiler (Ubuntu)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+          cc --version
       - name: Install libclang (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
       - name: Verify LLVM (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           clang --version
           which clang || true
+      # The Nim end-to-end gates -- the ones that compile, link and execute the
+      # scaffolded output -- skipped on every leg because no workflow installed
+      # Nim, and a skip is the same colour as a pass.
+      #
+      # Nim arrives from two places, because no single one covers the matrix.
+      #
+      # macOS and Linux: asdf-nim, which installs a PRE-COMPILED binary.
+      #
+      # The selector is the exact release rather than `latest:2.2`. This action
+      # writes the selector into .tool-versions and runs a bare `asdf install`,
+      # and asdf v0.20.0 hands the string to the plugin WITHOUT resolving it, so
+      # `latest:2.2` reaches asdf-nim verbatim and dies on
+      # "No download method available for version latest:2.2". The `latest:`
+      # form works through `asdf install nim latest:2.2`, which is the CLI path
+      # asdf-nim's own CI takes; it is not the path this action takes.
+      #
+      # An exact release does not source-build on macOS arm64 either, despite
+      # there being no official Nim binary for that platform:
+      # asdf_nim_find_exact_nightly_url resolves the release to its commit and
+      # fetches the NIGHTLY BUILD OF THAT SAME COMMIT, so the binary matches the
+      # release source rather than drifting to a newer one. The plugin's own CI
+      # has to set ASDF_NIM_NO_NIGHTLY_FALLBACK=1 to force a source build, which
+      # is the evidence that the fallback is what runs by default. A `ref:`
+      # nightly would instead track a moving branch head, so Linux and macOS
+      # could end up on different commits from one day to the next.
+      #
+      # Windows: asdf-nim states its scope as macOS and Linux, and its CI
+      # matrix tests no Windows runner at all, so setup-nim-action keeps that
+      # leg. It has official prebuilt Windows binaries and was never the leg
+      # that failed.
+      - name: Install Nim (macOS, Linux)
+        if: runner.os != 'Windows'
+        uses: asdf-vm/actions/install@v4
+        with:
+          tool_versions: |
+            nim ${{ env.NIM_VERSION }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          # asdf-nim reads this directly for release lookups and rate limits.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # asdf puts SHIMS on PATH, and a shim resolves its version by walking up
+      # from the CURRENT WORKING DIRECTORY for a .tool-versions file. The Nim
+      # gates compile in a pytest tmp_path outside the repo, so the shim found
+      # nothing and every one of them died on "No version is set for command
+      # nim" -- while `which nim` and `nim --version` in the repo both looked
+      # fine. The real install directory has no such dependence on cwd.
+      - name: Put the real Nim binary on PATH, not the asdf shim
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$(asdf where nim "$NIM_VERSION")/bin"
+          test -x "$bin/nim" || { echo "asdf reported $bin but there is no nim in it"; exit 1; }
+          echo "$bin" >> "$GITHUB_PATH"
+      # Pinned to the same release the asdf legs get, so one matrix runs one Nim.
+      - name: Install Nim (Windows)
+        if: runner.os == 'Windows'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+          repo-token: ${{ github.token }}
+      # On the record, per leg: a version claimed is not a version installed.
+      - name: Record the Nim that was installed
+        shell: bash
+        run: nim --version
       - name: Install package
         shell: bash
         run: pip install -e '.[test,treesitter]'
+      # Fail here, naming the tool, rather than several minutes later inside a
+      # test. Every one of these is a hard requirement of the suite under CI:
+      # tests/skip_policy.py turns a missing one into a failure, and the session
+      # gate in tests/conftest.py fails the run on any skip it did not sanction.
+      - name: Verify the toolchain the suite requires
+        shell: bash
+        run: python scripts/check_test_toolchain.py
       - name: Cache test header downloads
         uses: actions/cache@v6
         with:
           path: ~/.cache/headerkit-test-headers
           key: test-headers-v2
+      # -rs prints skip reasons, which the default output hides entirely.
+      # -x is deliberately absent: the point of the session gate is the full
+      # inventory of what did not run, and stopping at the first failure would
+      # surrender exactly that.
       - name: Run tests
         shell: bash
-        run: pytest -x
+        run: pytest -rs

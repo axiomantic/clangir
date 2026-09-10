@@ -23,6 +23,7 @@ import pytest
 from headerkit.backends import get_backend
 from headerkit.ir import Struct
 from headerkit.writers import get_writer
+from tests.skip_policy import BACKEND_INSTALL, LIBCLANG_INSTALL, TREESITTER_INSTALL, missing_toolchain
 
 #: CPython before 3.14 opens a fresh storage unit whenever a bit-field's
 #: declared type differs in size from the unit it would otherwise land in,
@@ -61,7 +62,7 @@ BACKENDS = ["libclang", "tree-sitter"]
 def _parse(backend_name: str, code: str, extra_args: list[str] | None = None) -> list[Struct]:
     backend = get_backend(backend_name)
     if not backend.is_available():
-        pytest.skip(f"{backend_name} backend unavailable")
+        missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
     unit = backend.parse(code, "rec.h", extra_args=extra_args)
     return [d for d in unit.declarations if isinstance(d, Struct)]
 
@@ -343,7 +344,7 @@ def test_the_abi_probe_reports_when_it_could_not_be_measured() -> None:
     """
     backend = get_backend("libclang")
     if not backend.is_available():
-        pytest.skip("libclang backend unavailable")
+        missing_toolchain("the libclang backend is not available", LIBCLANG_INSTALL)
     backend.parse("struct X { int a; };", "rec.h")  # configures libclang
     from headerkit.backends.libclang import _unnamed_bitfields_impose_alignment
 
@@ -527,7 +528,7 @@ def _build(source: str) -> dict[str, type[ctypes.Structure]]:
     """Parse ``source``, generate ctypes bindings from the IR, and load them."""
     backend = get_backend("libclang")
     if not backend.is_available():
-        pytest.skip("libclang backend unavailable")
+        missing_toolchain("the libclang backend is not available", LIBCLANG_INSTALL)
     code = get_writer("ctypes").write(backend.parse(source, "rec.h"))
     namespace: dict[str, object] = {}
     exec(compile(code, "<generated>", "exec"), namespace)
@@ -1183,7 +1184,7 @@ _PACKED_SOURCE = "struct __attribute__((packed)) S { unsigned char a; unsigned i
 def _write(writer_name: str, source: str = _PACKED_SOURCE) -> str:
     backend = get_backend("libclang")
     if not backend.is_available():
-        pytest.skip("libclang backend unavailable")
+        missing_toolchain("the libclang backend is not available", LIBCLANG_INSTALL)
     return get_writer(writer_name).write(backend.parse(source, "rec.h"))
 
 
@@ -1243,7 +1244,7 @@ def test_unpacked_record_is_not_marked_packed_by_any_writer(backend_name: str) -
     """Negative control across the writers that read ``is_packed``."""
     backend = get_backend(backend_name)
     if not backend.is_available():
-        pytest.skip(f"{backend_name} backend unavailable")
+        missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
     header = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "rec.h")
     assert "__attribute__((packed))" not in get_writer("cffi").write(header)
     assert "packed struct S" not in get_writer("cython").write(header)
@@ -1259,7 +1260,7 @@ def test_diff_writer_reports_a_record_becoming_packed() -> None:
 
     backend = get_backend("libclang")
     if not backend.is_available():
-        pytest.skip("libclang backend unavailable")
+        missing_toolchain("the libclang backend is not available", LIBCLANG_INSTALL)
     baseline = backend.parse("struct S { unsigned char a; unsigned int b; unsigned char c; };", "rec.h")
     target = backend.parse(_PACKED_SOURCE, "rec.h")
     report = diff_headers(baseline, target)
@@ -1276,12 +1277,13 @@ def test_diff_writer_reports_a_record_becoming_packed() -> None:
         "record converter. Pre-existing and not specific to packing; the suffix form "
         "and #pragma pack both work for unions."
     ),
+    raises=Exception,
     strict=True,
 )
 def test_treesitter_handles_a_prefix_attribute_on_a_union() -> None:
     backend = get_backend("tree-sitter")
     if not backend.is_available():
-        pytest.skip("tree-sitter backend unavailable")
+        missing_toolchain("the tree-sitter backend is not available", TREESITTER_INSTALL)
     record = _only("tree-sitter", "union __attribute__((packed)) U { unsigned char a; unsigned int b; };", "U")
     assert record.is_packed is True
 

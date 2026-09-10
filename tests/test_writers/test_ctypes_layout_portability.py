@@ -40,6 +40,7 @@ import pytest
 
 from headerkit.backends import get_backend, is_backend_available
 from headerkit.writers import get_writer
+from tests.skip_policy import BACKEND_INSTALL, missing_toolchain
 
 #: Records whose padding and members do not share one declared type. A record
 #: spelled in a single type cannot show the disagreement, so nothing here is.
@@ -63,7 +64,7 @@ _MIXED_CARRIER_SOURCES: tuple[tuple[str, str], ...] = (
 
 def _generate(backend_name: str, source: str) -> str:
     if not is_backend_available(backend_name):
-        pytest.skip(f"{backend_name} backend unavailable")
+        missing_toolchain(f"the {backend_name} backend is not available", BACKEND_INSTALL[backend_name])
     return get_writer("ctypes").write(get_backend(backend_name).parse(source, "layout.h"))
 
 

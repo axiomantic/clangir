@@ -78,6 +78,14 @@ from headerkit.ir import Enum, SourceUnit
 from headerkit.scaffold import ScaffoldOptions, scaffold
 from headerkit.writers.ctypes import _INT32_MAX, _INT32_MIN
 from tests.native_build import IS_WINDOWS, shared_library_command, shared_library_filename
+from tests.skip_policy import (
+    BACKEND_INSTALL,
+    CC_INSTALL,
+    CXX_INSTALL,
+    NIM_INSTALL,
+    missing_toolchain,
+    require_program,
+)
 
 #: Every parser backend the writers can be driven from. Both are exercised
 #: because the Nim ``importc`` spelling depends on IR each one fills in itself.
@@ -962,22 +970,16 @@ INCLUDING_SOURCE = textwrap.dedent("""\
 """)
 
 
-def _require(*programs: str) -> str:
-    """Return the first of ``programs`` on PATH, or skip the calling test.
+def _require(*programs: str, install: str) -> str:
+    """Return the first of ``programs`` on PATH.
 
-    **This is the no-op-green mode, not a guard against it.** A gate that calls
-    this before doing anything asserts nothing at all on a machine with no
-    compiler, and a bare exit status cannot tell that apart from a gate that ran.
-    The skip is reported, so ``-rs`` shows it; nothing else does. Kept because
-    the alternative -- failing the suite for every contributor without a C++
-    toolchain -- is a decision for the whole file rather than for its newest
-    tests, but do not read it as protection.
+    Under CI a miss is a failure naming the tool, not a skip: a gate that quietly
+    no-ops when its toolchain is missing proves nothing while reporting green.
+    Locally it stays a skip, so a contributor without Nim can still run the suite --
+    failing the run for every contributor without a C++ toolchain would be the wrong
+    trade, and ``CI`` is what separates the two cases.
     """
-    for candidate in programs:
-        found = shutil.which(candidate)
-        if found:
-            return found
-    pytest.skip(f"none of {', '.join(programs)} on PATH")
+    return require_program(*programs, install=install)
 
 
 @pytest.fixture(params=BACKENDS)
@@ -985,7 +987,7 @@ def backend_name(request: pytest.FixtureRequest) -> str:
     """Run the gate once per installed parser backend."""
     name = str(request.param)
     if not is_backend_available(name):
-        pytest.skip(f"{name} backend not available")
+        missing_toolchain(f"the {name} backend is not available", BACKEND_INSTALL[name])
     return name
 
 
@@ -1007,7 +1009,7 @@ def _build_c_library(
     :param extra_headers: further ``name -> text`` headers written beside the
         main one, for a fixture whose enum lives in an ``#include``.
     """
-    compiler = _require("cc", "gcc", "clang")
+    compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
     for extra_name, extra_text in (extra_headers or {}).items():
         (workdir / extra_name).write_text(extra_text, encoding="utf-8")
     (workdir / f"{basename}.h").write_text(header, encoding="utf-8")
@@ -1030,7 +1032,7 @@ def _build_cpp_library(workdir: Path, stem: str, *, header: str, source: str, ba
     library with ``ctypes.CDLL``. Without them the failure is "The specified
     module could not be found", naming neither the DLL nor MinGW.
     """
-    compiler = _require("c++", "g++", "clang++")
+    compiler = _require("c++", "g++", "clang++", install=CXX_INSTALL)
     (workdir / f"{basename}.h").write_text(header, encoding="utf-8")
     (workdir / f"{basename}.cpp").write_text(source, encoding="utf-8")
     out = workdir / shared_library_filename(stem)
@@ -1431,7 +1433,7 @@ class TestScaffoldedCtypesPackageRuns:
         is refused, and the gate pins that it stays loud rather than becoming a
         four-byte member.
         """
-        compiler = _require("cc", "gcc", "clang")
+        compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
         probe = tmp_path / "c23probe.c"
         probe.write_text("enum E : char { A = 0 };\nint main(void){return 0;}\n", encoding="utf-8")
         supported = subprocess.run(  # noqa: S603
@@ -1568,7 +1570,7 @@ class TestScaffoldedCtypesPackageRuns:
         eight, silently. ``underlying_type_known`` separates the two cases and
         this gate pins that the blind one stays loud.
         """
-        compiler = _require("cc", "gcc", "clang")
+        compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
         probe = tmp_path / "c23probe.c"
         probe.write_text("enum E : long long { A = 0 };\nint main(void){return 0;}\n", encoding="utf-8")
         supported = subprocess.run(  # noqa: S603
@@ -2563,8 +2565,8 @@ class TestScaffoldedNimPackageCompiles:
         ``importc`` compiles cleanly -- which is exactly how this defect stayed
         invisible.
         """
-        nim = _require("nim")
-        compiler = _require("cc", "gcc", "clang")
+        nim = _require("nim", install=NIM_INSTALL)
+        compiler = _require("cc", "gcc", "clang", install=CC_INSTALL)
         root = _scaffold_to("nim", tmp_path, "probe", backend_name=backend_name)
 
         work = tmp_path / "nimrun"
@@ -2634,7 +2636,7 @@ class TestScaffoldedNimPackageCompiles:
         detects it. Compilation stops at ``--compileOnly``: the tripwire wants
         the shared library at *runtime*, which the ctypes gates already cover.
         """
-        nim = _require("nim")
+        nim = _require("nim", install=NIM_INSTALL)
         root = _scaffold_to("nim", tmp_path, "probe", backend_name=backend_name)
         (root / "probe.h").write_text(FIXTURE_HEADER, encoding="utf-8")
 
