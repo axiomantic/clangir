@@ -666,22 +666,42 @@ C_NARROW_SOURCE = textwrap.dedent("""\
     int narrow1_a(Narrow1Holder h) { return (int)h.a; }
 """)
 
-#: A **two-hop** enum typedef chain onto a wide enum. The alias table follows a
-#: chain to a fixed point: one pass is enough for ``W1`` and not for ``W2``. The
-#: enum is deliberately wide, so a chain that fell back to the ``c_int`` default
-#: is four bytes against a real eight -- a size change rather than a name error.
+#: A two-hop enum typedef chain whose **second hop arrives out of order**.
+#:
+#: The alias table iterates to a fixed point. What that iteration is for is not
+#: the length of the chain -- the enums are already in the table before the
+#: typedef pass runs, so only the typedefs' order *relative to each other*
+#: matters, and C guarantees that in the source. It does not guarantee it in the
+#: IR: an ``#include`` puts the included file's declarations wherever the parser
+#: reports them, and libclang reports this one as ``[Typedef W2, Enum W,
+#: Typedef W1, Struct H]`` -- ``W2`` before the ``W1`` it depends on.
+#:
+#: An in-order chain resolves in a single pass, so a fixture that writes both
+#: typedefs in one file pins "the chain resolves at all" and not "the iteration
+#: is needed". An earlier version of this gate did exactly that, and a mutation
+#: reducing the loop to one pass left it green.
+CHAIN_HOP_HEADER = textwrap.dedent("""\
+    #ifndef CHAINHOP_H
+    #define CHAINHOP_H
+
+    typedef W1 W2;
+
+    #endif
+""")
+
 CHAIN_HEADER = textwrap.dedent("""\
     #ifndef CHAIN_H
     #define CHAIN_H
 
-    enum W : unsigned long long { W_LOW = 0, W_HIGH = 1 };
+    enum W { W_LOW = 0, W_HIGH = 1 };
     typedef enum W W1;
-    typedef W1 W2;
 
-    struct ChainHolder { W2 m; };
+    #include "chainhop.h"
 
-    extern "C" int chain_size(void);
-    extern "C" long long chain_m(ChainHolder h);
+    typedef struct { W2 m; } ChainHolder;
+
+    int chain_size(void);
+    int chain_m(ChainHolder h);
 
     #endif
 """)
@@ -689,8 +709,8 @@ CHAIN_HEADER = textwrap.dedent("""\
 CHAIN_SOURCE = textwrap.dedent("""\
     #include "chain.h"
 
-    extern "C" int chain_size(void) { return static_cast<int>(sizeof(ChainHolder)); }
-    extern "C" long long chain_m(ChainHolder h) { return static_cast<long long>(h.m); }
+    int chain_size(void) { return (int)sizeof(ChainHolder); }
+    int chain_m(ChainHolder h) { return (int)h.m; }
 """)
 
 #: The structural refusal case, in **C**. ``u64`` is not a ``CTYPES_TYPE_MAP``
@@ -1453,51 +1473,82 @@ class TestScaffoldedCtypesPackageRuns:
                 "tree-sitter sized an enum whose width clause its C grammar cannot represent, and "
                 "which leaves no parse error to notice"
             )
-            assert "Narrow1" in result.stderr, f"the import failed without naming the refused enum:\n{result.stderr}"
+            # Both halves, because ``returncode != 0`` alone passes for the
+            # wrong reason: a size assertion failing *inside* the script also
+            # exits non-zero. Not hypothetical -- run against the pre-fix
+            # detection this gate reports "ctypes lays out 4 bytes, the C
+            # compiler lays out 1", and the refusal branch accepts that
+            # unless the failure is pinned to an unbound name.
+            assert "NameError" in result.stderr and "Narrow1" in result.stderr, (
+                f"the import did not fail as a refused enum -- an assertion inside the script "
+                f"exits non-zero too:\n{result.stderr}"
+            )
 
-    def test_a_two_hop_enum_typedef_chain(self, tmp_path: Path, backend_name: str) -> None:
-        """``typedef enum W W1; typedef W1 W2;`` -- the second hop needs the fixed point.
+    def test_a_two_hop_enum_typedef_chain_arriving_out_of_order(self, tmp_path: Path, backend_name: str) -> None:
+        """The second hop is declared in an included file, so it arrives first.
 
-        The alias table iterates to a fixed point. One pass is enough to learn
-        that ``W1`` names the enum and not enough to learn it of ``W2``, so a
-        single-pass version leaves ``W2`` unresolved. Nothing else in this file
-        has a two-hop chain, so the iteration itself was previously claimed and
-        not gated -- and a mutation reducing it to one pass left the whole suite
-        green.
+        The alias table iterates to a fixed point, and this is what the iteration
+        is for. It is *not* chain length: the enums are in the table before the
+        typedef pass begins, so only the typedefs' order relative to each other
+        decides whether one pass suffices, and C guarantees that in the source.
+        The loop walks the IR, not the source, and an ``#include`` breaks the
+        guarantee -- libclang reports this header as ``[Typedef W2, Enum W,
+        Typedef W1, Struct H]``, with ``W2`` ahead of the ``W1`` it needs.
 
-        The enum is wide on purpose. A chain that fell back to the ``c_int``
-        default would be four bytes where the compiler lays out eight: a size
-        change rather than a name error, which is what the ``sizeof`` comparison
-        is here to catch.
+        One pass then leaves ``W2`` unresolved, the member renders as
+        ``("m", W2)`` in ``structs`` while ``W2 = ctypes.c_int`` lands in
+        ``typedefs`` after it, and the module raises ``NameError`` on import.
+
+        An earlier version of this gate wrote both typedefs into one file, where
+        a single pass is enough. It claimed in its own docstring to need the
+        fixed point, passed against an implementation that had none, and a
+        mutation reducing the loop to one pass left the whole suite green.
+
+        tree-sitter does not process includes, so it never sees ``W2`` declared
+        at all -- the same limitation the other include gates pin, and a loud
+        failure rather than a guessed member.
         """
-        library = _build_cpp_library(tmp_path, "chain", header=CHAIN_HEADER, source=CHAIN_SOURCE, basename="chain")
+        library = _build_c_library(
+            tmp_path,
+            "chain",
+            header=CHAIN_HEADER,
+            source=CHAIN_SOURCE,
+            basename="chain",
+            extra_headers={"chainhop.h": CHAIN_HOP_HEADER},
+        )
         root = _scaffold_to(
             "ctypes",
             tmp_path,
             "chain",
             backend_name=backend_name,
             header=CHAIN_HEADER,
-            filename="chain.hpp",
+            filename=str(tmp_path / "chain.h"),
         )
         script = textwrap.dedent("""\
             import ctypes
-            import os
             from chain import _bindings as b
 
-            lib = ctypes.CDLL(os.environ["CHAIN_LIBRARY"])
-            lib.chain_size.restype = ctypes.c_int
-            assert ctypes.sizeof(b.ChainHolder) == lib.chain_size(), (
-                f"ctypes lays out {ctypes.sizeof(b.ChainHolder)} bytes, the C++ compiler lays out "
-                f"{lib.chain_size()} -- the second hop of the alias chain was not followed"
+            assert ctypes.sizeof(b.ChainHolder) == b._lib.chain_size(), (
+                f"ctypes lays out {ctypes.sizeof(b.ChainHolder)} bytes, the C compiler lays out "
+                f"{b._lib.chain_size()}"
             )
-            lib.chain_m.argtypes = [b.ChainHolder]
-            lib.chain_m.restype = ctypes.c_longlong
-            assert lib.chain_m(b.ChainHolder(m=1)) == 1, "the chained member did not survive the call"
+            assert b._lib.chain_m(b.ChainHolder(m=1)) == 1, "the chained member did not survive the call"
             print("CHAIN-MATCH")
         """)
         result = _run_python(script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "CHAIN_LIBRARY": str(library)})
-        assert result.returncode == 0, f"a two-hop enum typedef chain is not usable:\n{result.stderr}"
-        assert "CHAIN-MATCH" in result.stdout
+        if backend_name == "libclang":
+            assert result.returncode == 0, (
+                f"the second hop was not resolved -- one pass over the IR is not enough:\n{result.stderr}"
+            )
+            assert "CHAIN-MATCH" in result.stdout
+        else:
+            assert result.returncode != 0, (
+                "tree-sitter resolved a typedef it never saw declared; if it now follows includes, "
+                "this gate should assert the success branch instead"
+            )
+            assert "W2" in result.stderr, (
+                f"the failure does not name the unresolved hop, so it may be unrelated:\n{result.stderr}"
+            )
 
     def test_a_fixed_underlying_type_in_a_c_header(self, tmp_path: Path, backend_name: str) -> None:
         """``enum E : long long`` in a **C** header, where the backends see differently.
@@ -1735,7 +1786,6 @@ class TestScaffoldedCtypesPackageRuns:
             )
             lib.aholder_x.argtypes = [b.AHolder]
             lib.aholder_x.restype = ctypes.c_int
-            inner = type(b.AHolder._fields_[0][1])
             assert lib.aholder_x(b.AHolder(m=b.AHolder._fields_[0][1](x=6))) == 6, (
                 "the namespaced member did not survive the call"
             )

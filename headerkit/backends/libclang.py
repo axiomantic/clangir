@@ -3350,7 +3350,9 @@ class ClangASTConverter:
             # ordinary identifier share a name, it is the whole difference
             # between an eight-byte record and a one-byte integer.
             if isinstance(result, CType):
-                result.is_elaborated = clang_type.spelling.startswith(("struct ", "union ", "enum "))
+                result.is_elaborated = any(
+                    token in ("struct", "union", "enum") for token in clang_type.spelling.split()
+                )
             return result
 
         # Handle record (struct/union) types

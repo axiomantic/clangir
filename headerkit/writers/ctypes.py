@@ -1105,12 +1105,12 @@ def _typedef_names(header: Header) -> frozenset[str]:
 #: fit here is representable as :data:`ENUM_CTYPE` under every ABI headerkit
 #: targets; one that does not is widened by the C compiler to something this
 #: writer cannot name, so it is not resolved at all.
+_INT32_MIN = -(2**31)
+_INT32_MAX = 2**31 - 1
+
 #: Keywords after which a trailing ``int`` says nothing, so ``unsigned long int``
 #: and ``unsigned long`` are one type.
 _C_INTEGER_MODIFIERS = frozenset({"unsigned", "signed", "short", "long"})
-
-_INT32_MIN = -(2**31)
-_INT32_MAX = 2**31 - 1
 
 
 def _normalised_c_integer(spelling: str) -> str:
@@ -1280,19 +1280,35 @@ def _enum_type_names(header: Header) -> dict[str, str]:
         for d in header.declarations
         if isinstance(d, Typedef) and d.name and isinstance(d.underlying_type, CType)
     }
-    # One pass, not a fixed point. C requires a typedef's target to be declared
-    # before the typedef, so ``targets`` is already in dependency order and each
-    # hop is resolved before the next one asks about it -- ``typedef enum W W1;
-    # typedef W1 W2;`` learns ``W1`` and then ``W2`` in the same sweep. An
-    # iterating version was written first and mutation proved the second
-    # iteration could never change an outcome.
+    # Iterated to a fixed point, because one pass is not enough.
+    #
+    # The enums are already in ``spellings`` before this runs, so what matters is
+    # not where the enum sits but the typedefs' order *relative to each other*:
+    # ``typedef W1 W2`` must be visited after ``typedef enum W W1``. C does
+    # guarantee that in the source, and this loop does not walk the source -- it
+    # walks the IR, and an ``#include`` places the included file's declarations
+    # wherever the parser reports them. A header that includes the second hop
+    # from another file arrives as ``[Typedef W2, Enum W, Typedef W1, Struct H]``
+    # under libclang, and a single pass leaves ``W2`` unresolved: the member
+    # renders as ``("m", W2)`` in ``structs`` while ``W2 = ctypes.c_int`` lands
+    # in ``typedefs``, which ``_SECTION_ORDER`` emits afterwards, so the module
+    # raises ``NameError`` on import.
+    #
+    # A previous revision replaced this with one pass on exactly that reasoning
+    # about C source order. The premise was true and the conclusion was not.
     enum_typedefs: set[str] = set()
-    for name, target in targets.items():
-        source = target if target in spellings else target.removeprefix("enum ")
-        resolved = spellings.get(source) or spellings.get(f"enum {source}")
-        if resolved:
-            spellings.setdefault(name, set()).update(resolved)
-            enum_typedefs.add(name)
+    changed = True
+    while changed:
+        changed = False
+        for name, target in targets.items():
+            if name in enum_typedefs:
+                continue
+            source = target if target in spellings else target.removeprefix("enum ")
+            resolved = spellings.get(source) or spellings.get(f"enum {source}")
+            if resolved:
+                spellings.setdefault(name, set()).update(resolved)
+                enum_typedefs.add(name)
+                changed = True
 
     shadow: set[str] = set()
     for d in header.declarations:

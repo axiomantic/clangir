@@ -1365,26 +1365,19 @@ class TestEnumWidthEstablishment:
     def test_an_enum_with_no_enumerators_and_no_declared_type_is_refused(self):
         """The vacuous-truth arm. An empty enumerator list must not read as 'fits'.
 
-        ``enum E;`` produces this on both backends and in both languages. With no
-        refusal the loop over ``values`` runs zero times and the function returns
-        ``ENUM_CTYPE`` having examined nothing -- which is how a previous revision
-        sized ``enum Fwd : long long;`` at four bytes against a real eight.
-        """
-        assert _enum_ctype(Enum(name="E", values=[])) is None
+        Without the refusal the loop over ``values`` runs zero times and the
+        function returns ``ENUM_CTYPE`` having examined nothing -- which is how a
+        previous revision sized ``enum Fwd : long long;`` at four bytes against a
+        real eight.
 
-    def test_an_empty_bodied_cpp_enum_is_refused_too_and_that_is_a_false_refusal(self):
-        """The same arm also catches a header that could have been sized.
-
-        ``enum E {};`` is a complete C++ enum with underlying type ``int``, and
-        ``struct H { E m; };`` is 4 bytes -- compile-verified. Both backends
-        report it as ``values=[] underlying_type=None``, exactly as they report
-        the opaque ``enum E;``, so this function cannot tell the two apart and
-        refuses both.
-
-        That is a *false* refusal, and it is pinned rather than fixed because the
-        cost is a loud failure on a header that could have been sized, against a
-        wrong width on one that could not. Separating them needs the IR to record
-        that a body was present. If it ever does, this assertion should flip.
+        Two different headers reach this same IR and both backends report them
+        identically, so the refusal covers both: the opaque ``enum E;``, where it
+        is right, and C++'s complete ``enum E {}``, whose underlying type is
+        ``int`` and where it is an over-refusal. Separating them needs the IR to
+        record that a body was present, which it does not; refusing both is the
+        safe direction, since the cost is a loud failure on a header that could
+        have been sized rather than a wrong width on one that could not. This
+        assertion should flip if body-presence is ever recorded.
         """
         assert _enum_ctype(Enum(name="E", values=[])) is None
 
@@ -1484,3 +1477,55 @@ class TestContestedTagElaboration:
         assert resolved == "Gauge", f"an unrecorded spelling was resolved to {resolved!r}"
         assert resolved != "Gauge_struct"
         assert resolved != "ctypes.c_ubyte"
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected"),
+    [
+        ("char", "ctypes.c_char"),
+        ("signed char", "ctypes.c_byte"),
+        ("unsigned short", "ctypes.c_ushort"),
+        ("_Bool", "ctypes.c_bool"),
+        ("long long", "ctypes.c_longlong"),
+        # ``int`` is the over-refusal, recorded deliberately. Under tree-sitter
+        # this enum is refused like the rest, even though its enumerators would
+        # have given the same answer the clause does. The refusal is a
+        # consequence of not being able to see the clause at all, not a judgement
+        # about this width, and pinning it means a future change that starts
+        # resolving it has to say so here.
+        ("int", ENUM_CTYPE),
+    ],
+)
+def test_every_fixed_underlying_width_across_both_backends(clause, expected):
+    """One compiled gate covers ``: char``; the rest are pinned on the IR.
+
+    ``C_NARROW_HEADER`` in ``test_scaffold_runs.py`` compiles and executes the
+    ``char`` case, and each additional spelling would need its own C library and
+    its own package -- a refused enum makes the whole module unimportable, so
+    they cannot share a header without masking one another. The widths are a
+    property of ``_enum_ctype`` and the backends' parse, so they are asserted
+    there instead.
+
+    The asymmetry is the point. libclang reads the clause and every spelling
+    resolves; tree-sitter's C grammar has no production for any of them, so all
+    six are refused -- including ``int``, where the enumerators would have
+    happened to agree.
+    """
+    from headerkit.backends import get_backend, is_backend_available
+
+    source = f"enum N : {clause} {{ A = 0 }};\n"
+
+    for name in ("libclang", "tree-sitter"):
+        if not is_backend_available(name):
+            continue
+        unit = get_backend(name).parse(source, "t.h")
+        decl = next(d for d in unit.declarations if isinstance(d, Enum))
+        if name == "libclang":
+            assert decl.underlying_type_known is True
+            assert _enum_ctype(decl) == expected, f"libclang sized `: {clause}` as {_enum_ctype(decl)}"
+        else:
+            assert decl.underlying_type_known is False, (
+                f"tree-sitter's C grammar reported it could see `: {clause}`; if it now can, this "
+                f"expectation should become {expected!r}"
+            )
+            assert _enum_ctype(decl) is None
