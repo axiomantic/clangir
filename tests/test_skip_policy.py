@@ -102,8 +102,9 @@ class TestRequireProgram:
     """``require_program`` resolves a real path, or routes the miss through the policy."""
 
     def test_returns_the_first_program_found(self) -> None:
+        """Windows resolves this to ``python3.EXE``, so the suffix is matched case-insensitively."""
         found = require_program("definitely-not-a-real-binary-xyz", "python3", install="irrelevant")
-        assert found.endswith(("python3", "python3.exe"))
+        assert found.lower().endswith(("python3", "python3.exe"))
 
     def test_single_missing_program_reads_naturally(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CI", "true")

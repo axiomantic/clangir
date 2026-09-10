@@ -49,7 +49,17 @@ jobs:
       # The Nim end-to-end gates -- the ones that compile, link and execute the
       # scaffolded output -- skipped on every leg because no workflow installed
       # Nim, and a skip is the same colour as a pass.
+      #
+      # macOS takes the Homebrew bottle rather than the action. No official Nim
+      # binary exists for macOS arm64, so the action falls back to building Nim
+      # from source, and that bootstrap compiles chronos/bearssl, which Apple
+      # clang now rejects outright (-Wincompatible-pointer-types is an error).
+      # The failure is upstream of this repo and unrelated to what the gates test.
+      - name: Install Nim (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nim
       - name: Install Nim
+        if: runner.os != 'macOS'
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
