@@ -20,11 +20,12 @@ has to survive being used:
 properties rather than local ones.** ``_require`` skips the whole test when no
 compiler is on PATH, so a machine without a toolchain reports green having
 executed nothing; and ``tree-sitter`` is an optional extra, so on a plain
-``pip install -e .[test]`` only the ``libclang`` parameter ever runs and the
-``[tree-sitter]`` id is silently absent rather than failing. "Parameterized over
-both backends" is therefore true of CI, where both are installed, and not
-necessarily of a local run -- check the test ids, not the exit status, when
-using these gates to judge a change. Making the skips loud would mean deciding
+``pip install -e .[test]`` only the ``libclang`` parameter runs a body and the
+``[tree-sitter]`` one reports a skip. A skip is visible in ``-rs`` output and
+invisible in a bare exit status, which is the trap: "parameterized over both
+backends" is true of CI, where both are installed, and is a claim about a local
+run that has to be checked rather than assumed. Read the test ids, not the exit
+status, when using these gates to judge a change. Making the skips loud would mean deciding
 what a contributor without a C++ toolchain should see, which is a change to
 every gate in this file and not one this file's newest additions should make
 alone.
@@ -75,6 +76,7 @@ import pytest
 from headerkit.backends import get_backend, is_backend_available
 from headerkit.ir import Enum, SourceUnit
 from headerkit.scaffold import ScaffoldOptions, scaffold
+from headerkit.writers.ctypes import _INT32_MAX, _INT32_MIN
 from tests.native_build import IS_WINDOWS, shared_library_command, shared_library_filename
 
 #: Every parser backend the writers can be driven from. Both are exercised
@@ -261,29 +263,119 @@ NS_SOURCE = textwrap.dedent("""\
     extern "C" int ns_size(void) { return static_cast<int>(sizeof(NsRec)); }
 """)
 
-#: A C++ ``enum class`` carrying a **fixed underlying type**. ``Enum`` records no
-#: underlying type, so this one byte of width is exactly the information the IR
-#: throws away -- and resolving it to ``ctypes.c_int`` anyway produces a record
-#: of 8 bytes where the C++ compiler lays out 2, which *imports cleanly*. This
-#: enum must therefore be refused rather than resolved, and the refusal is what
-#: the gate asserts. Sized deliberately so a wrong answer cannot coincide with
-#: the right one.
-SCOPED_HEADER = textwrap.dedent("""\
-    #ifndef SCOPED_H
-    #define SCOPED_H
+#: The three shapes where the header *declares* the underlying type, which is
+#: the only thing that decides an enum's width when it is present. C++11 allows
+#: it on a scoped enum and on an unscoped one alike, and an opaque declaration
+#: carries it with no enumerators at all -- so it cannot be reconstructed from
+#: the enumerators, which constrain the width from below and say nothing about a
+#: type chosen to be wider.
+#:
+#: Sizes are chosen so a wrong answer cannot coincide with the right one:
+#: ``SmallPair`` is 2 against 8 if both members become ``c_int``, ``WideHolder``
+#: is 8 against 4, and ``FwdHolder`` 8 against 4.
+UNDERLYING_HEADER = textwrap.dedent("""\
+    #ifndef UND_H
+    #define UND_H
 
-    enum class Small : unsigned char { S_LOW = 0, S_HIGH = 1 };
-    struct Pair { Small a; Small b; };
+    enum class Small : unsigned char { SM_LOW = 0, SM_HIGH = 1 };
+    enum Wide : unsigned long long { WD_LOW = 0, WD_HIGH = 1 };
+    enum Fwd : long long;
 
-    extern "C" int pair_size(void);
+    struct SmallPair { Small a; Small b; };
+    struct WideHolder { Wide m; };
+    struct FwdHolder { Fwd m; };
+
+    extern "C" int smallpair_size(void);
+    extern "C" int wideholder_size(void);
+    extern "C" int fwdholder_size(void);
+    extern "C" int smallpair_b(SmallPair p);
+    extern "C" long long wideholder_m(WideHolder h);
 
     #endif
 """)
 
-SCOPED_SOURCE = textwrap.dedent("""\
-    #include "scoped.h"
+UNDERLYING_SOURCE = textwrap.dedent("""\
+    #include "und.h"
 
-    extern "C" int pair_size(void) { return static_cast<int>(sizeof(Pair)); }
+    extern "C" int smallpair_size(void) { return static_cast<int>(sizeof(SmallPair)); }
+    extern "C" int wideholder_size(void) { return static_cast<int>(sizeof(WideHolder)); }
+    extern "C" int fwdholder_size(void) { return static_cast<int>(sizeof(FwdHolder)); }
+    extern "C" int smallpair_b(SmallPair p) { return static_cast<int>(p.b); }
+    extern "C" long long wideholder_m(WideHolder h) { return static_cast<long long>(h.m); }
+""")
+
+#: A plain C enum with a **negative** enumerator. Nothing else in this file
+#: carries one, so the lower half of the range check -- and the ordinary signed
+#: path through the writer -- would otherwise be proven by no gate at all.
+NEG_HEADER = textwrap.dedent("""\
+    #ifndef NEGENUM_H
+    #define NEGENUM_H
+
+    enum Neg { NEG_LOW = -5, NEG_HIGH = 5 };
+    typedef struct { enum Neg m; } NegHolder;
+
+    int neg_size(void);
+    int neg_m(NegHolder h);
+
+    #endif
+""")
+
+NEG_SOURCE = textwrap.dedent("""\
+    #include "negenum.h"
+
+    int neg_size(void) { return (int)sizeof(NegHolder); }
+    int neg_m(NegHolder h) { return (int)h.m; }
+""")
+
+#: Two records sharing a tag in different namespaces. A record's namespace is
+#: flattened out of its class name, so both emit ``class Inner`` and the second
+#: wins -- and a member meaning ``a::Inner`` would silently receive ``b::Inner``,
+#: which is four times the size. Neither is resolved.
+NS_COLLIDE_HEADER = textwrap.dedent("""\
+    #ifndef NSCOL_H
+    #define NSCOL_H
+
+    namespace a { struct Inner { int x; }; }
+    namespace b { struct Inner { double p; double q; }; }
+
+    struct AHolder { a::Inner m; };
+
+    extern "C" int aholder_size(void);
+
+    #endif
+""")
+
+NS_COLLIDE_SOURCE = textwrap.dedent("""\
+    #include "nscol.h"
+
+    extern "C" int aholder_size(void) { return static_cast<int>(sizeof(AHolder)); }
+""")
+
+#: A record tag an ordinary identifier also binds. Tags and ordinary identifiers
+#: are separate C namespaces, so both are legal in one unit and mean different
+#: types -- 8 bytes and 1. Python has one namespace, so binding the class takes
+#: the name from the typedef and a ``Gauge g;`` member silently becomes the
+#: record. Neither meaning can have the name, so the record is not emitted and
+#: **both** spellings fail loudly. Both directions are asserted: a control that
+#: exercised only the safe one would not be a control.
+TAG_COLLIDE_HEADER = textwrap.dedent("""\
+    #ifndef TAGCOL_H
+    #define TAGCOL_H
+
+    struct Gauge { int lo; int hi; };
+    typedef unsigned char Gauge;
+
+    typedef struct { struct Gauge g; } ByTagUser;
+
+    int gauge_size(void);
+
+    #endif
+""")
+
+TAG_COLLIDE_SOURCE = textwrap.dedent("""\
+    #include "tagcol.h"
+
+    int gauge_size(void) { return (int)sizeof(struct Gauge); }
 """)
 
 #: A C enum with an enumerator too wide for an ``int``. The C compiler widens the
@@ -375,11 +467,6 @@ IMPLICIT_SOURCE = textwrap.dedent("""\
 #: the class this writer emits. So there is no width question here, and no
 #: fallback -- a record the header does not declare keeps its C spelling.
 #:
-#: ``struct Gauge`` beside ``typedef unsigned char Gauge`` is the mirror of the
-#: ``Tone`` control: a tag and an ordinary identifier are separate namespaces in
-#: C, so both are legal in one unit and mean different types. The tag-spelled
-#: member must still resolve to the *record* while that collision exists. Sized
-#: 8 against 1 so a confusion between them cannot go unnoticed.
 RECORD_HEADER = textwrap.dedent("""\
     #ifndef RECS_H
     #define RECS_H
@@ -392,10 +479,6 @@ RECORD_HEADER = textwrap.dedent("""\
     typedef struct { struct Inner arr[4]; } RecArray;
     typedef struct { struct Inner *p; } RecPointer;
 
-    struct Gauge { int lo; int hi; };
-    typedef unsigned char Gauge;
-    typedef struct { struct Gauge g; } Shadowed2;
-
     int inner_sum(struct Inner v);
     struct Inner inner_make(int a, int b);
 
@@ -403,13 +486,11 @@ RECORD_HEADER = textwrap.dedent("""\
     int unionmember_size(void);
     int recarray_size(void);
     int recpointer_size(void);
-    int shadowed2_size(void);
 
     int bytag_n_b(ByTag v);
     int unionmember_i(UnionMember v);
     int recarray_at(RecArray v, int i);
     int recpointer_b(RecPointer v);
-    int shadowed2_hi(Shadowed2 v);
 
     #endif
 """)
@@ -424,13 +505,11 @@ RECORD_SOURCE = textwrap.dedent("""\
     int unionmember_size(void) { return (int)sizeof(UnionMember); }
     int recarray_size(void) { return (int)sizeof(RecArray); }
     int recpointer_size(void) { return (int)sizeof(RecPointer); }
-    int shadowed2_size(void) { return (int)sizeof(Shadowed2); }
 
     int bytag_n_b(ByTag v) { return v.n.b; }
     int unionmember_i(UnionMember v) { return v.u.i; }
     int recarray_at(RecArray v, int i) { return v.arr[i].b; }
     int recpointer_b(RecPointer v) { return v.p->b; }
-    int shadowed2_hi(Shadowed2 v) { return v.g.hi; }
 """)
 
 #: A tag-named record inside a **packed** record. This is the consumer the
@@ -502,6 +581,59 @@ NS_RECORD_SOURCE = textwrap.dedent("""\
 
     extern "C" int nsrec_b(NsRecHolder h) { return h.m.b; }
     extern "C" int nsrec_size(void) { return static_cast<int>(sizeof(NsRecHolder)); }
+""")
+
+#: An enumerator below ``INT32_MIN``. Every other refusal fixture is over-wide
+#: at the *top* of the range, so the lower bound of the check would otherwise be
+#: proven by nothing -- and a check broken only at the bottom would pass them
+#: all. C widens the enum to 8 bytes; resolving it to ``c_int`` gives 4.
+VERYNEG_HEADER = textwrap.dedent("""\
+    #ifndef VNENUM_H
+    #define VNENUM_H
+
+    enum VeryNeg { VN_LOW = -5000000000, VN_HIGH = 0 };
+    typedef struct { enum VeryNeg m; } VeryNegHolder;
+
+    int veryneg_size(void);
+
+    #endif
+""")
+
+VERYNEG_SOURCE = textwrap.dedent("""\
+    #include "vnenum.h"
+
+    int veryneg_size(void) { return (int)sizeof(VeryNegHolder); }
+""")
+
+#: A record whose **tag is a standard type name**. Tags and ordinary identifiers
+#: are separate namespaces in C, so ``struct size_t`` is legal beside the
+#: ``size_t`` from ``<stddef.h>``, and a bare ``size_t`` still means the integer.
+#: The record is three ints so the two readings cannot coincide: 8 against 12.
+#:
+#: This is what forces the header's own tables to be consulted *after*
+#: ``CTYPES_TYPE_MAP`` rather than before it. The system typedef is not in this
+#: header, so nothing marks the tag as contested -- the ordering is the only
+#: thing standing between a bare ``size_t`` and the record class.
+BUILTIN_TAG_HEADER = textwrap.dedent("""\
+    #ifndef BTAG_H
+    #define BTAG_H
+
+    #include <stddef.h>
+
+    struct size_t { int a; int b; int c; };
+    typedef struct { size_t v; } SizeHolder;
+
+    int sizeholder_size(void);
+    int sizeholder_v(SizeHolder h);
+
+    #endif
+""")
+
+BUILTIN_TAG_SOURCE = textwrap.dedent("""\
+    #include "btag.h"
+
+    int sizeholder_size(void) { return (int)sizeof(SizeHolder); }
+    int sizeholder_v(SizeHolder h) { return (int)h.v; }
 """)
 
 #: An enum with a *computed* enumerator, which the two backends disagree about:
@@ -607,10 +739,15 @@ INCLUDING_SOURCE = textwrap.dedent("""\
 
 
 def _require(*programs: str) -> str:
-    """Return the first of ``programs`` on PATH, or skip.
+    """Return the first of ``programs`` on PATH, or skip the calling test.
 
-    The skip is narrow on purpose: a gate that quietly no-ops when its toolchain
-    is missing proves nothing while reporting green.
+    **This is the no-op-green mode, not a guard against it.** A gate that calls
+    this before doing anything asserts nothing at all on a machine with no
+    compiler, and a bare exit status cannot tell that apart from a gate that ran.
+    The skip is reported, so ``-rs`` shows it; nothing else does. Kept because
+    the alternative -- failing the suite for every contributor without a C++
+    toolchain -- is a decision for the whole file rather than for its newest
+    tests, but do not read it as protection.
     """
     for candidate in programs:
         found = shutil.which(candidate)
@@ -720,17 +857,16 @@ def _parser_reports_over_wide_enumerator(backend_name: str, header: str, filenam
     could deliver. Asking the parser directly is what lets that host be named and
     passed over instead of failing for the wrong reason.
 
-    The range test is the same one :func:`headerkit.writers.ctypes._enum_fits_int`
-    applies, and deliberately so: a *signed* comparison, not an absolute value.
-    -2147483648 is inside the range and 2147483648 is outside it, and conflating
-    the two is exactly how this check first failed to fire on Windows.
+    The bounds are imported from the writer rather than restated, so the check
+    cannot drift from the rule it mirrors. The comparison is *signed*, not an
+    absolute value: -2147483648 is inside the range and 2147483648 is outside
+    it, and conflating the two is exactly how this check first failed to fire on
+    Windows.
     """
     unit = _parse(backend_name, header, filename)
-    headers = unit.headers if hasattr(unit, "headers") else [unit]
     return any(
-        isinstance(v.value, int) and not -(2**31) <= v.value <= 2**31 - 1
-        for h in headers
-        for d in h.declarations
+        isinstance(v.value, int) and not _INT32_MIN <= v.value <= _INT32_MAX
+        for d in unit.declarations
         if isinstance(d, Enum)
         for v in d.values
     )
@@ -1004,6 +1140,217 @@ class TestScaffoldedCtypesPackageRuns:
         assert result.returncode == 0, f"the namespaced enum member is not usable:\n{result.stderr}"
         assert "NS-MATCH" in result.stdout
 
+    def test_a_declared_underlying_type_decides_the_width(self, tmp_path: Path, backend_name: str) -> None:
+        """When the header declares the underlying type, that is the width. Exactly.
+
+        C++11 allows a fixed underlying type on a scoped enum *and* on an
+        unscoped one, and an opaque declaration carries one with no enumerators
+        at all. It cannot be reconstructed from the enumerators, which constrain
+        the width from below and say nothing about a type chosen to be wider --
+        which is why an earlier revision, keyed on ``is_scoped``, still sized
+        ``enum Wide : unsigned long long`` as an ``int`` and imported cleanly
+        while doing it.
+
+        Every size is compared against what the C++ compiler laid out, and the
+        two enums with enumerators also cross the ABI by value: a member of the
+        wrong width still round-trips a small value, and a right-sized member
+        says nothing about which member the value reached.
+        """
+        library = _build_cpp_library(
+            tmp_path, "und", header=UNDERLYING_HEADER, source=UNDERLYING_SOURCE, basename="und"
+        )
+        root = _scaffold_to(
+            "ctypes", tmp_path, "und", backend_name=backend_name, header=UNDERLYING_HEADER, filename="und.hpp"
+        )
+        script = textwrap.dedent("""\
+            import ctypes
+            import os
+            from und import _bindings as b
+
+            lib = ctypes.CDLL(os.environ["UND_LIBRARY"])
+            for fn in ("smallpair_size", "wideholder_size", "fwdholder_size", "smallpair_b"):
+                getattr(lib, fn).restype = ctypes.c_int
+            lib.wideholder_m.restype = ctypes.c_longlong
+
+            for name, size_fn in (
+                ("SmallPair", lib.smallpair_size),
+                ("WideHolder", lib.wideholder_size),
+                ("FwdHolder", lib.fwdholder_size),
+            ):
+                cls = getattr(b, name)
+                assert ctypes.sizeof(cls) == size_fn(), (
+                    f"{name}: ctypes lays out {ctypes.sizeof(cls)} bytes, "
+                    f"the C++ compiler lays out {size_fn()}"
+                )
+
+            lib.smallpair_b.argtypes = [b.SmallPair]
+            assert lib.smallpair_b(b.SmallPair(a=0, b=1)) == 1, "the narrow member did not survive the call"
+            lib.wideholder_m.argtypes = [b.WideHolder]
+            assert lib.wideholder_m(b.WideHolder(m=1)) == 1, "the wide member did not survive the call"
+            print("UNDERLYING-MATCH")
+        """)
+        result = _run_python(script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "UND_LIBRARY": str(library)})
+        assert result.returncode == 0, f"a declared underlying type is not honoured:\n{result.stderr}"
+        assert "UNDERLYING-MATCH" in result.stdout
+
+    def test_a_record_tag_does_not_capture_a_standard_type_name(self, tmp_path: Path, backend_name: str) -> None:
+        """``struct size_t`` must not make a bare ``size_t`` mean the record.
+
+        Tags and ordinary identifiers are separate namespaces in C, so a header
+        may declare ``struct size_t`` beside the ``size_t`` it includes, and a
+        bare ``size_t`` still means the integer. The system typedef is not a
+        declaration *in this header*, so nothing marks the tag as contested --
+        the only thing separating the two is that the header's own tables are
+        consulted after ``CTYPES_TYPE_MAP`` rather than before it.
+
+        The record is deliberately three ints: at two, both readings would be
+        eight bytes and the gate could not tell them apart.
+        """
+        library = _build_c_library(
+            tmp_path, "btag", header=BUILTIN_TAG_HEADER, source=BUILTIN_TAG_SOURCE, basename="btag"
+        )
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "btag",
+            backend_name=backend_name,
+            header=BUILTIN_TAG_HEADER,
+            filename="btag.h",
+        )
+        script = textwrap.dedent("""\
+            import ctypes
+            from btag import _bindings as b
+
+            assert ctypes.sizeof(b.SizeHolder) == b._lib.sizeholder_size(), (
+                f"ctypes lays out {ctypes.sizeof(b.SizeHolder)} bytes, "
+                f"the C compiler lays out {b._lib.sizeholder_size()} -- the tag captured the type name"
+            )
+            assert b._lib.sizeholder_v(b.SizeHolder(v=7)) == 7, "the member did not survive the call"
+            print("BTAG-MATCH")
+        """)
+        result = _run_python(script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "BTAG_LIBRARY": str(library)})
+        assert result.returncode == 0, f"a record tag captured a standard type name:\n{result.stderr}"
+        assert "BTAG-MATCH" in result.stdout
+
+    def test_a_negative_enumerator_is_ordinary(self, tmp_path: Path, backend_name: str) -> None:
+        """A negative enumerator resolves and round-trips, and pins the lower bound.
+
+        Every other enum fixture in this file is non-negative, so the lower half
+        of the writer's range check -- and the ordinary signed path through it --
+        would be proven by nothing. -5 is well inside the range and must simply
+        work; it is here so that a range check broken at the bottom cannot pass.
+        """
+        library = _build_c_library(tmp_path, "negenum", header=NEG_HEADER, source=NEG_SOURCE, basename="negenum")
+        root = _scaffold_to(
+            "ctypes", tmp_path, "negenum", backend_name=backend_name, header=NEG_HEADER, filename="negenum.h"
+        )
+        script = textwrap.dedent("""\
+            import ctypes
+            from negenum import _bindings as b
+
+            assert b.NEG_LOW == -5
+            assert ctypes.sizeof(b.NegHolder) == b._lib.neg_size(), (
+                f"ctypes lays out {ctypes.sizeof(b.NegHolder)} bytes, "
+                f"the C compiler lays out {b._lib.neg_size()}"
+            )
+            assert b._lib.neg_m(b.NegHolder(m=-5)) == -5, "the negative enumerator did not survive the call"
+            print("NEG-MATCH")
+        """)
+        result = _run_python(
+            script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "NEGENUM_LIBRARY": str(library)}
+        )
+        assert result.returncode == 0, f"a negative enumerator is not usable:\n{result.stderr}"
+        assert "NEG-MATCH" in result.stdout
+
+    def test_two_records_sharing_a_tag_across_namespaces_are_refused(self, tmp_path: Path, backend_name: str) -> None:
+        """``a::Inner`` must not be handed ``b::Inner`` because the class names collide.
+
+        A record's namespace is flattened out of its class name, so both emit
+        ``class Inner`` and the second overwrites the first. Resolving the
+        qualified spelling to that survivor gives a member the wrong record --
+        four bytes against sixteen -- and the module imports and computes wrong
+        answers. Neither is resolved.
+
+        The ambiguity is invisible from any single spelling: every key maps to
+        the one surviving class perfectly consistently.
+        """
+        library = _build_cpp_library(
+            tmp_path, "nscol", header=NS_COLLIDE_HEADER, source=NS_COLLIDE_SOURCE, basename="nscol"
+        )
+        probe = textwrap.dedent("""\
+            import ctypes, os
+            lib = ctypes.CDLL(os.environ["PROBE_LIB"])
+            lib.aholder_size.restype = ctypes.c_int
+            print(lib.aholder_size())
+        """)
+        measured = _run_python(probe, cwd=tmp_path, env={"PROBE_LIB": str(library)})
+        assert measured.returncode == 0, f"could not read the compiled size:\n{measured.stderr}"
+        real = int(measured.stdout.strip())
+        assert real == 4, f"fixture no longer discriminates: a::Inner holder is {real} bytes, not 4"
+
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "nscol",
+            backend_name=backend_name,
+            header=NS_COLLIDE_HEADER,
+            filename="nscol.hpp",
+        )
+        result = _run_python(
+            "import nscol",
+            cwd=tmp_path,
+            env={"PYTHONPATH": str(root / "src"), "NSCOL_LIBRARY": str(library)},
+        )
+        assert result.returncode != 0, (
+            "the package imported, so a::Inner was resolved to some class despite the collision"
+        )
+        assert "Inner" in result.stderr, f"the import failed without naming the ambiguous record:\n{result.stderr}"
+
+    def test_a_tag_an_ordinary_identifier_also_binds_is_refused_both_ways(
+        self, tmp_path: Path, backend_name: str
+    ) -> None:
+        """``struct Gauge`` beside ``typedef unsigned char Gauge`` — both directions.
+
+        Tags and ordinary identifiers are separate namespaces in C, so both are
+        legal in one unit and mean different types: 8 bytes and 1. Python has one
+        namespace. Binding the class takes the name from the typedef, and then a
+        ``Gauge g;`` member -- one byte in C -- silently becomes the record.
+
+        Neither meaning can have the name without taking it from the other, so
+        the record is not emitted and both spellings fail loudly. **Both**
+        directions are asserted here on purpose: an earlier revision of this
+        branch tested only the elaborated spelling, which is the safe one, and a
+        control that omits the failing direction is not a control.
+        """
+        library = _build_c_library(
+            tmp_path, "tagcol", header=TAG_COLLIDE_HEADER, source=TAG_COLLIDE_SOURCE, basename="tagcol"
+        )
+        probe = textwrap.dedent("""\
+            import ctypes, os
+            lib = ctypes.CDLL(os.environ["PROBE_LIB"])
+            lib.gauge_size.restype = ctypes.c_int
+            print(lib.gauge_size())
+        """)
+        measured = _run_python(probe, cwd=tmp_path, env={"PROBE_LIB": str(library)})
+        assert measured.returncode == 0, f"could not read the compiled size:\n{measured.stderr}"
+        assert int(measured.stdout.strip()) == 8, "fixture no longer discriminates the two meanings"
+
+        root = _scaffold_to(
+            "ctypes",
+            tmp_path,
+            "tagcol",
+            backend_name=backend_name,
+            header=TAG_COLLIDE_HEADER,
+            filename="tagcol.h",
+        )
+        result = _run_python(
+            "import tagcol",
+            cwd=tmp_path,
+            env={"PYTHONPATH": str(root / "src"), "TAGCOL_LIBRARY": str(library)},
+        )
+        assert result.returncode != 0, "the package imported; one of the two meanings of Gauge silently took the name"
+        assert "Gauge" in result.stderr, f"the import failed without naming the contested identifier:\n{result.stderr}"
+
     def test_an_enum_whose_width_is_unprovable_is_refused_not_mis_sized(
         self, tmp_path: Path, backend_name: str
     ) -> None:
@@ -1027,19 +1374,16 @@ class TestScaffoldedCtypesPackageRuns:
         to import rather than producing it.
         """
         cases = (
-            ("scoped", _build_cpp_library, SCOPED_HEADER, SCOPED_SOURCE, "scoped", "scoped.hpp", "pair_size"),
-            ("bigenum", _build_c_library, BIG_HEADER, BIG_SOURCE, "bigenum", "bigenum.h", "big_size"),
-            ("bigtenum", _build_c_library, BIGT_HEADER, BIGT_SOURCE, "bigtenum", "bigtenum.h", "bigt_size"),
+            ("bigenum", BIG_HEADER, BIG_SOURCE, "bigenum", "bigenum.h", "big_size", "Big"),
+            ("bigtenum", BIGT_HEADER, BIGT_SOURCE, "bigtenum", "bigtenum.h", "bigt_size", "BigT"),
+            ("vnenum", VERYNEG_HEADER, VERYNEG_SOURCE, "vnenum", "vnenum.h", "veryneg_size", "VeryNeg"),
         )
         exercised: list[str] = []
         skipped: list[str] = []
-        for pkg, build, header, source, basename, filename, size_fn in cases:
+        for pkg, header, source, basename, filename, size_fn, symbol in cases:
             work = tmp_path / pkg
             work.mkdir()
-            if build is _build_cpp_library:
-                library = build(work, pkg, header=header, source=source, basename=basename)
-            else:
-                library = build(work, pkg, header=header, source=source, basename=basename)
+            library = _build_c_library(work, pkg, header=header, source=source, basename=basename)
 
             # The compiler's own answer, so "would have been wrong" is measured
             # rather than assumed.
@@ -1052,7 +1396,7 @@ class TestScaffoldedCtypesPackageRuns:
             measured = _run_python(probe, cwd=work, env={"PROBE_LIB": str(library)})
             assert measured.returncode == 0, f"{pkg}: could not read the compiled size:\n{measured.stderr}"
             real = int(measured.stdout.strip())
-            naive = ctypes.sizeof(ctypes.c_int) * (2 if pkg == "scoped" else 1)
+            naive = ctypes.sizeof(ctypes.c_int)
             assert real != naive, (
                 f"{pkg}: fixture no longer discriminates -- C lays out {real} bytes, "
                 f"which is what resolving to c_int would also give"
@@ -1060,7 +1404,7 @@ class TestScaffoldedCtypesPackageRuns:
 
             # A value-based case is only meaningful where the parser agrees with
             # the compiler that the enum is over-wide; see ``_parser_reports_over_wide_enumerator``.
-            if pkg != "scoped" and not _parser_reports_over_wide_enumerator(backend_name, header, filename):
+            if not _parser_reports_over_wide_enumerator(backend_name, header, filename):
                 skipped.append(
                     f"{pkg}: {backend_name} reports every enumerator inside int range while this host's "
                     f"C compiler lays out {real} bytes"
@@ -1078,14 +1422,17 @@ class TestScaffoldedCtypesPackageRuns:
                 f"{pkg}: the package imported, so the unsizable enum was resolved anyway -- "
                 f"C lays out {real} bytes and this module would report {naive}"
             )
-            assert "SyntaxError" in result.stderr or "NameError" in result.stderr, (
-                f"{pkg}: the import failed for some reason other than the refused enum:\n{result.stderr}"
+            assert symbol in result.stderr, (
+                f"{pkg}: the import failed without naming the refused enum {symbol!r}, "
+                f"so it may have failed for an unrelated reason:\n{result.stderr}"
             )
 
-        # A gate that passed over every case would report green having asserted
-        # nothing. The scoped case is structural rather than value-based, so it
-        # is never passed over and this cannot be vacuous on any host.
-        assert "scoped" in exercised, f"no refusal case ran; passed over: {skipped}"
+        # A gate that passed over some cases and reported green would be
+        # asserting less than it claims, so every case is required by name
+        # rather than the count being trusted.
+        assert exercised == [pkg for pkg, *_ in cases], (
+            f"only {exercised} of {[pkg for pkg, *_ in cases]} ran; passed over: {skipped}"
+        )
 
     def test_an_implicit_enumerator_past_int_range_is_refused(self, tmp_path: Path, backend_name: str) -> None:
         """An enumerator with no initialiser still has a value, and it can overflow.
@@ -1141,8 +1488,9 @@ class TestScaffoldedCtypesPackageRuns:
         assert result.returncode != 0, (
             f"the package imported, so an enum holding {value} was bound as a signed 32-bit member"
         )
-        assert "SyntaxError" in result.stderr or "NameError" in result.stderr, (
-            f"the import failed for some reason other than the refused enum:\n{result.stderr}"
+        assert "Roll" in result.stderr, (
+            f"the import failed without naming the refused enum, so it may have failed for an "
+            f"unrelated reason:\n{result.stderr}"
         )
 
     def test_an_unevaluated_enumerator_is_refused_where_the_backend_left_it(
@@ -1273,9 +1621,6 @@ class TestScaffoldedCtypesPackageRuns:
         the C compiler's own ``sizeof`` and every member crosses the ABI by value,
         because a member resolved to the wrong class still imports.
 
-        ``struct Gauge`` beside ``typedef unsigned char Gauge`` is the control: the
-        tag must keep meaning the eight-byte record while an ordinary identifier
-        of the same spelling means one byte.
         """
         library = _build_c_library(tmp_path, "recs", header=RECORD_HEADER, source=RECORD_SOURCE, basename="recs")
         root = _scaffold_to(
@@ -1291,7 +1636,6 @@ class TestScaffoldedCtypesPackageRuns:
                 ("UnionMember", lib.unionmember_size),
                 ("RecArray", lib.recarray_size),
                 ("RecPointer", lib.recpointer_size),
-                ("Shadowed2", lib.shadowed2_size),
             ):
                 cls = getattr(b, name)
                 assert ctypes.sizeof(cls) == size_fn(), (
@@ -1317,10 +1661,6 @@ class TestScaffoldedCtypesPackageRuns:
             assert lib.inner_sum(b.Inner(a=2, b=3)) == 5, "the tag-named parameter did not survive"
             lib.inner_make.restype = b.Inner
             assert lib.inner_make(4, 9).b == 9, "the tag-named return type did not survive"
-
-            # Control: the tag still means the record, not the ordinary identifier.
-            assert ctypes.sizeof(b.Gauge) == 8, f"the tag lost to the typedef: {ctypes.sizeof(b.Gauge)}"
-            assert lib.shadowed2_hi(b.Shadowed2(g=b.Gauge(lo=1, hi=6))) == 6, "the shadowed tag member is wrong"
             print("RECORDS-MATCH")
         """)
         result = _run_python(script, cwd=tmp_path, env={"PYTHONPATH": str(root / "src"), "RECS_LIBRARY": str(library)})
@@ -1393,8 +1733,9 @@ class TestScaffoldedCtypesPackageRuns:
             env={"PYTHONPATH": str(root / "src"), "OPAQUE_LIBRARY": str(library)},
         )
         assert result.returncode != 0, "the package imported; an incomplete record was bound to something"
-        assert "SyntaxError" in result.stderr or "NameError" in result.stderr, (
-            f"the import failed for some reason other than the incomplete record:\n{result.stderr}"
+        assert "Unknown" in result.stderr, (
+            f"the import failed without naming the incomplete record, so it may have failed for an "
+            f"unrelated reason:\n{result.stderr}"
         )
 
     def test_a_namespaced_cpp_record_member_matches_the_cpp_abi(self, tmp_path: Path, backend_name: str) -> None:

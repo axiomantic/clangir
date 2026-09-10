@@ -1537,6 +1537,15 @@ class TreeSitterBackend:
         # off the source text would misread ``enum E { classic }``.
         is_scoped = any(child.type in ("class", "struct") for child in node.children)
 
+        # ``enum E : unsigned char`` puts the underlying type in the grammar's
+        # ``base`` field, on scoped and unscoped enums alike. Reading the field
+        # keeps this structural; taking it off the source text would be the
+        # regex-over-AST that AGENTS.md forbids, and would misread a ``:`` in an
+        # attribute or a bit-field. Absent field means the header declared none,
+        # which is the same thing the libclang backend records as None.
+        base_node = node.child_by_field_name("base")
+        underlying_type = _node_text(base_node).strip() if base_node else None
+
         values: list[EnumValue] = []
         if body_node:
             current_int = 0
@@ -1575,6 +1584,7 @@ class TreeSitterBackend:
             location=loc,
             is_scoped=is_scoped,
             cpp_name=cpp_name,
+            underlying_type=underlying_type,
         )
 
         # An opaque `enum E : int;` and its later definition are one entity. Emitting

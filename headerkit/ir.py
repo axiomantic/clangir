@@ -476,6 +476,20 @@ class Enum:
         the top level and loses its enclosing record, so ``class C { enum M; }``
         records ``C::M`` here; ``None`` means ``namespace``-plus-``name`` is the
         whole spelling.
+    :param underlying_type: The integer type the enum is represented as, as a C
+        type spelling such as ``"unsigned char"`` or ``"long long"``, or None
+        when the parser did not report one.
+
+        C leaves this implementation-defined, requiring only that it represent
+        every enumerator, and both C++11 forms may fix it explicitly -- on a
+        scoped enum (``enum class E : unsigned char``) *and* on an unscoped one
+        (``enum E : unsigned long long``). It cannot be reconstructed from the
+        enumerators: they constrain the width from below and say nothing about a
+        type chosen to be wider, and an opaque declaration such as
+        ``enum Fwd : long long;`` has no enumerators at all. A consumer that
+        must know the width -- any binding generator, since this is the size and
+        signedness of every value crossing the ABI -- has to be told, so it is
+        recorded here rather than guessed at downstream.
 
     Examples
     --------
@@ -499,6 +513,7 @@ class Enum:
     location: SourceLocation | None = None
     is_scoped: bool = False
     cpp_name: str | None = None
+    underlying_type: str | None = None
 
     @property
     def qualified_name(self) -> str | None:

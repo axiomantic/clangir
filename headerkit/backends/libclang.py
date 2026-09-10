@@ -2705,8 +2705,35 @@ class ClangASTConverter:
             location=self._get_location(cursor),
             is_scoped=bool(self.is_cplus and cursor.is_scoped_enum()),
             cpp_name=cpp_name,
+            underlying_type=self._enum_fixed_underlying_type(cursor),
         )
         self.declarations.append(enum)
+
+    @staticmethod
+    def _enum_fixed_underlying_type(cursor: Any) -> str | None:
+        """The underlying type an enum *declares*, or None when it declares none.
+
+        ``cursor.enum_type`` is always populated: for an enum with no fixed
+        underlying type it reports whichever integer type the compiler chose,
+        which is a property of this host rather than of the header. Recording
+        that would make the IR -- and every binding generated from it --
+        disagree with the tree-sitter backend, which can only see what the
+        source wrote. So the token stream decides whether there is anything to
+        record, and ``enum_type`` supplies the spelling once there is.
+
+        The declaration head is scanned for a bare ``:`` before the body or the
+        terminating ``;``. libclang tokenises ``::`` as one token, so a
+        qualified name in an attribute cannot be mistaken for the clause.
+        """
+        for token in cursor.get_tokens():
+            spelling = token.spelling
+            if spelling in ("{", ";"):
+                return None
+            if spelling == ":":
+                enum_type = getattr(cursor, "enum_type", None)
+                type_spelling = getattr(enum_type, "spelling", None)
+                return str(type_spelling) if type_spelling else None
+        return None
 
     def _process_function(self, cursor: Any) -> None:
         """Process a function or function template declaration."""

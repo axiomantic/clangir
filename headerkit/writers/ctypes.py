@@ -141,16 +141,22 @@ class _TypeTable:
     because whether a name resolves -- and to *what* -- is a property of the
     whole header, so it is answered once per header and carried in here.
 
-    :param enums: Spellings that resolve to :data:`ENUM_CTYPE`. Only enums whose
-        width this writer can prove are listed; see :func:`_enum_type_names`.
+    :param enums: Spellings that resolve to an integer ctypes type, mapped to
+        that type. Only enums whose width this writer can establish are listed,
+        and the type is per-enum rather than a constant: a declared underlying
+        type decides it. See :func:`_enum_type_names`.
+    :param shadowed_records: Record tags an ordinary identifier in this header
+        also binds, which are emitted as no class at all; see
+        :func:`_shadowed_record_names`.
     :param records: Spellings that resolve to an emitted ctypes class, mapped to
         that class's name. Unlike an enum there is no default to fall back on --
         the answer is the class or nothing -- so a record this header does not
         declare is simply absent and keeps its C spelling.
     """
 
-    enums: frozenset[str] = frozenset()
+    enums: Mapping[str, str] = field(default_factory=dict)
     records: Mapping[str, str] = field(default_factory=dict)
+    shadowed_records: frozenset[str] = frozenset()
 
 
 #: The table for a call with no header context: nothing resolves, every name is
@@ -281,20 +287,6 @@ def type_to_ctypes(t: TypeExpr, types: _TypeTable = _EMPTY_TYPES) -> str:
     if isinstance(t, CType):
         # Strip qualifiers for ctypes mapping (const int -> c_int)
         base_name = t.name
-        # At the ABI boundary a C enum is an integer. ``types.enums`` lists only
-        # the enums this header can prove are int-width, so an enum whose width
-        # is unprovable falls through and keeps its C spelling -- which does not
-        # import, and is the loud failure the unsizable case is owed.
-        if base_name in types.enums:
-            return ENUM_CTYPE
-        # A tag-spelled record is the same defect as a tag-spelled enum -- two
-        # words where Python needs one -- but it has a real answer rather than a
-        # default: the class this writer emits for that record. A record the
-        # header does not declare is absent from the table and keeps its C
-        # spelling, which does not parse, rather than being resolved to a guess.
-        record = types.records.get(base_name)
-        if record is not None:
-            return record
         # Check with qualifiers prepended for compound types like "unsigned int"
         if t.qualifiers:
             # Only use qualified form for type-level qualifiers like "unsigned"
@@ -306,6 +298,25 @@ def type_to_ctypes(t: TypeExpr, types: _TypeTable = _EMPTY_TYPES) -> str:
                     return CTYPES_TYPE_MAP[qualified_name]
         if base_name in CTYPES_TYPE_MAP:
             return CTYPES_TYPE_MAP[base_name]
+
+        # The header's own tables come *after* the builtin map, never before it.
+        # A tag and an ordinary identifier are separate namespaces in C, so
+        # ``struct int8_t { ... };`` may sit beside the standard ``int8_t``, and
+        # a bare ``int8_t`` still has to mean the one-byte integer. Consulting
+        # the tables first handed it the eight-byte record instead -- silently,
+        # since the module imports either way.
+        enum_ctype = types.enums.get(base_name)
+        if enum_ctype is not None:
+            return enum_ctype
+        # A tag-spelled record is the same defect as a tag-spelled enum -- two
+        # words where Python needs one -- but it has a real answer rather than a
+        # default: the class this writer emits for that record. A record the
+        # header does not declare is absent from the table and keeps its C
+        # spelling, which does not parse, rather than being resolved to a guess.
+        record = types.records.get(base_name)
+        if record is not None:
+            return record
+
         # Unknown type: use it as-is (likely a user-defined struct/typedef)
         return base_name
 
@@ -834,6 +845,10 @@ def _struct_to_ctypes(decl: Struct, types: _TypeTable) -> str | None:
     """Convert a Struct/Union IR node to a ctypes class definition."""
     if decl.name is None or _is_anonymous_name(decl.name):
         return None
+    # Binding this class would take the name from an ordinary identifier that
+    # means something else; see ``_shadowed_record_names``.
+    if decl.name in types.shadowed_records:
+        return None
 
     lines = _record_body(decl, decl.name, types)
     if lines is None:
@@ -859,7 +874,7 @@ def _enum_needs_alias(decl: Enum, typedef_names: frozenset[str]) -> bool:
     four-byte integer and the package would import and compute wrong answers.
     With no alias the member's name is unbound and the import fails loudly.
     """
-    if not _enum_fits_int(decl):
+    if _enum_ctype(decl) is None:
         return False
     return bool(decl.is_typedef and decl.name and not _is_anonymous_name(decl.name) and decl.name not in typedef_names)
 
@@ -880,7 +895,9 @@ def _enum_to_ctypes(decl: Enum, typedef_names: frozenset[str] = frozenset()) -> 
             lines.append(f"# {v.name} = <auto>")
 
     if _enum_needs_alias(decl, typedef_names):
-        lines.append(f"{decl.name} = {ENUM_CTYPE}")
+        # The alias names the same integer the members do, which for an enum
+        # with a declared underlying type is not ``ENUM_CTYPE``.
+        lines.append(f"{decl.name} = {_enum_ctype(decl)}")
 
     return "\n".join(lines)
 
@@ -950,8 +967,9 @@ def _typedef_to_ctypes(decl: Typedef, types: _TypeTable) -> str | None:
         # alias chained onto one, so this arm also covers ``typedef E1 E2``,
         # which would otherwise fall through to the simple-alias branch below,
         # render as a comment and bind no ``E2`` at all.
-        if name in types.enums:
-            return f"{decl.name} = {ENUM_CTYPE}"
+        enum_ctype = types.enums.get(name)
+        if enum_ctype is not None:
+            return f"{decl.name} = {enum_ctype}"
         if name.startswith("enum "):
             # A tag spelling absent from ``types.enums`` is an enum this writer
             # cannot size. An alias to it would itself be the wrong width, and
@@ -1055,57 +1073,70 @@ _INT32_MIN = -(2**31)
 _INT32_MAX = 2**31 - 1
 
 
-def _enum_fits_int(decl: Enum) -> bool:
-    """Is every enumerator of ``decl`` provably inside 32-bit signed range?
+def _enum_ctype(decl: Enum) -> str | None:
+    """The ctypes spelling for ``decl``, or None when this writer cannot size it.
 
-    C leaves an enum's underlying type implementation-defined, requiring only
-    that it represent every enumerator, and :class:`Enum` records no underlying
-    type -- so the width has to be reconstructed from the enumerators or given
-    up on. Three things make it unprovable, and each returns False:
+    This is the size and signedness of every value of the enum that crosses the
+    ABI, so a wrong answer here is a wrong answer everywhere the type appears --
+    and one that *imports cleanly*, since a member of the wrong width is still a
+    valid member. Refusing is the only safe alternative to knowing.
 
-    * a C++ ``enum class``, which may carry a fixed underlying type
-      (``enum class Small : unsigned char``) that the IR does not preserve;
-    * an enumerator whose value the IR does not record as an integer -- a
-      string, where a backend left the initialiser unevaluated, or ``None``,
-      which :class:`EnumValue` defines as an implicit value nobody computed;
-    * an enumerator outside 32-bit signed range, which the compiler widens.
+    Three sources of truth, in order:
 
-    Both parser backends currently evaluate every enumerator, including implicit
-    ones (``enum Roll { ROLL_MAX = 0x7FFFFFFF, ROLL_NEXT };`` arrives with
-    ``ROLL_NEXT`` already resolved to 2147483648), so the ``None`` case is not
-    reachable through them today. It is refused rather than reconstructed
-    because a value the IR does not carry is exactly what this function must not
-    guess at, and an enumerator recorded as ``None`` is not bound as a constant
-    by :func:`_enum_to_ctypes` either -- it renders as ``# NAME = <auto>``.
+    1. **The declared underlying type.** C++11 lets any enum fix it, scoped or
+       not -- ``enum class E : unsigned char`` and ``enum E : unsigned long long``
+       both do -- and it is the only thing that decides the width when present.
+       It cannot be reconstructed from the enumerators, which constrain the
+       width from below and say nothing about a type chosen to be wider. If it
+       names something this writer has no ctypes spelling for, that is a refusal
+       rather than a guess.
+    2. **No enumerators and no declared type.** There is nothing to reason from,
+       so it is refused. No execution gate covers this arm, because no valid
+       header on either language reaches it: C++ requires a fixed underlying
+       type on an opaque enum, and C forbids using an incomplete one as a
+       member. It is not defensive padding even so -- without it the loop below
+       runs zero times and returns ``ENUM_CTYPE`` by vacuous truth, which is a
+       four-byte answer produced by having examined nothing. An earlier revision
+       shipped exactly that, and it resolved ``enum Fwd : long long;`` to
+       ``c_int`` against a real eight bytes.
+    3. **The enumerators.** With no declared underlying type, C requires only
+       that the type represent every enumerator, and every ABI headerkit targets
+       uses an int-sized type where they all fit in one. A value the IR does not
+       record as an integer -- a string, where a backend left an initialiser
+       unevaluated, or ``None`` -- is not something to guess about either.
+
+    A scoped enum is *not* special-cased. C++ fixes its underlying type to
+    ``int`` when the header does not, so rule 3 answers it correctly; an earlier
+    revision refused every scoped enum and still resolved the unscoped
+    ``enum E : unsigned long long`` wrongly, because ``is_scoped`` was never the
+    property that mattered.
     """
-    if decl.is_scoped:
-        return False
+    if decl.underlying_type:
+        return CTYPES_TYPE_MAP.get(decl.underlying_type.strip())
+    if not decl.values:
+        return None
     for v in decl.values:
-        if not isinstance(v.value, int) or isinstance(v.value, bool):
-            return False
-        if not (_INT32_MIN <= v.value <= _INT32_MAX):
-            return False
-    return True
+        if not isinstance(v.value, int):
+            return None
+        if not _INT32_MIN <= v.value <= _INT32_MAX:
+            return None
+    return ENUM_CTYPE
 
 
-def _enum_type_names(header: Header) -> frozenset[str]:
-    """Every spelling that resolves to :data:`ENUM_CTYPE` in this header.
+def _enum_type_names(header: Header) -> dict[str, str]:
+    """Every enum spelling this header can resolve, mapped to its ctypes type.
 
     An enum binds no ctypes class, so a use of one has to be recognised from the
-    type's name and rewritten to its underlying integer. Three spellings reach
-    this writer for the same enum and all are collected, because which one
-    arrives depends on the backend and on how the header spelled it: the tag
-    form ``enum E``, the bare form ``E`` (tree-sitter reduces every reference to
-    it, and a typedef produces it under either backend), and the qualified form
-    ``n::E`` for a C++ enum inside a namespace.
+    type's name and rewritten to the integer it is represented as. Three
+    spellings reach this writer for the same enum and all are collected, because
+    which one arrives depends on the backend and on how the header spelled it:
+    the tag form ``enum E``, the bare form ``E`` (tree-sitter reduces every
+    reference to it, and a typedef produces it under either backend), and the
+    qualified form ``n::E`` for an enum inside a C++ namespace.
 
-    **Only enums this writer can size are listed.** Resolving one it cannot --
-    a scoped enum with a fixed underlying type, or one with an enumerator too
-    wide for an int -- would emit a member of the wrong width that *imports
-    cleanly* and computes wrong answers across the ABI. An enum left out here
-    keeps its C spelling instead, which is what the writer did before enums were
-    resolved at all, and fails loudly at import. A wrong ABI is worse than a
-    failure that names itself, so the unsizable case keeps the failure.
+    **Only enums :func:`_enum_ctype` can size appear here.** One it cannot keeps
+    its C spelling, which does not import -- a loud failure rather than a member
+    of the wrong width that imports and computes wrong answers across the ABI.
 
     Two shadowing rules keep the bare form from over-reaching. A tag and an
     ordinary identifier are separate namespaces in C, so ``enum Tone { ... };``
@@ -1116,6 +1147,11 @@ def _enum_type_names(header: Header) -> frozenset[str]:
     looked for under both kinds: it reaches this writer as a ``Struct`` carrying
     the alias as its name, with no ``Typedef`` node of its own.
 
+    A spelling two declarations disagree about is dropped rather than resolved
+    to whichever came last -- ``namespace a { enum E : char ... }`` beside
+    ``namespace b { enum E : long long ... }`` leaves bare ``E`` meaning two
+    different widths, and there is no answer to give.
+
     Withholding a name a ``Typedef`` binds is the arm no execution gate covers,
     because the shape that reaches it -- ``typedef struct ToneRec Tone;`` next to
     ``enum Tone`` -- cannot be scaffolded into an importable module today. Two
@@ -1125,8 +1161,7 @@ def _enum_type_names(header: Header) -> frozenset[str]:
     1. a record alias renders via :func:`_typedef_to_ctypes` into the
        ``typedefs`` section, which ``_SECTION_ORDER`` emits *after* ``structs``,
        so a record using the alias raises ``NameError`` at import;
-    2. a record named by its tag in a function signature reaches the module as
-       ``argtypes = [struct ToneRec]``, which is not valid Python.
+    2. records are emitted in declaration order rather than dependency order.
 
     Whoever closes either of those should come back and gate this arm. It is
     kept meanwhile because dropping it does not restore that module, it only
@@ -1135,98 +1170,174 @@ def _enum_type_names(header: Header) -> frozenset[str]:
     answers instead of raising.
 
     A bare name whose enum is declared in *another* header is not resolvable
-    here at all: ``_enum_type_names`` is header-local, and tree-sitter does not
-    follow ``#include``, so it sees neither the tag spelling nor the
-    declaration. That case keeps the C spelling and fails loudly. See the module
-    docstring of ``tests/test_scaffold_runs.py`` for what is and is not covered.
+    here at all: this table is header-local, and tree-sitter does not follow
+    ``#include``, so it sees neither the tag spelling nor the declaration. That
+    case keeps the C spelling and fails loudly.
     """
     spellings: dict[str, set[str]] = {}
+    sizable: set[str] = set()
     for d in header.declarations:
         if not isinstance(d, Enum) or not d.name or _is_anonymous_name(d.name):
             continue
-        if not _enum_fits_int(d):
+        ctype = _enum_ctype(d)
+        if ctype is None:
             continue
-        keys = {d.name, f"enum {d.name}"}
-        qualified = d.qualified_name
-        if qualified:
-            keys |= {qualified, f"enum {qualified}"}
-        spellings.setdefault(d.name, set()).update(keys)
+        sizable.add(d.name)
+        qualified = d.qualified_name or d.name
+        for key in (d.name, f"enum {d.name}", qualified, f"enum {qualified}"):
+            spellings.setdefault(key, set()).add(ctype)
 
-    bare = {d.name for d in header.declarations if isinstance(d, Enum) and d.name and _enum_fits_int(d)}
-
-    # A typedef onto a sizable enum binds ``ENUM_CTYPE`` too, so its name is an
-    # enum spelling in its own right -- and one a record may use before the
-    # typedefs section that assigns it has been emitted. Chains resolve to a
-    # fixed point: ``typedef enum E E1; typedef E1 E2;`` makes ``E2`` one as well.
+    # A typedef onto a sizable enum names that same integer, and a record may use
+    # it before the typedefs section that would assign it has been emitted.
+    # Chains resolve to a fixed point: ``typedef enum E E1; typedef E1 E2;``
+    # makes ``E2`` one as well.
+    targets: dict[str, str] = {
+        d.name: d.underlying_type.name
+        for d in header.declarations
+        if isinstance(d, Typedef) and d.name and isinstance(d.underlying_type, CType)
+    }
     enum_typedefs: set[str] = set()
-    typedef_targets: dict[str, str] = {}
-    for d in header.declarations:
-        if isinstance(d, Typedef) and d.name and isinstance(d.underlying_type, CType):
-            typedef_targets[d.name] = d.underlying_type.name
     changed = True
     while changed:
         changed = False
-        for name, target in typedef_targets.items():
+        for name, target in targets.items():
             if name in enum_typedefs:
                 continue
-            if target in bare or target in enum_typedefs or target.removeprefix("enum ") in bare:
-                enum_typedefs.add(name)
-                changed = True
+            source = target if target in spellings else target.removeprefix("enum ")
+            if source in spellings or source in enum_typedefs:
+                resolved = spellings.get(source) or spellings.get(f"enum {source}")
+                if resolved is None and source in enum_typedefs:
+                    resolved = spellings.get(name, set()) or {ENUM_CTYPE}
+                if resolved:
+                    spellings.setdefault(name, set()).update(resolved)
+                    enum_typedefs.add(name)
+                    changed = True
 
-    keys = {key for group in spellings.values() for key in group} | enum_typedefs
-
-    # Namespaces are part of a record's identity too, so the withheld set is
-    # built from the same qualified spellings the keys are.
     shadow: set[str] = set()
     for d in header.declarations:
         if isinstance(d, Struct) and d.name and not _is_anonymous_name(d.name):
             shadow.add(d.name)
-            # ``Struct`` carries no ``qualified_name`` property, so the C++
-            # spelling is composed the same way ``Enum.qualified_name`` does.
-            shadow.add(d.cpp_name or (f"{d.namespace}::{d.name}" if d.namespace else d.name))
+            shadow.add(_record_qualified_name(d))
         elif isinstance(d, Typedef) and d.name and d.name not in enum_typedefs:
             shadow.add(d.name)
-    return frozenset(keys - shadow)
+
+    # A spelling two declarations resolve differently has no answer; drop it.
+    return {key: next(iter(kinds)) for key, kinds in spellings.items() if len(kinds) == 1 and key not in shadow}
+
+
+def _record_qualified_name(decl: Struct) -> str:
+    """A record's full C++ spelling. ``Struct`` carries no ``qualified_name``."""
+    return decl.cpp_name or (f"{decl.namespace}::{decl.name}" if decl.namespace else decl.name or "")
+
+
+def _shadowed_record_names(header: Header) -> frozenset[str]:
+    """Record tags an ordinary identifier in this header also binds.
+
+    A tag and an ordinary identifier are separate namespaces in C, so
+    ``struct Gauge { ... };`` and ``typedef unsigned char Gauge;`` are both legal
+    in one unit and mean different types. Python has one namespace, and this
+    writer would bind ``Gauge`` to the record class while the typedef renders as
+    a comment -- so a member declared ``Gauge g;``, one byte in C, would silently
+    become the eight-byte record.
+
+    Neither meaning can be given the name without taking it from the other, so
+    the record is not emitted at all and both spellings fail loudly. That is the
+    same trade this module makes for an enum it cannot size: a name that raises
+    is recoverable, a member of the wrong width is not.
+    """
+    typedef_names = {
+        d.name
+        for d in header.declarations
+        if isinstance(d, Typedef) and d.name and not _typedef_names_a_record(d, header)
+    }
+    return frozenset(
+        d.name
+        for d in header.declarations
+        if isinstance(d, Struct) and d.name and not _is_anonymous_name(d.name) and d.name in typedef_names
+    )
+
+
+def _typedef_names_a_record(decl: Typedef, header: Header) -> bool:
+    """Does ``decl`` alias a record declared in this header?
+
+    ``typedef struct Foo FooAlias`` is an ordinary alias and takes no name away
+    from the tag it points at; only a typedef naming something *else* collides.
+    """
+    underlying = decl.underlying_type
+    if not isinstance(underlying, CType):
+        return False
+    target = underlying.name.removeprefix("struct ").removeprefix("union ")
+    return any(isinstance(d, Struct) and d.name == target for d in header.declarations) or underlying.name.startswith(
+        ("struct ", "union ")
+    )
 
 
 def _record_type_names(header: Header) -> dict[str, str]:
     """Spellings that name a record this header emits, mapped to its class name.
 
     ``_struct_to_ctypes`` emits ``class <decl.name>``, so the class name is the
-    tag itself and the only work here is recognising the *other* ways that same
-    record is spelled at a use site. libclang keeps C's elaborated form, so a
-    member reaches the writer as ``struct Inner`` or ``union U``; a C++ record in
-    a namespace is spelled ``n::Inner``, which matches neither the tag nor the
-    elaborated form.
+    tag itself and the work here is recognising the *other* ways that same record
+    is spelled at a use site. libclang keeps C's elaborated form, so a member
+    reaches the writer as ``struct Inner`` or ``union U``; a C++ record in a
+    namespace is spelled ``n::Inner``, which matches neither.
 
     Unlike an enum, a record needs no width analysis and admits no default: the
     answer is the class this writer emits or there is no answer. A record the
     header does not declare -- one from an ``#include`` that tree-sitter never
-    read, say -- is therefore absent here and keeps its C spelling, which fails
-    loudly rather than resolving to something invented.
+    read, say -- is absent here and keeps its C spelling, which fails loudly
+    rather than resolving to something invented.
 
-    The bare tag maps to itself, so registering it is a no-op and no guard keeps
-    it out. That is the structural reason this table needs no equivalent of the
-    ``Tone`` guard in :func:`_enum_type_names`: every key is either an elaborated
-    or a qualified spelling, which nothing but a record can wear, or the class's
-    own name. An ordinary identifier colliding with a tag -- ``struct Gauge``
-    beside ``typedef unsigned char Gauge`` -- reaches a *different* spelling at
-    the use site and is never rewritten by this table.
+    **A tag two records share is dropped rather than resolved to whichever came
+    last.** A record's namespace is flattened out of its class name, so
+    ``namespace a { struct Inner ... }`` and ``namespace b { struct Inner ... }``
+    both emit ``class Inner`` and the second wins. Mapping ``a::Inner`` to that
+    surviving class would hand a member the wrong record entirely -- a silent
+    size change, not a failure -- so neither is resolved. The ambiguity lives in
+    the class name rather than in any spelling, so it is found by counting the
+    distinct records behind each tag; every individual key maps to the one
+    surviving class quite consistently and looks fine.
+
+    The bare tag maps to itself, so registering it is a no-op. It is registered
+    anyway rather than special-cased, because the lookup happens *after*
+    ``CTYPES_TYPE_MAP``: a header may legally declare ``struct int8_t`` beside
+    the standard ``int8_t``, and a bare ``int8_t`` must keep meaning the integer.
+    A name an ordinary identifier also binds needs no exclusion *here*:
+    :func:`_shadowed_record_names` stops the class being emitted at all, so a
+    spelling mapping to it would raise rather than resolve. Excluding it twice
+    was tried and mutation proved the second exclusion could not change any
+    outcome.
     """
-    spellings: dict[str, str] = {}
+    # Two records whose namespaces differ still flatten to one class name, and
+    # the second overwrites the first. The ambiguity is in the *class*, not in
+    # any one spelling, so it cannot be seen by looking at the keys: every
+    # spelling maps to the single surviving name perfectly consistently. Count
+    # the distinct records behind each tag instead.
+    behind_tag: dict[str, set[str]] = {}
+    for d in header.declarations:
+        if isinstance(d, Struct) and d.name and not _is_anonymous_name(d.name):
+            behind_tag.setdefault(d.name, set()).add(_record_qualified_name(d))
+    ambiguous = {tag for tag, qualified in behind_tag.items() if len(qualified) > 1}
+
+    spellings: dict[str, set[str]] = {}
     for d in header.declarations:
         if not isinstance(d, Struct) or not d.name or _is_anonymous_name(d.name):
             continue
+        if d.name in ambiguous:
+            continue
         keyword = "union" if d.is_union else "struct"
-        qualified = d.cpp_name or (f"{d.namespace}::{d.name}" if d.namespace else d.name)
-        for key in (f"{keyword} {d.name}", f"{keyword} {qualified}", qualified):
-            spellings[key] = d.name
-    return spellings
+        qualified = _record_qualified_name(d)
+        for key in (f"{keyword} {d.name}", f"{keyword} {qualified}", qualified, d.name):
+            spellings.setdefault(key, set()).add(d.name)
+    return {key: next(iter(names)) for key, names in spellings.items() if len(names) == 1}
 
 
 def _type_table(header: Header) -> _TypeTable:
     """Resolve, once per header, every spelling the writer can rewrite."""
-    return _TypeTable(enums=_enum_type_names(header), records=_record_type_names(header))
+    return _TypeTable(
+        enums=_enum_type_names(header),
+        records=_record_type_names(header),
+        shadowed_records=_shadowed_record_names(header),
+    )
 
 
 def declared_binding_names(header: Header, lib_name: str = "_lib") -> list[str]:
