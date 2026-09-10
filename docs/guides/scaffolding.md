@@ -66,9 +66,9 @@ is invariant, derived from the parsed IR, or supplied by you. Nothing is guessed
 | `--mm:orc`, `--threads:on`, `--styleCheck:hint` | Invariant. |
 | `--path:"$config/src"` | Invariant. Lets the package build with a bare `nim c`, not only under `nimble`. |
 | `--backend:cpp` | Emitted when the parsed unit needs the C++ backend. |
-| `--passC:"-I'...'"` | The header's own directory, plus every `-I` passed to the parse. Single-quoted so a path containing a space survives Nim's word-splitting of config values. |
+| `--passC:"-I\"...\""` | The header's own directory, plus every `-I` passed to the parse. The inner quotes survive Nim's word-splitting of config values, so a path containing a space reaches the compiler whole. They are **double** quotes, escaped: a config file is read by Nim's own lexer, where `'` opens a character literal and a single-quoted path is a syntax error rather than a flag. Paths are emitted with forward slashes, which every compiler in the matrix accepts on Windows and which keeps a `\U` out of a Nim string literal. |
 | `--passC:"-D..."` | Every `-D` passed to the parse. |
-| `--passL:"-l..."`, `--passL:"-L'...'"` | The `library` and `library_dirs` writer options. |
+| `--passL:"-l..."`, `--passL:"-L\"...\""` | The `library` and `library_dirs` writer options. |
 
 #### The C++ backend
 

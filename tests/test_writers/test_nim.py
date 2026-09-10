@@ -619,12 +619,28 @@ class TestCfgPathQuoting:
 
     def test_path_is_single_quoted(self) -> None:
         """Nim strips the outer quotes and word-splits; the inner quotes survive."""
-        assert _cfg_path_flag("-I", "/opt/na me") == "\"-I'/opt/na me'\""
+        assert _cfg_path_flag("-I", "/opt/na me") == '"-I\\"/opt/na me\\""'
 
-    def test_single_quote_in_path_is_refused(self) -> None:
+    def test_single_quote_in_path_is_safe(self) -> None:
+        """`\'` opens a character literal to Nim's config lexer, so it must not be the quote."""
+        rendered = _cfg_path_flag("-I", "/opt/it's")
+        assert rendered == '"-I\\"/opt/it\'s\\""', rendered
+
+    def test_windows_separators_become_forward_slashes(self) -> None:
+        """A backslash inside a Nim string literal would be read as an escape.
+
+        Asserted on the flag the writer renders, not on `pathlib`: the separator to
+        normalise is a property of the path, so this holds on any host rather than
+        only on the one whose paths look like this.
+        """
+        rendered = _cfg_path_flag("-I", "C:\\Users\\a b")
+        assert "\\\\" not in rendered, rendered
+        assert rendered == '"-I\\"C:/Users/a b\\""', rendered
+
+    def test_double_quote_in_path_is_refused(self) -> None:
         """No quoting of this exists in the format, so say so rather than emit a wrong flag."""
-        with pytest.raises(ValueError, match="single quote"):
-            _cfg_path_flag("-I", "/opt/it's")
+        with pytest.raises(ValueError, match="double quote"):
+            _cfg_path_flag("-I", '/opt/sa"y')
 
 
 class TestTypeNameCppDetection:
@@ -675,14 +691,17 @@ class TestNimCfg:
         """Without this the package builds only under nimble, which supplies srcDir."""
         assert '--path:"$config/src"' in _nim_cfg(Header(path="c.h", declarations=[]))
 
-    def test_library_option_becomes_link_flags(self) -> None:
+    def test_library_option_becomes_link_flags(self, tmp_path) -> None:
+        """A real directory, not a POSIX literal: library_dirs is emitted resolved."""
+        libdir = tmp_path / "counter"
+        libdir.mkdir()
         cfg = _nim_cfg(
             Header(path="c.hpp", declarations=[Struct(name="C", is_cppclass=True)]),
             library="counter",
-            library_dirs="/opt/counter/lib",
+            library_dirs=str(libdir),
         )
         assert '--passL:"-lcounter"' in cfg
-        assert "--passL:\"-L'/opt/counter/lib'\"" in cfg
+        assert f'--passL:"-L\\"{libdir.resolve().as_posix()}\\""' in cfg, cfg
 
     def test_multiple_libraries_each_get_a_flag(self) -> None:
         cfg = _nim_cfg(Header(path="c.h", declarations=[]), library=["a", "b"])
@@ -700,7 +719,7 @@ class TestNimCfg:
         header.parent.mkdir()
         header.write_text("")
         cfg = _nim_cfg(Header(path=str(header), declarations=[]))
-        assert f"--passC:\"-I'{header.parent}'\"" in cfg
+        assert f'--passC:"-I\\"{header.parent.resolve().as_posix()}\\""' in cfg, cfg
 
     def test_parse_include_dirs_and_defines_reach_the_config(self, tmp_path) -> None:
         """A real directory, not a POSIX literal: include paths are emitted resolved."""
@@ -716,7 +735,7 @@ class TestNimCfg:
             ),
         )
         cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
-        assert f"--passC:\"-I'{extra.resolve()}'\"" in cfg
+        assert f'--passC:"-I\\"{extra.resolve().as_posix()}\\""' in cfg, cfg
         assert '--passC:"-DFOO=1"' in cfg
 
     def test_library_dirs_are_resolved(self, tmp_path) -> None:
@@ -725,7 +744,7 @@ class TestNimCfg:
         libdir.mkdir()
         relative = str(libdir) + os.sep + "."
         cfg = _nim_cfg(Header(path="c.h", declarations=[]), library="demo", library_dirs=relative)
-        assert f"--passL:\"-L'{libdir.resolve()}'\"" in cfg, cfg
+        assert f'--passL:"-L\\"{libdir.resolve().as_posix()}\\""' in cfg, cfg
         assert relative not in cfg, cfg
 
     def test_unordered_option_values_are_emitted_in_a_stable_order(self) -> None:
@@ -776,7 +795,7 @@ class TestNimCfg:
         # alone would report 1 whether or not the dedup ran.
         include_flags = [line for line in cfg.splitlines() if line.startswith('--passC:"-I')]
         assert len(include_flags) == 1, include_flags
-        assert f"-I'{header.parent.resolve()}'" in include_flags[0]
+        assert f'-I\\"{header.parent.resolve().as_posix()}\\"' in include_flags[0]
 
 
 class TestNimCppTripwire:

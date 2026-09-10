@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import ClassVar
 
 from headerkit.ir import (
@@ -292,20 +292,29 @@ _C_TAG_PREFIXES: tuple[str, ...] = ("struct ", "union ", "enum ")
 def _cfg_path_flag(flag: str, path: str) -> str:
     """Render a ``-I``/``-L`` flag for ``nim.cfg`` so a path with spaces survives.
 
-    Nim strips the outer quotes from a config value and passes the result to the
-    C compiler after word-splitting it, so ``--passC:"-I/opt/na me"`` reaches
-    clang as ``-I/opt/na`` and ``me`` and fails with ``no such file or
-    directory: 'me'``. The inner single quotes survive that split and are removed
-    by the compiler driver. A path containing a single quote cannot be expressed
-    this way and is rejected rather than emitted in a form that silently means
-    something else.
+    Nim strips the outer quotes from a config value and passes the result to the C
+    compiler after word-splitting it, so ``--passC:"-I/opt/na me"`` reaches clang as
+    ``-I/opt/na`` and ``me`` and fails with ``no such file or directory: 'me'``. An
+    inner quote survives that split and the compiler driver removes it.
+
+    That inner quote must be a **double** quote, escaped. A config file is read by
+    Nim's own lexer, where ``'`` opens a character literal, so a single-quoted path
+    is a syntax error in the generated file rather than a flag -- ``nim.cfg(5, 18)
+    Error: invalid character constant``, on every Nim invocation the package makes.
+
+    The path is emitted with forward slashes for the same reason: a Windows path
+    inside a Nim string literal would put ``\\U`` in front of ``Users`` and be read
+    as an escape. Every compiler in the matrix accepts ``/`` as a separator on
+    Windows, so this costs nothing and removes the escape question entirely.
     """
-    if "'" in path:
+    if '"' in path:
         raise ValueError(
-            f"cannot place {path!r} in nim.cfg: a single quote in an include or library "
+            f"cannot place {path!r} in nim.cfg: a double quote in an include or library "
             f"path cannot be quoted in Nim's config format"
         )
-    return f"\"{flag}'{path}'\""
+    # PureWindowsPath, not PurePath: the separator to normalise is a property of the
+    # path, not of the host generating the config, and it leaves a POSIX path alone.
+    return f'"{flag}\\"{PureWindowsPath(path).as_posix()}\\""'
 
 
 def _type_matches(t: TypeExpr, pred: Callable[[str], bool]) -> bool:

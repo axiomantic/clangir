@@ -537,7 +537,7 @@ class TestPathsWithSpaces:
                 options={"library": "bump", "library_dirs": str(native)},
             ),
         ).write_to_disk(pkg_dir)
-        assert f"-I'{native}'" in (pkg_dir / "nim.cfg").read_text()
+        assert f'-I\\"{native.resolve().as_posix()}\\"' in (pkg_dir / "nim.cfg").read_text()
 
         (pkg_dir / "tests" / "consumer.nim").write_text('import bumplib\nvar v = 10.cint\nbump(v)\necho "value=", v\n')
         built = run([nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/consumer.nim"], pkg_dir)
