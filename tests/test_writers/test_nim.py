@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import textwrap
 
 import pytest
@@ -695,19 +696,44 @@ class TestNimCfg:
         cfg = _nim_cfg(Header(path=str(header), declarations=[]))
         assert f"--passC:\"-I'{header.parent}'\"" in cfg
 
-    def test_parse_include_dirs_and_defines_reach_the_config(self) -> None:
+    def test_parse_include_dirs_and_defines_reach_the_config(self, tmp_path) -> None:
+        """A real directory, not a POSIX literal: include paths are emitted resolved."""
+        extra = tmp_path / "extra"
+        extra.mkdir()
         layout = get_writer("nim").write_layout(
             Header(path="c.h", declarations=[]),
             ScaffoldOptions(
                 package_name="demo",
                 target_language="nim",
                 layout="package",
-                extra_context={"include_dirs": ["/usr/local/include"], "defines": ["FOO=1"]},
+                extra_context={"include_dirs": [str(extra)], "defines": ["FOO=1"]},
             ),
         )
         cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
-        assert "--passC:\"-I'/usr/local/include'\"" in cfg
+        assert f"--passC:\"-I'{extra.resolve()}'\"" in cfg
         assert '--passC:"-DFOO=1"' in cfg
+
+    def test_relatively_passed_include_dir_does_not_duplicate_the_header_directory(self, tmp_path) -> None:
+        """The dedup compares resolved paths, or the same directory is emitted twice."""
+        header = tmp_path / "inc" / "c.h"
+        header.parent.mkdir()
+        header.write_text("")
+        layout = get_writer("nim").write_layout(
+            Header(path=str(header), declarations=[]),
+            ScaffoldOptions(
+                package_name="demo",
+                target_language="nim",
+                layout="package",
+                extra_context={"include_dirs": [str(header.parent) + os.sep + "."]},
+            ),
+        )
+        cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
+        # Count the flags, not one spelling of them: an unresolved duplicate is a
+        # *different* string ("<dir>/." vs "<dir>"), so counting the resolved form
+        # alone would report 1 whether or not the dedup ran.
+        include_flags = [line for line in cfg.splitlines() if line.startswith('--passC:"-I')]
+        assert len(include_flags) == 1, include_flags
+        assert f"-I'{header.parent.resolve()}'" in include_flags[0]
 
 
 class TestNimCppTripwire:
