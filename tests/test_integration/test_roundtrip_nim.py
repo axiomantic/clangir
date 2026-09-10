@@ -620,8 +620,15 @@ class TestInconclusiveTripwireReasons:
         built = TestNimCppBuildConfiguration._run(
             [nim_bin, "c", "-r", "--hints:off", f"--nimcache:{tmp_path / 'nc'}", "tests/test_tripwire.nim"], pkg_dir
         )
-        assert "TRIPWIRE INCONCLUSIVE" in built.stdout, "the reasons never reached the reader:\n" + built.stdout
-        assert "establishes that the native library links" in built.stdout, built.stdout
+        # Both reasons, separately: one surviving echo would otherwise satisfy a
+        # single substring assertion while the other stayed dead text.
+        assert "no non-generic entry point and no complete class is bound" in built.stdout, (
+            "the first reason never reached the reader:\n" + built.stdout
+        )
+        assert "nothing here establishes that the native library links" in built.stdout, (
+            "the second reason never reached the reader:\n" + built.stdout
+        )
+        assert built.stdout.count("TRIPWIRE INCONCLUSIVE") == 2, built.stdout
 
     def test_generated_file_warns_that_it_exits_zero(self, backend, tmp_path: Path) -> None:
         """std/unittest counts failures only, so a skipped tripwire exits 0."""

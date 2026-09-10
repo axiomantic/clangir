@@ -720,6 +720,43 @@ class TestNimCfg:
         assert f"--passC:\"-I'{extra.resolve()}'\"" in cfg
         assert '--passC:"-DFOO=1"' in cfg
 
+    def test_library_dirs_are_resolved(self, tmp_path) -> None:
+        """A relative -L resolves against the linker's working directory, not the package's."""
+        libdir = tmp_path / "lib"
+        libdir.mkdir()
+        relative = str(libdir) + os.sep + "."
+        cfg = _nim_cfg(Header(path="c.h", declarations=[]), library="demo", library_dirs=relative)
+        assert f"--passL:\"-L'{libdir.resolve()}'\"" in cfg, cfg
+        assert relative not in cfg, cfg
+
+    def test_unordered_option_values_are_emitted_in_a_stable_order(self) -> None:
+        """A set would order the flags by iteration, defeating regenerate-and-diff."""
+        first = _nim_cfg(Header(path="c.h", declarations=[]), library={"zlib", "png", "aaa"})
+        second = _nim_cfg(Header(path="c.h", declarations=[]), library={"png", "aaa", "zlib"})
+        assert first == second
+        order = [line for line in first.splitlines() if line.startswith('--passL:"-l')]
+        assert order == ['--passL:"-laaa"', '--passL:"-lpng"', '--passL:"-lzlib"'], order
+
+    def test_unordered_extra_context_values_are_emitted_in_a_stable_order(self) -> None:
+        """`extra_context` bypasses option coercion, so the writer sorts it itself."""
+
+        def cfg_for(defines: set[str]) -> str:
+            layout = get_writer("nim").write_layout(
+                Header(path="c.h", declarations=[]),
+                ScaffoldOptions(
+                    package_name="demo",
+                    target_language="nim",
+                    layout="package",
+                    extra_context={"defines": defines},
+                ),
+            )
+            return next(f.content for f in layout.files if f.path == "nim.cfg")
+
+        first = cfg_for({"ZED=1", "ALPHA=1", "MID=1"})
+        assert first == cfg_for({"MID=1", "ZED=1", "ALPHA=1"})
+        order = [line for line in first.splitlines() if line.startswith('--passC:"-D')]
+        assert order == ['--passC:"-DALPHA=1"', '--passC:"-DMID=1"', '--passC:"-DZED=1"'], order
+
     def test_relatively_passed_include_dir_does_not_duplicate_the_header_directory(self, tmp_path) -> None:
         """The dedup compares resolved paths, or the same directory is emitted twice."""
         header = tmp_path / "inc" / "c.h"
