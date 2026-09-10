@@ -3507,7 +3507,7 @@ For example, <code>const char**</code> becomes <code>Pointer(Pointer(CType("char
   </span>
 
 <a href="#headerkit.ir.CType" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">CType</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">qualifiers</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">())</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">CType</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">qualifiers</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_elaborated</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -3557,6 +3557,40 @@ from the type name for easier manipulation.</p>
             <td>
               <div class="doc-md-description">
                 <p>Type qualifiers (e.g., <code>["const"]</code>, <code>["unsigned"]</code>).</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="list">list</span>()</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>is_elaborated</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether the source wrote an <em>elaborated</em> type specifier
+    -- <code>struct X</code>, <code>union X</code>, <code>enum X</code> -- rather than the bare <code>X</code>.
+    None when no parser recorded it.</p>
+<div class="highlight"><pre><span></span><code>C keeps tags and ordinary identifiers in separate namespaces, so
+``struct Gauge { ... };`` and ``typedef unsigned char Gauge;`` are both
+legal in one unit and name different types: the elaborated spelling is
+the eight-byte record and the bare one is a one-byte integer. The
+distinction lives only in how the *use site* was written, so a consumer
+that receives ``"Gauge"`` for both cannot recover it -- and choosing
+either meaning is silently wrong for the other.
+
+Three states, not two. ``True`` and ``False`` are observations; ``None``
+means nobody looked, and a consumer facing a contested name must refuse
+rather than assume. That is the same contract as
+:attr:`Enum.underlying_type_known`, for the same reason: twice now a
+consumer of this IR has had to answer a question the IR did not record,
+and both times treating "absent" as "fine" produced a wrong ABI that
+imported cleanly.
+</code></pre></div>
 <h4 id="headerkit.ir.CType--examples">Examples<a class="headerlink" href="#headerkit.ir.CType--examples" title="Permanent link">&para;</a></h4>
 <p>Simple types::</p>
 <div class="highlight"><pre><span></span><code>int_type = CType("int")
@@ -3572,7 +3606,7 @@ const_char_ptr = Pointer(CType("char", ["const"]))
               </div>
             </td>
             <td>
-                  <code><span title="list">list</span>()</code>
+                  <code>None</code>
             </td>
           </tr>
       </tbody>
@@ -4008,7 +4042,7 @@ Used for callbacks, vtables, and function tables.</p>
   </span>
 
 <a href="#headerkit.ir.Enum" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Enum</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_scoped</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cpp_name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Enum</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="n"><span title="list">list</span></span><span class="p">(),</span> <span class="n">is_typedef</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">is_scoped</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cpp_name</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">underlying_type</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">underlying_type_known</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -4150,10 +4184,72 @@ introduced into the enclosing namespace as <code>X</code>.</p>
             <td>
               <div class="doc-md-description">
                 <p>Fully-qualified C++ spelling of the tag, when it is not
-    derivable from <code>namespace</code> and <code>name</code>. A member enum is hoisted to
-    the top level and loses its enclosing record, so <code>class C { enum M; }</code>
-    records <code>C::M</code> here; <code>None</code> means <code>namespace</code>-plus-<code>name</code> is the
-    whole spelling.</p>
+derivable from <code>namespace</code> and <code>name</code>. A member enum is hoisted to
+the top level and loses its enclosing record, so <code>class C { enum M; }</code>
+records <code>C::M</code> here; <code>None</code> means <code>namespace</code>-plus-<code>name</code> is the
+whole spelling.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>underlying_type</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The integer type the enum is represented as, as a C
+type spelling such as <code>"unsigned char"</code> or <code>"long long"</code>, or None
+when the parser did not report one.</p>
+<p>C leaves this implementation-defined, requiring only that it represent
+every enumerator, and both C++11 forms may fix it explicitly -- on a
+scoped enum (<code>enum class E : unsigned char</code>) <em>and</em> on an unscoped one
+(<code>enum E : unsigned long long</code>). It cannot be reconstructed from the
+enumerators: they constrain the width from below and say nothing about a
+type chosen to be wider, and an opaque declaration such as
+<code>enum Fwd : long long;</code> has no enumerators at all. A consumer that
+must know the width -- any binding generator, since this is the size and
+signedness of every value crossing the ABI -- has to be told, so it is
+recorded here rather than guessed at downstream.</p>
+<p><code>None</code> means <em>the header declared none</em>, and is only trustworthy when
+<code>underlying_type_known</code> is True. See that field.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>underlying_type_known</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether <code>underlying_type</code> is an observation
+    or an absence of one.</p>
+<div class="highlight"><pre><span></span><code>A parser can fail to see a clause that is there. tree-sitter's **C**
+grammar has no production for ``enum E : long long`` -- C23 standardised
+it and both major compilers accepted it as an extension for years -- so
+it parses as an ``ERROR`` node with no ``base`` field, which is
+indistinguishable from a plain ``enum E`` if only ``underlying_type`` is
+consulted. A consumer that reads the resulting ``None`` as "declared
+none" falls back to guessing the width from the enumerators, and
+``enum E : long long { A = 0 };`` becomes a four-byte type where the
+compiler laid out eight.
+
+False means the parser found something it could not represent, so the
+width is unknown rather than absent, and a consumer must refuse rather
+than infer. It defaults to True because "declared none" is the ordinary
+case and every parser reports *that* reliably.
+</code></pre></div>
 <h4 id="headerkit.ir.Enum--examples">Examples<a class="headerlink" href="#headerkit.ir.Enum--examples" title="Permanent link">&para;</a></h4>
 <p>Named enum::</p>
 <div class="highlight"><pre><span></span><code>color = Enum("Color", [
@@ -4168,7 +4264,7 @@ introduced into the enclosing namespace as <code>X</code>.</p>
               </div>
             </td>
             <td>
-                  <code>None</code>
+                  <code>True</code>
             </td>
           </tr>
       </tbody>

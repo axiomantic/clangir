@@ -2248,7 +2248,7 @@ and can be useful when working with individual type expressions.</p>
 
 
 <a href="#headerkit.writers.ctypes.type_to_ctypes" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">type_to_ctypes</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">type_to_ctypes</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">types</span><span class="o">=</span><span class="n"><span title="headerkit.writers.ctypes._EMPTY_TYPES">_EMPTY_TYPES</span></span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -2256,6 +2256,44 @@ and can be useful when working with individual type expressions.</p>
         <p>Convert a type expression to its ctypes string representation.</p>
 <p>Handles special cases like <code>const char *</code> -&gt; <code>ctypes.c_char_p</code>,
 <code>void *</code> -&gt; <code>ctypes.c_void_p</code>, and pointer/array composition.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>types</code>
+            </td>
+            <td>
+                  <code><span title="headerkit.writers.ctypes._TypeTable">_TypeTable</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Every spelling this header uses for an enum type, from
+:func:<code>_enum_type_names</code>. An enum binds no ctypes class, so a use of one
+has to resolve to :data:<code>ENUM_CTYPE</code> here rather than to the C name. The
+tag spelling <code>enum E</code> is not valid Python at all, and the alias
+spelling <code>E</code> names something the module may not have assigned yet --
+a <code>Typedef</code> renders into a section emitted <em>after</em> the records that
+use it. Resolving at the use site is what makes the result independent
+of both the spelling the backend chose and the order of the sections.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="headerkit.writers.ctypes._EMPTY_TYPES">_EMPTY_TYPES</span></code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
 
     </div>
