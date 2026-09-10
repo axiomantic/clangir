@@ -3360,16 +3360,22 @@ class ClangASTConverter:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
+            # The name synthesised here *is* an elaborated specifier, so the
+            # flag states what the spelling is rather than inferring it. Some
+            # libclang builds route an elaborated member through this arm and
+            # emit no ELABORATED node at all -- the macOS runner is one -- and
+            # without this it reaches the IR spelled ``struct Gauge`` while
+            # claiming nothing is known about its spelling.
             if decl.kind == CursorKind.UNION_DECL:
-                return CType(name=f"union {name}", qualifiers=quals)
-            return CType(name=f"struct {name}", qualifiers=quals)
+                return CType(name=f"union {name}", qualifiers=quals, is_elaborated=True)
+            return CType(name=f"struct {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle enum types
         if kind == TypeKind.ENUM:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
-            return CType(name=f"enum {name}", qualifiers=quals)
+            return CType(name=f"enum {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle typedef types
         if kind == TypeKind.TYPEDEF:
@@ -3380,16 +3386,20 @@ class ClangASTConverter:
             # A typedef name is an ordinary identifier, never an elaborated type
             # specifier -- true in C and C++ alike.
             #
-            # This is the second of two capture points and they are NOT
-            # redundant, though on any one libclang they look it. Where the
-            # ELABORATED arm above fires it is authoritative, since it carries
-            # the spelling the source used and can separate ``struct Gauge``
-            # from ``Gauge`` for a record as well. But not every build produces
-            # that node: on the macOS CI runner the bare use of a typedef
-            # arrives directly as TYPEDEF, the flag went unrecorded, and the
-            # writer correctly refused a member it could have resolved. Deleting
-            # either one passes the whole suite on the machine that still
-            # produces the other, which is how this was nearly missed.
+            # One of THREE capture points, and which of them a given member
+            # takes depends on the libclang build rather than on the header.
+            # Where an ELABORATED node exists it is authoritative and every use
+            # routes through it; where it does not -- the macOS CI runner --
+            # an elaborated member arrives at the RECORD arm above and a bare
+            # typedef use arrives here.
+            #
+            # None is redundant, and no single machine can show that. On a host
+            # that emits ELABORATED the other two arms are unreachable, so
+            # deleting either leaves the whole suite green; on the runner it is
+            # the ELABORATED assignment that is dead code. The IR assertions in
+            # ``TestElaboratedSpellingIsRecorded`` are what pin them, and they
+            # pin whichever arm the host actually takes -- the RECORD arm was
+            # added only after that test failed on macOS with ``None is True``.
             return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type), is_elaborated=False)
 
         # Handle C++ reference types
