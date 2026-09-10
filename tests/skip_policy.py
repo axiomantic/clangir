@@ -24,6 +24,16 @@ covered on the day it is written, without anyone remembering this file exists.
 ``ALLOWED_SKIPS`` is deliberately not a switch. Each entry names one test and
 one reason, and an entry earns its place only if the skip would *still* fire
 with every toolchain installed. "It is currently red in CI" is not a reason.
+
+**One removal form this gate cannot see: ``collect_ignore``.** A ``conftest.py``
+that sets ``collect_ignore`` or ``collect_ignore_glob`` removes a file with no
+report of any kind -- not a ``TestReport``, not a ``CollectReport``, not even an
+``s`` in the progress line. Mixed with one passing file under ``CI=true`` the
+run prints ``1 passed`` and exits 0, and no hook here fires. Nothing in
+``tests/`` uses it today (checked with ``grep -r``, which reads untracked files),
+so this is a warning rather than a hole: **do not add one.** A file that should
+not run on a platform belongs behind a skip, which is visible, and not behind an
+ignore, which is not.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import shutil
+import sys
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -80,12 +91,10 @@ class AllowedSkip:
     nodeid: str
     reason: str
     why: str
+    platforms: tuple[str, ...] = ()
 
-    #: Minimum literal (non-wildcard) characters in ``nodeid``. A pattern built
-    #: mostly of wildcards is not an entry for one test, it is a switch: both
-    #: ``*`` and ``tests/*`` sail past a bare "is it non-empty" check while
-    #: matching the entire suite.
-    MIN_NODEID_LITERALS = 20
+    #: Characters ``fnmatch`` reads as wildcards.
+    WILDCARDS = "*?["
     #: Minimum words in ``reason``. The reason is half the match, and the empty
     #: string is a substring of every string, so a lax reason widens the entry
     #: to every skip the nodeid pattern reaches.
@@ -94,6 +103,70 @@ class AllowedSkip:
     #: justification anybody can check.
     MIN_WHY_WORDS = 15
 
+    def _validate_nodeid(self) -> None:
+        """Require the SHAPE of one test, not a quantity of literal characters.
+
+        A character count was the first attempt and it was the wrong instrument.
+        It refused ``*`` and ``tests/*`` and admitted
+        ``tests/test_treesitter_backend.py::*`` -- 129 tests, a whole backend
+        axis -- along with ``tests/test_integration/*`` at 193, and a glob built
+        of alternating literals and stars reaching 91% of the suite. Every one
+        of those carries more literal characters than a legitimate entry needs,
+        so no threshold separates them. The distinguishing property was never
+        length: it is *where* the wildcards are.
+
+        So: everything up to the final ``::`` is literal, the test name begins
+        with literal characters, and a wildcard may only stand where a
+        parametrisation suffix would. That admits
+        ``...::TestClass::test_name*`` and ``...::TestClass::test_name[case]``
+        and refuses every pattern above, by construction rather than by degree.
+
+        A nodeid with no ``::`` is refused outright. That shape is a whole
+        module -- which is what a collection-phase skip produces -- and a module
+        that does not run is the case to fix, never the case to allow.
+        """
+        head, separator, tail = self.nodeid.rpartition("::")
+        if not separator:
+            raise ValueError(
+                f"AllowedSkip nodeid {self.nodeid!r} names no test. Give "
+                f"path/to/test_file.py::[TestClass::]test_name; a pattern without '::' "
+                f"covers a whole module, which is a case to fix rather than to allow."
+            )
+        if any(ch in head for ch in self.WILDCARDS):
+            raise ValueError(
+                f"AllowedSkip nodeid {self.nodeid!r} wildcards the file or class part "
+                f"({head!r}). Everything before the final '::' must be literal -- a "
+                f"wildcard there sweeps whole files, which is a blanket exemption."
+            )
+        name = tail
+        for index, ch in enumerate(tail):
+            if ch in self.WILDCARDS:
+                name = tail[:index]
+                break
+        suffix = tail[len(name) :]
+        if not name.startswith("test") or name.endswith("_"):
+            raise ValueError(
+                f"AllowedSkip nodeid {self.nodeid!r} does not begin with a test name "
+                f"(got {name!r}). A wildcard belongs after a complete name, as a "
+                f"parametrisation suffix -- 'test_*' shelters every sibling sharing the "
+                f"prefix, which is not one test."
+            )
+        if suffix not in ("", "*") and not suffix.startswith("["):
+            raise ValueError(
+                f"AllowedSkip nodeid {self.nodeid!r} has {suffix!r} after the test name. "
+                f"Only a parametrisation suffix may follow: '' , '*', or '[...]'."
+            )
+
+    def applies_here(self) -> bool:
+        """Whether this entry is in scope on the platform currently running.
+
+        An entry with no ``platforms`` applies everywhere. One that names them
+        shelters nothing off-platform, and is not reported stale there either --
+        a warning that is false on six of seven matrix legs, every run, trains
+        people to ignore the line on the leg where it is load-bearing.
+        """
+        return not self.platforms or sys.platform in self.platforms
+
     def __post_init__(self) -> None:
         """Refuse a degenerate entry at import time, where it is loud.
 
@@ -101,13 +174,7 @@ class AllowedSkip:
         blanket exemption. ``AllowedSkip(nodeid="*", reason="")`` matched every
         skip in the suite and passed every check the class previously made.
         """
-        literals = sum(1 for ch in self.nodeid if ch not in "*?[]")
-        if literals < self.MIN_NODEID_LITERALS:
-            raise ValueError(
-                f"AllowedSkip nodeid {self.nodeid!r} has {literals} literal characters, "
-                f"under the {self.MIN_NODEID_LITERALS} required. An entry names one test; "
-                f"a pattern this wide is a blanket exemption, which defeats the gate."
-            )
+        self._validate_nodeid()
         if len(self.reason.split()) < self.MIN_REASON_WORDS:
             raise ValueError(
                 f"AllowedSkip reason {self.reason!r} is too lax. The reason is half the "
@@ -140,6 +207,7 @@ ALLOWED_SKIPS: tuple[AllowedSkip, ...] = (
     AllowedSkip(
         nodeid="tests/test_scaffold_runs.py::TestScaffoldedCtypesPackageRuns::test_an_implicit_enumerator_past_int_range_is_refused*",
         reason="parser and compiler disagree, so the writer cannot see the overflow",
+        platforms=("win32",),
         why=(
             "The test asserts that the ctypes writer refuses an enumerator past int range. On a "
             "host whose libclang reports that enumerator as in-range while its C compiler gives it "
@@ -155,7 +223,10 @@ ALLOWED_SKIPS: tuple[AllowedSkip, ...] = (
 
 def is_allowed_skip(nodeid: str, reason: str) -> bool:
     """Whether ``nodeid`` skipping for ``reason`` is on the allowlist."""
-    return any(fnmatch.fnmatch(nodeid, entry.nodeid) and entry.reason in reason for entry in ALLOWED_SKIPS)
+    return any(
+        entry.applies_here() and fnmatch.fnmatch(nodeid, entry.nodeid) and entry.reason in reason
+        for entry in ALLOWED_SKIPS
+    )
 
 
 class ToolchainUnavailable(pytest.fail.Exception):  # type: ignore[misc,name-defined]
@@ -255,15 +326,18 @@ class NoSilentSkips:
         #: ``TestReport`` to convert into a failure, so they are the ones that
         #: need a synthetic one to reach the summary line.
         self.unlisted_at_collection: dict[str, str] = {}
-        #: Entries that matched at least one skip, by ``nodeid`` pattern.
-        self.matched_entries: set[str] = set()
+        #: Entries that matched at least one skip, keyed on the whole match --
+        #: two entries sharing a nodeid pattern with different reasons are
+        #: different entries, and keying on the pattern alone would let one
+        #: firing mark the other as live.
+        self.matched_entries: set[tuple[str, str]] = set()
 
     def _record(self, nodeid: str, reason: str) -> bool:
         """Record one skip. Returns whether it is unsanctioned."""
         self.skips.setdefault(nodeid, reason)
         for entry in ALLOWED_SKIPS:
-            if fnmatch.fnmatch(nodeid, entry.nodeid) and entry.reason in reason:
-                self.matched_entries.add(entry.nodeid)
+            if entry.applies_here() and fnmatch.fnmatch(nodeid, entry.nodeid) and entry.reason in reason:
+                self.matched_entries.add((entry.nodeid, entry.reason))
                 return False
         self.unlisted.setdefault(nodeid, reason)
         return True
@@ -367,10 +441,10 @@ class NoSilentSkips:
         # unexamined, and its pattern shelters the next skip that happens to
         # match. Reported rather than failed, because an entry can be legitimately
         # platform-specific and silent on the leg currently running.
-        stale = [e for e in ALLOWED_SKIPS if e.nodeid not in self.matched_entries]
+        stale = [e for e in ALLOWED_SKIPS if e.applies_here() and (e.nodeid, e.reason) not in self.matched_entries]
         if stale:
             writer.line(f"no-silent-skips: {len(stale)} ALLOWED_SKIPS entry/entries matched nothing this run:")
             for entry in stale:
                 writer.line(f"  {entry.nodeid} ({entry.reason})")
-            writer.line("  Platform-specific entries are expected to be silent on other legs. An entry")
-            writer.line("  silent on EVERY leg no longer describes a real skip and should be deleted.")
+            writer.line("  An entry that declares `platforms` is not listed off-platform, so an entry")
+            writer.line("  named here really did match nothing on a leg where it was in scope.")

@@ -16,6 +16,7 @@ that runs it.
 
 from __future__ import annotations
 
+import sys
 import textwrap
 
 import pytest
@@ -301,14 +302,74 @@ class TestDegenerateAllowlistEntries:
         "the other constraint under test is the one that decides this case."
     )
 
-    def test_a_bare_wildcard_nodeid_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="blanket exemption"):
-            AllowedSkip(nodeid="*", reason="a plausible looking reason", why=self.WHY)
+    REASON = "a plausible looking reason"
 
-    def test_a_directory_wide_nodeid_is_refused(self) -> None:
-        """``tests/*`` is the same switch wearing a path."""
-        with pytest.raises(ValueError, match="literal characters"):
-            AllowedSkip(nodeid="tests/*", reason="a plausible looking reason", why=self.WHY)
+    @pytest.mark.parametrize(
+        ("nodeid", "label"),
+        [
+            ("*", "bare wildcard"),
+            ("tests/*", "directory-wide"),
+            ("tests/test_scaffold_*", "file-prefix sweep, and exactly 20 literal characters"),
+            ("tests/test_*e*s*t*e*s*t*e*s*t*", "glob soup reaching 91% of the suite"),
+            ("tests/test_treesitter_backend.py", "a whole module, which is a case to fix"),
+        ],
+    )
+    def test_a_pattern_that_names_no_test_is_refused(self, nodeid: str, label: str) -> None:
+        with pytest.raises(ValueError, match="names no test"):
+            AllowedSkip(nodeid=nodeid, reason=self.REASON, why=self.WHY)
+
+    @pytest.mark.parametrize(
+        "nodeid",
+        [
+            "tests/test_integration/*::test_thing",
+            "tests/test_*.py::TestA::test_b",
+            "tests/test_x.py::*::test_b",
+        ],
+    )
+    def test_a_wildcard_before_the_final_separator_is_refused(self, nodeid: str) -> None:
+        """Everything up to the final ``::`` must be literal, or an entry sweeps files."""
+        with pytest.raises(ValueError, match="wildcards the file or class part"):
+            AllowedSkip(nodeid=nodeid, reason=self.REASON, why=self.WHY)
+
+    @pytest.mark.parametrize(
+        "nodeid",
+        [
+            "tests/test_treesitter_backend.py::*",
+            "tests/test_x.py::TestA::*",
+        ],
+    )
+    def test_a_bare_wildcard_for_the_test_name_is_refused(self, nodeid: str) -> None:
+        """The shape a character count admitted, which is why it was the wrong instrument.
+
+        ``tests/test_treesitter_backend.py::*`` carries more literal characters
+        than either shipped entry and matches an entire backend axis -- 129
+        tests, measured. Length never separated that from a legitimate entry;
+        wildcard *position* does.
+        """
+        with pytest.raises(ValueError, match="does not begin with a test name"):
+            AllowedSkip(nodeid=nodeid, reason=self.REASON, why=self.WHY)
+
+    def test_a_test_name_prefix_sweep_is_refused(self) -> None:
+        """``test_*`` shelters every sibling sharing the prefix, which is not one test."""
+        with pytest.raises(ValueError, match="does not begin with a test name"):
+            AllowedSkip(nodeid="tests/test_x.py::TestA::test_*", reason=self.REASON, why=self.WHY)
+
+    def test_only_a_parametrisation_suffix_may_follow_the_name(self) -> None:
+        with pytest.raises(ValueError, match="after the test name"):
+            AllowedSkip(nodeid="tests/test_x.py::TestA::test_b?x", reason=self.REASON, why=self.WHY)
+
+    @pytest.mark.parametrize(
+        "nodeid",
+        [
+            "tests/test_x.py::TestA::test_b",
+            "tests/test_x.py::TestA::test_b*",
+            "tests/test_x.py::TestA::test_b[param]",
+            "tests/test_x.py::test_b",
+        ],
+    )
+    def test_a_real_entry_shape_is_admitted(self, nodeid: str) -> None:
+        """The negative control. A rule that refuses everything refuses nothing useful."""
+        assert AllowedSkip(nodeid=nodeid, reason=self.REASON, why=self.WHY).nodeid == nodeid
 
     def test_an_empty_reason_is_refused(self) -> None:
         """The empty string is a substring of every string, so it matches everything."""
@@ -489,3 +550,121 @@ class TestStaleAllowlistEntries:
 
         assert result.ret == pytest.ExitCode.OK
         result.stdout.no_fnmatch_line("*matched nothing this run*")
+
+
+class TestPlatformScopedEntries:
+    """An entry that names platforms is inert everywhere else, in both directions.
+
+    The shipped Windows entry would otherwise print "matched nothing this run" on
+    six of seven matrix legs, every run, forever. This repository has already
+    made the argument against that shape once, about ``check-release-prep``:
+    false warnings on a warn-only check train people to ignore it on exactly the
+    runs where it is load-bearing.
+    """
+
+    WHY = (
+        "Filler justification long enough to satisfy the word-count constraint so that the "
+        "platform scoping is the only thing this case is deciding."
+    )
+
+    def _entry(self, platforms: tuple[str, ...]) -> AllowedSkip:
+        return AllowedSkip(
+            nodeid="tests/test_x.py::TestA::test_b",
+            reason="a platform specific reason",
+            why=self.WHY,
+            platforms=platforms,
+        )
+
+    def test_an_unscoped_entry_applies_everywhere(self) -> None:
+        assert self._entry(()).applies_here()
+
+    def test_an_entry_naming_this_platform_applies(self) -> None:
+        assert self._entry((sys.platform,)).applies_here()
+
+    def test_an_entry_naming_another_platform_does_not(self) -> None:
+        other = "win32" if sys.platform != "win32" else "linux"
+        assert not self._entry((other,)).applies_here()
+
+    def test_an_off_platform_entry_shelters_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Scoping narrows what the allowlist covers, not merely what it reports."""
+        other = "win32" if sys.platform != "win32" else "linux"
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((other,)),))
+
+        assert not is_allowed_skip("tests/test_x.py::TestA::test_b", "a platform specific reason")
+
+    def test_the_same_entry_in_scope_does_shelter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The negative control for the test above."""
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((sys.platform,)),))
+
+        assert is_allowed_skip("tests/test_x.py::TestA::test_b", "a platform specific reason")
+
+    def test_the_gate_does_not_shelter_an_off_platform_skip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``is_allowed_skip`` is not the path the gate takes -- ``_record`` is.
+
+        Asserting only through the helper left the gate's own matching untested:
+        a mutation dropping ``applies_here()`` from ``_record`` killed no test.
+        """
+        other = "win32" if sys.platform != "win32" else "linux"
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((other,)),))
+        gate = NoSilentSkips()
+
+        assert gate._record("tests/test_x.py::TestA::test_b", "a platform specific reason") is True
+
+        assert gate.unlisted == {"tests/test_x.py::TestA::test_b": "a platform specific reason"}
+
+    def test_the_gate_does_shelter_the_same_skip_in_scope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The negative control for the test above."""
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((sys.platform,)),))
+        gate = NoSilentSkips()
+
+        assert gate._record("tests/test_x.py::TestA::test_b", "a platform specific reason") is False
+
+        assert gate.unlisted == {}
+
+    def test_an_off_platform_entry_is_not_reported_stale(
+        self, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        other = "win32" if sys.platform != "win32" else "linux"
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((other,)),))
+
+        result = _run(pytester, monkeypatch, TestTheSummaryLineAgreesWithTheVerdict.BODY, ci="true")
+
+        result.stdout.no_fnmatch_line("*matched nothing this run*")
+
+    def test_an_in_scope_entry_that_fires_nowhere_still_is(
+        self, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Suppression is per-platform, not a way to silence the check entirely."""
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (self._entry((sys.platform,)),))
+
+        result = _run(pytester, monkeypatch, TestTheSummaryLineAgreesWithTheVerdict.BODY, ci="true")
+
+        result.stdout.fnmatch_lines(["*matched nothing this run*"])
+
+    def test_the_shipped_windows_entry_declares_its_platform(self) -> None:
+        """Otherwise it is the 6-in-7 false warning this class exists to prevent."""
+        windows_entry = next(e for e in ALLOWED_SKIPS if "implicit_enumerator" in e.nodeid)
+
+        assert windows_entry.platforms == ("win32",)
+
+
+class TestMatchedEntryKeying:
+    """Two entries sharing a nodeid pattern are two entries, not one."""
+
+    WHY = (
+        "Filler justification long enough to satisfy the word-count constraint so the keying "
+        "of matched entries is the only behaviour under test in this case."
+    )
+
+    def test_one_entry_firing_does_not_mark_its_twin_live(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keyed on the nodeid alone, the second would be sheltered from staleness by the first."""
+        shared = "tests/test_x.py::TestA::test_b"
+        fires = AllowedSkip(nodeid=shared, reason="the reason that fires", why=self.WHY)
+        never = AllowedSkip(nodeid=shared, reason="the reason that never does", why=self.WHY)
+        monkeypatch.setattr("tests.skip_policy.ALLOWED_SKIPS", (fires, never))
+        gate = NoSilentSkips()
+
+        assert gate._record(shared, "the reason that fires") is False
+
+        assert (fires.nodeid, fires.reason) in gate.matched_entries
+        assert (never.nodeid, never.reason) not in gate.matched_entries
