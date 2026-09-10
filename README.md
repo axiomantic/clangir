@@ -137,13 +137,13 @@ Generated project structure:
 ```text
 nim_vector/
 ├── nim_vector.nimble          # Package manifest with test tasks
-├── nim.cfg                    # Compiler configuration (--mm:orc, --threads:on)
+├── nim.cfg                    # Compiler and link configuration (backend, include and library flags)
 ├── src/
 │   ├── nim_vector.nim         # Public API module
 │   └── nim_vector/
 │       └── bindings.nim       # Generated foreign function interface
 └── tests/
-    ├── test_tripwire.nim      # Symbol resolution verification tests
+    ├── test_tripwire.nim      # Symbol resolution (C) or compile-and-link (C++) verification
     └── test_nim_vector.nim    # High-level unit test skeleton
 ```
 

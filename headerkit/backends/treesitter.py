@@ -528,7 +528,7 @@ class TreeSitterBackend:
             self._lifted_declarations = []
             declarations.extend(d for d in decls if self._keep_typedef(d))
 
-        return Header(path=filename, declarations=declarations)
+        return Header(path=filename, declarations=declarations, language="cpp" if is_cpp else "c")
 
     def _keep_typedef(self, decl: Declaration) -> bool:
         """Report whether a top-level declaration is a typedef not already emitted.

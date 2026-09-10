@@ -46,15 +46,95 @@ This generates the following structure:
 ```text
 nim_vector/
 ├── nim_vector.nimble          # Nimble package spec with test tasks
-├── nim.cfg                    # Compiler flags (--mm:orc, --threads:on)
+├── nim.cfg                    # Compiler and link flags (see 'Nim build configuration')
 ├── src/
 │   ├── nim_vector.nim         # Public API re-export
 │   └── nim_vector/
 │       └── bindings.nim       # Generated foreign function interface
 └── tests/
-    ├── test_tripwire.nim      # Symbol and ABI linking verification tests
+    ├── test_tripwire.nim      # Symbol resolution (C) or compile-and-link (C++) verification
     └── test_nim_vector.nim    # High-level unit test skeleton
 ```
+
+### Nim build configuration
+
+`nim.cfg` carries the flags the generated package needs in order to build. Every flag
+is invariant, derived from the parsed IR, or supplied by you. Nothing is guessed.
+
+| Flag | Where it comes from |
+|------|--------------------|
+| `--mm:orc`, `--threads:on`, `--styleCheck:hint` | Invariant. |
+| `--path:"$config/src"` | Invariant. Lets the package build with a bare `nim c`, not only under `nimble`. |
+| `--backend:cpp` | Emitted when the parsed unit needs the C++ backend. |
+| `--passC:"-I\"...\""` | The header's own directory, plus every `-I` passed to the parse. The inner quotes survive Nim's word-splitting of config values, so a path containing a space reaches the compiler whole. They are **double** quotes, escaped: a config file is read by Nim's own lexer, where `'` opens a character literal and a single-quoted path is a syntax error rather than a flag. Paths are emitted with forward slashes, which every compiler in the matrix accepts on Windows and which keeps a `\U` out of a Nim string literal. |
+| `--passC:"-D..."` | Every `-D` passed to the parse. |
+| `--passL:"-l..."`, `--passL:"-L\"...\""` | The `library` and `library_dirs` writer options. |
+
+#### The C++ backend
+
+Nim's default C backend cannot build `importcpp` bindings: it hands a C++ header to
+the C compiler, which rejects `class` outright. HeaderKit decides from the IR, not
+from the file extension -- a `.h` declaring a class is C++, and a `.hpp` declaring
+only C functions is not. The test is structural rather than a list of known shapes:
+any C++ reference, any template-id, any qualified name, any namespace, any scoped
+enumeration. It is deliberately broader than the `importc`/`importcpp` choice, since
+a record can keep an `importc` pragma while a field of it renders as `CppString`.
+
+One case cannot be decided from the IR's type names at all: libclang reports a
+`std::string` field and a C `typedef struct { ... } string;` as the identical
+`CType(name="string")`. HeaderKit settles it with the language the *parser* chose for
+the translation unit, which both backends record on the IR. A C header naming a record
+`vector` therefore stays on the C backend, where its functions link by their unmangled
+names.
+
+Not every C++ shape can be *compile-gated*. A shape earns a place in the compile gate
+only when the C backend genuinely rejects it; a scoped enumeration, for instance, needs
+the C++ backend the moment it is used but builds under either when only its size is
+taken, so gating it would be a check that cannot fail. The decision matrix therefore
+covers many more shapes than the compile gate does, and that is deliberate. The flag is set in `nim.cfg` rather than in the `.nimble`
+test task because a backend selected in the config also overrides a plain `nim c`.
+
+#### Naming the native library
+
+HeaderKit cannot know which library your header's declarations live in, so it does
+not guess one. Name it, and the link flags appear:
+
+```bash
+headerkit include/counter.hpp \
+  -w nim --layout package --package-name counter -o nim:./counter \
+  --writer-opt nim:library=counter \
+  --writer-opt nim:library_dirs=/opt/counter/lib
+```
+
+Both options are repeatable. Without them, `nim.cfg` says in a comment that no
+library is linked rather than carrying an `-l` that resolves to the wrong one.
+
+#### What the C++ tripwire establishes
+
+For a C target, `tests/test_tripwire.nim` loads the shared library and resolves each
+exported symbol. That check cannot serve a C++ target: an `importcpp` binding has no
+unmangled name to look up, and a header-only or statically linked library has no
+shared object at all -- such a tripwire fails for a reason unrelated to the bindings.
+
+A unit that binds nothing linkable -- one declaring only templates, which emit no
+symbol until instantiated -- gets a tripwire that reports *skipped* and echoes the
+reason. **Such a tripwire exits 0**, because Nim's `std/unittest` counts failures and
+a skip is not one, so a CI step reading its exit status alone learns nothing about
+linkage. The generated file says so in a comment. Do not read it as link
+verification; instantiate the generics you use in a test of your own instead. It cannot report success, because there is nothing there whose linkage it
+could have established. A private or protected member is not probed either: the
+probe would fail to compile rather than fail to link, taking the whole package with
+it.
+
+For a C++ target the tripwire's assertion is its own build. It compiles, which proves
+the bindings are valid C++ against the real header; it links, which proves every
+non-generic entry point resolves against the real library; and it checks `sizeof` of
+each bound class, which the C++ compiler can only answer from a complete definition.
+The link probes it contains are never executed -- they exist so the compiler must
+emit a reference to each entry point. It does not establish that a shared library is
+findable at run time, because a statically linked package has none to find.
+
+---
 
 ### 3. Interactive Wizard
 

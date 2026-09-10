@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import textwrap
 
 import pytest
@@ -23,8 +24,14 @@ from headerkit.ir import (
     Typedef,
     Variable,
 )
+from headerkit.scaffold import ScaffoldOptions
 from headerkit.writers import get_writer
-from headerkit.writers.nim import NimWriter, write_nim
+from headerkit.writers.nim import (
+    NimWriter,
+    _cfg_path_flag,
+    _type_name_requires_cpp,
+    write_nim,
+)
 from tests.skip_policy import NIM_INSTALL, require_program
 
 
@@ -596,3 +603,293 @@ class TestNimWriter:
                 cwd=example_file.parent,
             )
             assert result.returncode == 0, f"Failed to compile {example_file.name}:\n{result.stderr}\n{result.stdout}"
+
+
+def _nim_cfg(header: Header, **options: object) -> str:
+    """Scaffold ``header`` as a package and return the generated ``nim.cfg``."""
+    layout = get_writer("nim").write_layout(
+        header,
+        ScaffoldOptions(package_name="demo", target_language="nim", layout="package", options=dict(options)),
+    )
+    return next(f.content for f in layout.files if f.path == "nim.cfg")
+
+
+class TestCfgPathQuoting:
+    """A path with a space must survive Nim's config parsing."""
+
+    def test_path_is_single_quoted(self) -> None:
+        """Nim strips the outer quotes and word-splits; the inner quotes survive."""
+        assert _cfg_path_flag("-I", "/opt/na me") == '"-I\\"/opt/na me\\""'
+
+    def test_single_quote_in_path_is_safe(self) -> None:
+        """`\'` opens a character literal to Nim's config lexer, so it must not be the quote."""
+        rendered = _cfg_path_flag("-I", "/opt/it's")
+        assert rendered == '"-I\\"/opt/it\'s\\""', rendered
+
+    def test_windows_separators_become_forward_slashes(self) -> None:
+        """A backslash inside a Nim string literal would be read as an escape.
+
+        Asserted on the flag the writer renders, not on `pathlib`: the separator to
+        normalise is a property of the path, so this holds on any host rather than
+        only on the one whose paths look like this.
+        """
+        rendered = _cfg_path_flag("-I", "C:\\Users\\a b")
+        assert "\\\\" not in rendered, rendered
+        assert rendered == '"-I\\"C:/Users/a b\\""', rendered
+
+    def test_double_quote_in_path_is_refused(self) -> None:
+        """No quoting of this exists in the format, so say so rather than emit a wrong flag."""
+        with pytest.raises(ValueError, match="double quote"):
+            _cfg_path_flag("-I", '/opt/sa"y')
+
+
+class TestTypeNameCppDetection:
+    """The C++-only test on a type name, at the granularity the parse produces."""
+
+    @pytest.mark.parametrize(
+        ("name", "in_cpp_unit", "in_c_unit"),
+        [
+            # Unambiguous in either language: C has no template-id and no `::`.
+            ("map<int, int>", True, True),
+            ("unique_ptr<int>", True, True),
+            ("vector<int>", True, True),
+            ("ns::Point", True, True),
+            # A C tag keyword settles it wherever it appears.
+            ("struct vector", False, False),
+            ("union u", False, False),
+            ("enum e", False, False),
+            # Plain C spellings.
+            ("int", False, False),
+            ("unsigned long", False, False),
+            ("size_t", False, False),
+            # The undecidable ones. libclang reports `std::string` as the bare name
+            # `string`, and a C `typedef struct {...} string;` reports the same, so
+            # only the unit's language separates them.
+            ("string", True, False),
+            ("vector", True, False),
+            ("exception", True, False),
+            ("shared_ptr", True, False),
+        ],
+    )
+    def test_type_name(self, name: str, in_cpp_unit: bool, in_c_unit: bool) -> None:
+        assert _type_name_requires_cpp(name, unit_is_cpp=True) is in_cpp_unit
+        assert _type_name_requires_cpp(name, unit_is_cpp=False) is in_c_unit
+
+
+class TestNimCfg:
+    """The generated nim.cfg carries the flags the package needs, and nothing invented."""
+
+    def test_cpp_unit_selects_the_cpp_backend(self) -> None:
+        cfg = _nim_cfg(Header(path="c.hpp", declarations=[Struct(name="C", is_cppclass=True)]))
+        assert "--backend:cpp" in cfg
+
+    def test_c_unit_does_not_select_the_cpp_backend(self) -> None:
+        cfg = _nim_cfg(Header(path="c.h", declarations=[Function(name="add", return_type=CType("int"))]))
+        assert "--backend:cpp" not in cfg
+
+    def test_package_resolves_its_own_source_directory(self) -> None:
+        """Without this the package builds only under nimble, which supplies srcDir."""
+        assert '--path:"$config/src"' in _nim_cfg(Header(path="c.h", declarations=[]))
+
+    def test_library_option_becomes_link_flags(self, tmp_path) -> None:
+        """A real directory, not a POSIX literal: library_dirs is emitted resolved."""
+        libdir = tmp_path / "counter"
+        libdir.mkdir()
+        cfg = _nim_cfg(
+            Header(path="c.hpp", declarations=[Struct(name="C", is_cppclass=True)]),
+            library="counter",
+            library_dirs=str(libdir),
+        )
+        assert '--passL:"-lcounter"' in cfg
+        assert f'--passL:"-L\\"{libdir.resolve().as_posix()}\\""' in cfg, cfg
+
+    def test_multiple_libraries_each_get_a_flag(self) -> None:
+        cfg = _nim_cfg(Header(path="c.h", declarations=[]), library=["a", "b"])
+        assert '--passL:"-la"' in cfg
+        assert '--passL:"-lb"' in cfg
+
+    def test_no_library_is_declared_rather_than_guessed(self) -> None:
+        """A guessed -l resolves to the wrong library or to none; say so instead."""
+        cfg = _nim_cfg(Header(path="c.h", declarations=[]))
+        assert '--passL:"-l' not in cfg
+        assert "--writer-opt nim:library=" in cfg
+
+    def test_header_directory_becomes_an_include_path(self, tmp_path) -> None:
+        header = tmp_path / "inc" / "c.hpp"
+        header.parent.mkdir()
+        header.write_text("")
+        cfg = _nim_cfg(Header(path=str(header), declarations=[]))
+        assert f'--passC:"-I\\"{header.parent.resolve().as_posix()}\\""' in cfg, cfg
+
+    def test_parse_include_dirs_and_defines_reach_the_config(self, tmp_path) -> None:
+        """A real directory, not a POSIX literal: include paths are emitted resolved."""
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        layout = get_writer("nim").write_layout(
+            Header(path="c.h", declarations=[]),
+            ScaffoldOptions(
+                package_name="demo",
+                target_language="nim",
+                layout="package",
+                extra_context={"include_dirs": [str(extra)], "defines": ["FOO=1"]},
+            ),
+        )
+        cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
+        assert f'--passC:"-I\\"{extra.resolve().as_posix()}\\""' in cfg, cfg
+        assert '--passC:"-DFOO=1"' in cfg
+
+    def test_library_dirs_are_resolved(self, tmp_path) -> None:
+        """A relative -L resolves against the linker's working directory, not the package's."""
+        libdir = tmp_path / "lib"
+        libdir.mkdir()
+        relative = str(libdir) + os.sep + "."
+        cfg = _nim_cfg(Header(path="c.h", declarations=[]), library="demo", library_dirs=relative)
+        assert f'--passL:"-L\\"{libdir.resolve().as_posix()}\\""' in cfg, cfg
+        assert relative not in cfg, cfg
+
+    def test_unordered_option_values_are_emitted_in_a_stable_order(self) -> None:
+        """A set would order the flags by iteration, defeating regenerate-and-diff."""
+        first = _nim_cfg(Header(path="c.h", declarations=[]), library={"zlib", "png", "aaa"})
+        second = _nim_cfg(Header(path="c.h", declarations=[]), library={"png", "aaa", "zlib"})
+        assert first == second
+        order = [line for line in first.splitlines() if line.startswith('--passL:"-l')]
+        assert order == ['--passL:"-laaa"', '--passL:"-lpng"', '--passL:"-lzlib"'], order
+
+    def test_unordered_extra_context_values_are_emitted_in_a_stable_order(self) -> None:
+        """`extra_context` bypasses option coercion, so the writer sorts it itself."""
+
+        def cfg_for(defines: set[str]) -> str:
+            layout = get_writer("nim").write_layout(
+                Header(path="c.h", declarations=[]),
+                ScaffoldOptions(
+                    package_name="demo",
+                    target_language="nim",
+                    layout="package",
+                    extra_context={"defines": defines},
+                ),
+            )
+            return next(f.content for f in layout.files if f.path == "nim.cfg")
+
+        first = cfg_for({"ZED=1", "ALPHA=1", "MID=1"})
+        assert first == cfg_for({"MID=1", "ZED=1", "ALPHA=1"})
+        order = [line for line in first.splitlines() if line.startswith('--passC:"-D')]
+        assert order == ['--passC:"-DALPHA=1"', '--passC:"-DMID=1"', '--passC:"-DZED=1"'], order
+
+    def test_relatively_passed_include_dir_does_not_duplicate_the_header_directory(self, tmp_path) -> None:
+        """The dedup compares resolved paths, or the same directory is emitted twice."""
+        header = tmp_path / "inc" / "c.h"
+        header.parent.mkdir()
+        header.write_text("")
+        layout = get_writer("nim").write_layout(
+            Header(path=str(header), declarations=[]),
+            ScaffoldOptions(
+                package_name="demo",
+                target_language="nim",
+                layout="package",
+                extra_context={"include_dirs": [str(header.parent) + os.sep + "."]},
+            ),
+        )
+        cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
+        # Count the flags, not one spelling of them: an unresolved duplicate is a
+        # *different* string ("<dir>/." vs "<dir>"), so counting the resolved form
+        # alone would report 1 whether or not the dedup ran.
+        include_flags = [line for line in cfg.splitlines() if line.startswith('--passC:"-I')]
+        assert len(include_flags) == 1, include_flags
+        assert f'-I\\"{header.parent.resolve().as_posix()}\\"' in include_flags[0]
+
+
+class TestNimCppTripwire:
+    """A C++ target gets a compile-and-link tripwire instead of a loadLib one."""
+
+    HEADER = Header(
+        path="counter.hpp",
+        declarations=[
+            Struct(
+                name="Counter",
+                is_cppclass=True,
+                fields=[Field("total", CType("int"))],
+                constructors=[
+                    Function(name="Counter", return_type=CType("void"), parameters=[Parameter("start", CType("int"))])
+                ],
+                methods=[
+                    Function(name="add", return_type=CType("void"), parameters=[Parameter("n", CType("int"))]),
+                    Function(name="value", return_type=CType("int"), is_const=True),
+                    Function(
+                        name="addFrom",
+                        return_type=CType("void"),
+                        parameters=[Parameter("source", Reference(CType("int")))],
+                    ),
+                ],
+            )
+        ],
+    )
+
+    def _tripwire(self, header: Header) -> str:
+        layout = get_writer("nim").write_layout(
+            header,
+            ScaffoldOptions(package_name="counter", target_language="nim", layout="package"),
+        )
+        return next(f.content for f in layout.files if f.path == "tests/test_tripwire.nim")
+
+    def test_cpp_tripwire_does_not_use_dynlib(self) -> None:
+        """loadLib looks for an unmangled name that an importcpp binding never has."""
+        tripwire = self._tripwire(self.HEADER)
+        assert "loadLib" not in tripwire
+        assert "symAddr" not in tripwire
+
+    def test_cpp_tripwire_references_every_entry_point(self) -> None:
+        """Referencing each entry point is what forces the linker to resolve it."""
+        tripwire = self._tripwire(self.HEADER)
+        assert "add(self[], a0[])" in tripwire
+        assert "discard value(self[])" in tripwire
+        assert "discard constructCounter(a0[])" in tripwire
+
+    def test_cpp_tripwire_probes_are_not_executed(self) -> None:
+        """A probe that ran would dereference nil; the build is the assertion."""
+        tripwire = self._tripwire(self.HEADER)
+        assert "var hkRunLinkProbes = false" in tripwire
+        assert "if hkRunLinkProbes:" in tripwire
+
+    def test_reference_parameter_is_probed_by_pointer(self) -> None:
+        """A `var T` parameter cannot be wrapped as `ptr var T`; `ptr T` derefs to it."""
+        tripwire = self._tripwire(self.HEADER)
+        assert "ptr var" not in tripwire
+        assert "addFrom(self[], a0[])" in tripwire
+        assert "a0: ptr cint" in tripwire
+
+    def test_cpp_tripwire_asserts_type_completeness(self) -> None:
+        """sizeof is answered by the C++ compiler, so a forward declaration fails it."""
+        assert "check sizeof(Counter) > 0" in self._tripwire(self.HEADER)
+
+    def test_c_target_keeps_the_dynlib_tripwire(self) -> None:
+        """A C library does have unmangled symbols in a shared object; keep checking them."""
+        tripwire = self._tripwire(Header(path="c.h", declarations=[Function(name="add", return_type=CType("int"))]))
+        assert "loadLib" in tripwire
+        assert 'symAddr("add")' in tripwire
+
+
+class TestGeneratedPathsSurviveNimStringLiterals:
+    """Every path the writer emits lands inside a Nim string literal."""
+
+    #: A Windows path exercising both escapes Nim would otherwise read: `\U` and `\x`.
+    WINDOWS_PATH = "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pkg\\shape.hpp"
+
+    def test_header_pragma_path_has_no_backslash(self) -> None:
+        """`\\U` and `\\x` in a header path are escapes to Nim, not separators.
+
+        Left as-is the generated bindings do not parse at all:
+        ``Error: expected a hex digit, but found: s; maybe prepend with 0``.
+        """
+        out = write_nim(Header(path=self.WINDOWS_PATH, declarations=[Function(name="f", return_type=CType("void"))]))
+        assert "\\" not in out, out
+        assert 'header: "C:/Users/runneradmin/AppData/Local/Temp/pkg/shape.hpp"' in out, out
+
+    def test_cfg_flag_path_has_no_backslash(self) -> None:
+        assert "\\\\" not in _cfg_path_flag("-I", self.WINDOWS_PATH)
+
+    def test_posix_paths_are_untouched(self) -> None:
+        """The normalisation must be a no-op where there is nothing to normalise."""
+        out = write_nim(
+            Header(path="/usr/include/shape.h", declarations=[Function(name="f", return_type=CType("void"))])
+        )
+        assert 'header: "/usr/include/shape.h"' in out, out

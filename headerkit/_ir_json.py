@@ -300,4 +300,6 @@ def json_to_header(data: str | dict[str, Any]) -> Header:
         path=d["path"],
         declarations=[_dict_to_decl(decl) for decl in d.get("declarations", [])],
         included_headers=set(d.get("included_headers", [])),
+        language=d.get("language", "c"),
+        classification=d.get("classification", "header"),
     )
