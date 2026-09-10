@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import textwrap
+from pathlib import Path
+
 import pytest
 
 from headerkit.backends import is_backend_available
-from headerkit.writers.nim import write_nim
+from headerkit.scaffold import ScaffoldOptions
+from headerkit.writers import get_writer
+from headerkit.writers.nim import unit_requires_cpp, write_nim
 
 pytestmark = pytest.mark.skipif(
     not is_backend_available("libclang"),
@@ -65,3 +72,174 @@ class TestNimTypedefRoundtrip:
     def test_primitive_typedef(self, backend: pytest.FixtureRequest) -> None:
         output = parse_and_nim(backend, "typedef unsigned int uint32_custom;")
         assert "uint32_custom* = cuint" in output
+
+
+class TestNimCppBuildConfiguration:
+    """Prove a scaffolded C++ package compiles, links and runs.
+
+    ``importcpp`` bindings cannot be built by Nim's default C backend: the C
+    compiler is handed a C++ header and rejects ``class`` outright. These cases
+    build the real thing rather than inspecting strings about it.
+    """
+
+    #: A class is the minimum shape that exercises the C++ path end to end: a
+    #: constructor (no default one, so nothing can be zero-initialised), a
+    #: mutating method, a const method whose value the test checks, and a method
+    #: taking a reference -- which the writer renders as a ``var`` parameter, the
+    #: one param shape a link probe cannot simply wrap in another ``ptr``.
+    HEADER = textwrap.dedent("""\
+        #pragma once
+
+        class Counter {
+        public:
+            Counter(int start);
+            void add(int n);
+            void addFrom(int& source);
+            int value() const;
+        private:
+            int total;
+        };
+    """)
+
+    SOURCE = textwrap.dedent("""\
+        #include "counter.hpp"
+
+        Counter::Counter(int start) : total(start) {}
+        void Counter::add(int n) { total += n; }
+        void Counter::addFrom(int& source) { total += source; }
+        int Counter::value() const { return total; }
+    """)
+
+    @staticmethod
+    def _require_toolchain() -> tuple[str, str]:
+        """Return the ``nim`` and C++ driver paths, skipping visibly if either is absent."""
+        nim_bin = shutil.which("nim")
+        if nim_bin is None:
+            pytest.skip("SKIP(toolchain): the Nim compiler ('nim') is not installed on this host")
+        cxx_bin = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+        if cxx_bin is None:
+            pytest.skip("SKIP(toolchain): no C++ driver ('c++', 'g++' or 'clang++') is installed on this host")
+        return nim_bin, cxx_bin
+
+    @staticmethod
+    def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+
+    def _scaffold(self, backend, tmp_path: Path) -> tuple[Path, Path, str, str]:
+        """Write the header, build a static library from it, and scaffold the package."""
+        nim_bin, cxx_bin = self._require_toolchain()
+
+        native = tmp_path / "native"
+        native.mkdir()
+        header = native / "counter.hpp"
+        header.write_text(self.HEADER)
+        (native / "counter.cpp").write_text(self.SOURCE)
+
+        compiled = self._run([cxx_bin, "-fPIC", "-c", "counter.cpp", "-o", "counter.o"], native)
+        assert compiled.returncode == 0, f"building the native object failed:\n{compiled.stderr}"
+        archived = self._run([shutil.which("ar") or "ar", "rcs", "libcounter.a", "counter.o"], native)
+        assert archived.returncode == 0, f"archiving the native library failed:\n{archived.stderr}"
+
+        unit = backend.parse(self.HEADER, str(header))
+        assert unit_requires_cpp(unit), "the fixture must parse into a C++ unit or it tests nothing"
+
+        layout = get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(
+                package_name="counter",
+                target_language="nim",
+                layout="package",
+                options={"library": "counter", "library_dirs": str(native)},
+            ),
+        )
+        pkg_dir = tmp_path / "pkg"
+        layout.write_to_disk(pkg_dir)
+        return pkg_dir, native, nim_bin, cxx_bin
+
+    def test_generated_tripwire_compiles_links_and_runs(self, backend, tmp_path: Path) -> None:
+        """The generated C++ tripwire builds and passes using only the generated nim.cfg."""
+        pkg_dir, _native, nim_bin, _cxx = self._scaffold(backend, tmp_path)
+
+        cfg = (pkg_dir / "nim.cfg").read_text()
+        assert "--backend:cpp" in cfg, f"nim.cfg does not select the C++ backend:\n{cfg}"
+
+        # `nim c`, not `nim cpp`: the generated nim.cfg must be what redirects the
+        # build, because the generated .nimble test task spells the command this way.
+        built = self._run([nim_bin, "c", "-r", "--hints:off", "tests/test_tripwire.nim"], pkg_dir)
+        assert built.returncode == 0, (
+            f"the generated tripwire failed to build or run:\n{built.stdout}\n{built.stderr}\nnim.cfg was:\n{cfg}"
+        )
+
+    def test_generated_bindings_call_through_to_the_native_library(self, backend, tmp_path: Path) -> None:
+        """A consumer of the package constructs the class, mutates it, and reads a value back."""
+        pkg_dir, _native, nim_bin, _cxx = self._scaffold(backend, tmp_path)
+
+        consumer = pkg_dir / "tests" / "consumer.nim"
+        consumer.write_text(
+            textwrap.dedent("""\
+                import counter
+
+                var c = constructCounter(10)
+                c.add(5)
+                var seven = 7.cint
+                c.addFrom(seven)
+                echo "value=", c.value()
+            """)
+        )
+        built = self._run([nim_bin, "c", "-r", "--hints:off", "tests/consumer.nim"], pkg_dir)
+        assert built.returncode == 0, f"the consumer failed to build:\n{built.stdout}\n{built.stderr}"
+        # 10 + 5 + 7, computed by the real C++ library rather than by Nim.
+        assert "value=22" in built.stdout, f"the call did not reach the native library:\n{built.stdout}"
+
+    def test_tripwire_fails_loudly_when_the_native_library_is_missing(self, backend, tmp_path: Path) -> None:
+        """Deleting the library must break the build.
+
+        This one is caught by the linker's own "library not found", so it proves the
+        generated ``-l`` flag is real -- not that the tripwire references any symbol.
+        The case below is the one that proves that.
+        """
+        pkg_dir, native, nim_bin, _cxx = self._scaffold(backend, tmp_path)
+
+        (native / "libcounter.a").unlink()
+        built = self._run([nim_bin, "c", "-r", "--hints:off", "tests/test_tripwire.nim"], pkg_dir)
+        assert built.returncode != 0, (
+            "the tripwire passed with no native library present, which is the green mirage "
+            f"it exists to prevent:\n{built.stdout}\n{built.stderr}"
+        )
+
+    def test_tripwire_fails_loudly_when_the_library_is_empty(self, backend, tmp_path: Path) -> None:
+        """A library that exists but defines nothing must still fail the build.
+
+        This is the case that distinguishes a tripwire which references the bound
+        entry points from one that merely names a library on the link line. The
+        archive is present, so the linker finds it; only an unresolved reference to
+        ``Counter::add`` and friends can fail here.
+        """
+        pkg_dir, native, nim_bin, cxx_bin = self._scaffold(backend, tmp_path)
+
+        (native / "empty.cpp").write_text("// defines nothing\n")
+        compiled = self._run([cxx_bin, "-fPIC", "-c", "empty.cpp", "-o", "empty.o"], native)
+        assert compiled.returncode == 0, compiled.stderr
+        (native / "libcounter.a").unlink()
+        archived = self._run([shutil.which("ar") or "ar", "rcs", "libcounter.a", "empty.o"], native)
+        assert archived.returncode == 0, archived.stderr
+        assert (native / "libcounter.a").is_file(), "the archive must exist or this tests the previous case"
+
+        built = self._run([nim_bin, "c", "-r", "--hints:off", "tests/test_tripwire.nim"], pkg_dir)
+        assert built.returncode != 0, (
+            "the tripwire built against a library defining none of the bound entry points, "
+            f"so it does not establish that they link:\n{built.stdout}\n{built.stderr}"
+        )
+
+    def test_c_only_unit_does_not_select_the_cpp_backend(self, backend, tmp_path: Path) -> None:
+        """The backend choice follows the IR, so a C unit keeps the C backend."""
+        self._require_toolchain()
+        unit = backend.parse("int add(int a, int b);", str(tmp_path / "plain.h"))
+        assert not unit_requires_cpp(unit)
+
+        layout = get_writer("nim").write_layout(
+            unit,
+            ScaffoldOptions(package_name="plain", target_language="nim", layout="package"),
+        )
+        cfg = next(f.content for f in layout.files if f.path == "nim.cfg")
+        assert "--backend:cpp" not in cfg

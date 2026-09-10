@@ -15,6 +15,7 @@ Features
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 from typing import ClassVar
 
 from headerkit.ir import (
@@ -25,6 +26,7 @@ from headerkit.ir import (
     Function,
     FunctionPointer,
     Header,
+    Parameter,
     Pointer,
     Reference,
     SourceUnit,
@@ -247,6 +249,93 @@ def _escape_ident(name: str) -> str:
     return clean
 
 
+def _type_contains(t: TypeExpr, target_prefix: str) -> bool:
+    """Check structurally whether a TypeExpr contains target_prefix in its type names."""
+    if isinstance(t, CType):
+        return target_prefix in t.name
+    elif isinstance(t, Pointer):
+        return _type_contains(t.pointee, target_prefix)
+    elif isinstance(t, Reference):
+        return _type_contains(t.target, target_prefix)
+    elif isinstance(t, Array):
+        return _type_contains(t.element_type, target_prefix)
+    elif isinstance(t, FunctionPointer):
+        if _type_contains(t.return_type, target_prefix):
+            return True
+        return any(_type_contains(p.type, target_prefix) for p in t.parameters)
+    return False
+
+
+def _decl_contains(d: object, target_prefix: str) -> bool:
+    """Check structurally whether a Declaration references target_prefix."""
+    if isinstance(d, Struct):
+        for f in d.fields:
+            if _type_contains(f.type, target_prefix):
+                return True
+        for m in d.methods + d.constructors:
+            if _type_contains(m.return_type, target_prefix):
+                return True
+            if any(_type_contains(p.type, target_prefix) for p in m.parameters):
+                return True
+        if d.destructor and any(_type_contains(p.type, target_prefix) for p in d.destructor.parameters):
+            return True
+    elif isinstance(d, Function):
+        if _type_contains(d.return_type, target_prefix):
+            return True
+        if any(_type_contains(p.type, target_prefix) for p in d.parameters):
+            return True
+    elif isinstance(d, Typedef):
+        if _type_contains(d.underlying_type, target_prefix):
+            return True
+    elif isinstance(d, Variable):
+        if _type_contains(d.type, target_prefix):
+            return True
+    return False
+
+
+#: The ``std::`` names the writer recognises and renders as a C++ helper type
+#: (``CppString``, ``UniquePtr``, ``SharedPtr``, ``WeakPtr``, ``CppVector``) or as an
+#: ``importcpp`` base object. A unit mentioning one of these needs the C++ backend
+#: even when no declaration in it is itself a C++ class.
+CPP_STDLIB_MARKERS: tuple[str, ...] = (
+    "std::exception",
+    "std::string",
+    "std::unique_ptr",
+    "std::shared_ptr",
+    "std::weak_ptr",
+    "std::vector",
+)
+
+
+def _struct_requires_cpp(s: Struct) -> bool:
+    """Whether this record is rendered with ``importcpp`` rather than ``importc``."""
+    return bool(s.is_cppclass or s.methods or s.bases or s.constructors or s.destructor or s.template_params)
+
+
+def _function_requires_cpp(f: Function) -> bool:
+    """Whether this free function is rendered with ``importcpp`` rather than ``importc``."""
+    return bool(f.namespace or f.template_params)
+
+
+def unit_requires_cpp(unit: SourceUnit | Header) -> bool:
+    """Whether the Nim bindings for ``unit`` need the C++ backend to compile.
+
+    The answer is read off the IR, never off the file extension: a ``.h`` may
+    declare a class and a ``.hpp`` may declare nothing but C functions. Each
+    clause mirrors one ``importcpp`` emission site, and both sides call the same
+    predicate, so an emitter cannot start emitting ``importcpp`` for a shape this
+    function still answers ``False`` for.
+    """
+    for decl in unit.declarations:
+        if isinstance(decl, Struct) and _struct_requires_cpp(decl):
+            return True
+        if isinstance(decl, Function) and _function_requires_cpp(decl):
+            return True
+        if any(_decl_contains(decl, marker) for marker in CPP_STDLIB_MARKERS):
+            return True
+    return False
+
+
 class NimWriter(BaseWriter):
     """Writer that converts headerkit IR into Nim binding modules."""
 
@@ -267,6 +356,18 @@ class NimWriter(BaseWriter):
             description="Header path to reference in {.header.} pragmas",
             default=None,
             type=str,
+        ),
+        WriterOption(
+            name="library",
+            description="Native library to link, without the 'lib' prefix or extension (emits --passL:-l<name>)",
+            default=None,
+            type=list,
+        ),
+        WriterOption(
+            name="library_dirs",
+            description="Directories to search for the native library (emits --passL:-L<dir>)",
+            default=None,
+            type=list,
         ),
     )
 
@@ -307,48 +408,6 @@ class NimWriter(BaseWriter):
                 'std_exception* {.importcpp: "std::exception", header: "<exception>".} = object of RootObj'
             )
             emitted_types.add("std_exception")
-
-        def _type_contains(t: TypeExpr, target_prefix: str) -> bool:
-            """Check structurally whether a TypeExpr contains target_prefix in its type names."""
-            if isinstance(t, CType):
-                return target_prefix in t.name
-            elif isinstance(t, Pointer):
-                return _type_contains(t.pointee, target_prefix)
-            elif isinstance(t, Reference):
-                return _type_contains(t.target, target_prefix)
-            elif isinstance(t, Array):
-                return _type_contains(t.element_type, target_prefix)
-            elif isinstance(t, FunctionPointer):
-                if _type_contains(t.return_type, target_prefix):
-                    return True
-                return any(_type_contains(p.type, target_prefix) for p in t.parameters)
-            return False
-
-        def _decl_contains(d: object, target_prefix: str) -> bool:
-            """Check structurally whether a Declaration references target_prefix."""
-            if isinstance(d, Struct):
-                for f in d.fields:
-                    if _type_contains(f.type, target_prefix):
-                        return True
-                for m in d.methods + d.constructors:
-                    if _type_contains(m.return_type, target_prefix):
-                        return True
-                    if any(_type_contains(p.type, target_prefix) for p in m.parameters):
-                        return True
-                if d.destructor and any(_type_contains(p.type, target_prefix) for p in d.destructor.parameters):
-                    return True
-            elif isinstance(d, Function):
-                if _type_contains(d.return_type, target_prefix):
-                    return True
-                if any(_type_contains(p.type, target_prefix) for p in d.parameters):
-                    return True
-            elif isinstance(d, Typedef):
-                if _type_contains(d.underlying_type, target_prefix):
-                    return True
-            elif isinstance(d, Variable):
-                if _type_contains(d.type, target_prefix):
-                    return True
-            return False
 
         has_cpp_string = any(_decl_contains(decl, "std::string") for decl in header.declarations)
         if has_cpp_string:
@@ -507,7 +566,7 @@ class NimWriter(BaseWriter):
             t_name = f"{t_name}[{', '.join(_escape_ident(tp) for tp in s.template_params)}]"
 
         pragma_parts: list[str] = []
-        is_cpp = s.is_cppclass or bool(s.methods or s.bases or s.constructors or s.destructor)
+        is_cpp = _struct_requires_cpp(s)
 
         if is_cpp:
             cpp_pattern = s.cpp_name or (f"{s.namespace}::{s.name}" if s.namespace else s.name)
@@ -736,12 +795,12 @@ class NimWriter(BaseWriter):
         ret_str = f": {ret_type}" if ret_type != "void" else ""
 
         pragmas: list[str] = []
-        if f.namespace:
-            pragmas.append(f'importcpp: "{f.namespace}::{f.name}(@)", header: "{header_file}"')
-        elif f.template_params:
-            pragmas.append(f'importcpp: "{f.name}(@)", header: "{header_file}"')
-        else:
+        if not _function_requires_cpp(f):
             pragmas.append(f'importc: "{f.name}", header: "{header_file}"')
+        elif f.namespace:
+            pragmas.append(f'importcpp: "{f.namespace}::{f.name}(@)", header: "{header_file}"')
+        else:
+            pragmas.append(f'importcpp: "{f.name}(@)", header: "{header_file}"')
 
         if f.is_variadic:
             pragmas.append("varargs")
@@ -766,6 +825,186 @@ class NimWriter(BaseWriter):
             return []
         c_name = _escape_ident(c.name)
         return [f"{c_name}* = {c.value}"]
+
+    @staticmethod
+    def _as_list(value: object) -> list[str]:
+        """Normalise a writer option that may arrive as a scalar, list, or ``None``."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value else []
+        if isinstance(value, list | tuple | set):
+            return [str(v) for v in value if str(v)]
+        return [str(value)]
+
+    def _build_nim_cfg(self, unit: SourceUnit | Header, options: ScaffoldOptions) -> str:
+        """Render ``nim.cfg`` -- the flags the generated package needs to compile.
+
+        Every flag here is either invariant, derived from the IR, or supplied by
+        the caller. Nothing is guessed: a package whose library the caller did not
+        name links against nothing and says so, rather than carrying a plausible
+        ``-l`` that resolves to the wrong library or to none.
+        """
+        lines = ["--mm:orc", "--threads:on", "--styleCheck:hint"]
+
+        # `$config` is the directory holding this file, so the package builds with a
+        # bare `nim c tests/...` and not only under `nimble`, which supplies srcDir.
+        lines.append('--path:"$config/src"')
+
+        if unit_requires_cpp(unit):
+            # The bindings carry `importcpp` pragmas and `#include` a C++ header.
+            # The default C backend hands both to the C compiler, which rejects
+            # `class` outright. Set in nim.cfg rather than in the .nimble test task
+            # because a config backend selection also overrides a plain `nim c`.
+            lines.append("--backend:cpp")
+
+        include_dirs = self._as_list(options.extra_context.get("include_dirs"))
+        # The header's own directory: the one include path the writer always knows,
+        # and the one a header's quoted includes of its siblings need.
+        unit_path = getattr(unit, "path", "") or ""
+        if unit_path:
+            parent = str(Path(unit_path).resolve().parent)
+            if parent not in include_dirs:
+                include_dirs = [*include_dirs, parent]
+
+        lines.extend(f'--passC:"-I{d}"' for d in include_dirs)
+        lines.extend(f'--passC:"-D{d}"' for d in self._as_list(options.extra_context.get("defines")))
+
+        library_dirs = self._as_list(options.get_option("library_dirs"))
+        libraries = self._as_list(options.get_option("library"))
+        lines.extend(f'--passL:"-L{d}"' for d in library_dirs)
+        lines.extend(f'--passL:"-l{lib}"' for lib in libraries)
+        if not libraries:
+            lines.append(
+                "# No native library to link: pass --writer-opt nim:library=<name> "
+                "(and nim:library_dirs=<dir>) to add the -l/-L flags this package needs."
+            )
+
+        return "\n".join(lines) + "\n"
+
+    def _probe_param(self, type_expr: TypeExpr) -> str:
+        """Render ``type_expr`` as the pointer a link probe takes it by.
+
+        A probe takes every argument by pointer so that a call site can name the
+        probe with ``nil`` whatever the argument type is. Without that, probing an
+        entry point would mean inventing a value of each parameter's type -- and a
+        C++ class with no default constructor has no value to invent.
+        """
+        formatted = self._format_type(type_expr, in_param=True)
+        # `ptr (var T)` is not a type; `T` is, and `x[]` on a `ptr T` is the lvalue
+        # a `var T` parameter binds to.
+        formatted = formatted.removeprefix("var ")
+        return f"ptr {formatted}"
+
+    def _link_probe(self, name: str, index: int, self_type: str | None, params: list[Parameter], returns: str) -> str:
+        """Render one probe proc that references ``name`` so the linker must resolve it."""
+        probe_params: list[str] = []
+        call_args: list[str] = []
+        if self_type is not None:
+            probe_params.append(f"self: ptr {self_type}")
+            call_args.append("self[]")
+        for i, p in enumerate(params):
+            arg = f"a{i}"
+            probe_params.append(f"{arg}: {self._probe_param(p.type)}")
+            call_args.append(f"{arg}[]")
+        call = f"{name}({', '.join(call_args)})"
+        body = f"discard {call}" if returns != "void" else call
+        return f"proc hkLinkProbe{index}({', '.join(probe_params)}) =\n  {body}"
+
+    def _collect_link_probes(self, unit: SourceUnit | Header) -> tuple[list[str], list[str], list[str]]:
+        """Return the probe definitions, their call sites, and the complete C++ types.
+
+        Templates are skipped: a generic binding has no symbol to link until it is
+        instantiated, so probing one would prove nothing about the native library.
+        """
+        probes: list[str] = []
+        calls: list[str] = []
+        complete_types: list[str] = []
+
+        def add(name: str, self_type: str | None, params: list[Parameter], returns: str) -> None:
+            index = len(probes)
+            probes.append(self._link_probe(name, index, self_type, params, returns))
+            args = ["nil"] * (len(params) + (1 if self_type is not None else 0))
+            calls.append(f"hkLinkProbe{index}({', '.join(args)})")
+
+        for decl in unit.declarations:
+            if isinstance(decl, Function) and not decl.template_params and not decl.is_variadic and decl.name:
+                add(_escape_ident(decl.name), None, decl.parameters, self._format_type(decl.return_type))
+            elif isinstance(decl, Struct) and _struct_requires_cpp(decl) and decl.name and not decl.template_params:
+                struct_type = _escape_ident(decl.name)
+                complete_types.append(struct_type)
+                for m in decl.methods:
+                    if m.template_params or m.name.startswith("operator"):
+                        continue
+                    self_type = None if m.is_static else struct_type
+                    add(_escape_ident(m.name), self_type, m.parameters, self._format_type(m.return_type))
+                for ctor in decl.constructors:
+                    add(f"construct{decl.name}", None, ctor.parameters, struct_type)
+
+        return probes, calls, complete_types
+
+    def _build_cpp_tripwire(self, pkg: str, unit: SourceUnit | Header) -> str:
+        """Render the tripwire for a package whose bindings use ``importcpp``.
+
+        ``loadLib``/``symAddr`` cannot serve a C++ target. It looks for an
+        unmangled name in a shared object, and an ``importcpp`` binding has neither:
+        the C++ name is mangled, and a header-only or statically-linked library has
+        no shared object at all. Such a tripwire fails for a reason unrelated to
+        whether the bindings work.
+
+        What this tripwire establishes instead is a build-time property, and the
+        build is where it fails: the bindings compile under the C++ backend against
+        the real header, every non-generic entry point resolves at link time, and
+        every bound C++ class is a complete type rather than a forward declaration.
+        It does not establish that a shared library is findable at run time -- a
+        statically linked package has none to find.
+        """
+        probes, calls, complete_types = self._collect_link_probes(unit)
+
+        probe_block = "\n\n".join(probes) if probes else ""
+        call_block = "\n".join(f"    {call}" for call in calls) if calls else "    discard"
+        size_checks = "\n".join(f"    check sizeof({t}) > 0" for t in complete_types)
+        if not size_checks:
+            size_checks = f"    check declared({pkg})"
+
+        # The template is dedented before the blocks go in: dedent() strips the
+        # common prefix of every line it is given, and an interpolated block that
+        # starts at column zero would leave it with nothing to strip.
+        template = textwrap.dedent("""\
+            # Tripwire for a C++ target.
+            #
+            # The assertion this file makes is its own build. Compiling it proves the
+            # bindings are valid C++ against the real header; linking it proves every
+            # bound entry point resolves against the real native library. A missing
+            # library fails the link with undefined symbols and the test never runs.
+            #
+            # The probes below are never executed -- `hkRunLinkProbes` is false. They
+            # exist so the C++ compiler must emit a reference to each entry point and
+            # the linker must resolve it. Every probe argument is a pointer so a call
+            # site can pass `nil` without inventing a value of a type that may have no
+            # default constructor.
+            import std/unittest
+            import {pkg}
+
+            var hkRunLinkProbes = false
+
+            {probe_block}
+
+            proc hkForceLinkage() =
+              if hkRunLinkProbes:
+            {call_block}
+
+            suite "Tripwire Compile & Link Verification":
+              test "every bound entry point compiles and links against '{pkg}'":
+                hkForceLinkage()
+            {size_checks}
+            """)
+        return template.format(
+            pkg=pkg,
+            probe_block=probe_block,
+            call_block=call_block,
+            size_checks=size_checks,
+        )
 
     def _write_package_layout(
         self,
@@ -809,15 +1048,12 @@ class NimWriter(BaseWriter):
         files.append(OutputFile(path=f"src/{pkg}/bindings.nim", content=bindings_code))
 
         # 4. nim.cfg compiler flags
-        nim_cfg = textwrap.dedent("""\
-            --mm:orc
-            --threads:on
-            --styleCheck:hint
-        """)
-        files.append(OutputFile(path="nim.cfg", content=nim_cfg))
+        files.append(OutputFile(path="nim.cfg", content=self._build_nim_cfg(unit, options)))
 
         # 5. Tests
-        if test_type in ("tripwire", "both"):
+        if test_type in ("tripwire", "both") and unit_requires_cpp(unit):
+            files.append(OutputFile(path="tests/test_tripwire.nim", content=self._build_cpp_tripwire(pkg, unit)))
+        elif test_type in ("tripwire", "both"):
             stub_lines = []
             for fn in fn_names:
                 stub_lines.append(
