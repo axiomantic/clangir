@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `check-release-prep.yml` fails loudly when it cannot read the base ref, instead of reporting a reassuring result it did not measure. Neither step declared a `shell:`, so GitHub ran them under `bash -e {0}` with no `pipefail`; in `git show "origin/$BASE_REF:pyproject.toml" | grep ... | sed ...` the exit status comes from `sed`, so a `fatal: invalid object name` was discarded and the step printed `Version bumped:  -> 0.9.9` and exited 0. The changelog step degraded identically, reporting "CHANGELOG.md has not been modified" off an empty diff. Both steps now declare `shell: bash`, set `-euo pipefail`, and verify the base ref resolves before reading it; a missing version line likewise now emits a diagnostic rather than exiting 1 with no output. A parent branch auto-deleted after merge is the ordinary end of a stacked pull request's life, so this path is reached in normal use rather than only pathologically.
 - CI: the changelog check matches with a `case` statement rather than a pipe into `grep -q`. `grep -q` exits on its first match and closes the pipe; because `CHANGELOG.md` sorts near the top of `git diff --name-only`, on a diff exceeding the 64K pipe buffer the writer was still writing, took SIGPIPE, and `pipefail` reported that as the pipeline's status -- so the check warned that the changelog was untouched when it had in fact been modified. Measured at 24012 and 48012 bytes (correct) against 72012 and 240012 bytes (wrong), with the same input passing under the pre-`pipefail` code, placing the flip at roughly 1300 changed paths. The `case` form has no pipe by construction and is correct at every size tested, with warn-only semantics and exit 0 preserved on a genuine miss.
 
-## [0.41.0] - 2026-09-09
+## [0.42.0] - 2026-09-10
 
 ### Added
 
@@ -966,7 +966,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.40.1...HEAD
+[0.42.0]: https://github.com/axiomantic/headerkit/compare/v0.41.0...v0.42.0
 [0.40.1]: https://github.com/axiomantic/headerkit/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/axiomantic/headerkit/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/axiomantic/headerkit/compare/v0.38.0...v0.39.0
