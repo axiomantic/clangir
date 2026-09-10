@@ -1011,9 +1011,9 @@ def _typedef_to_ctypes(decl: Typedef, types: _TypeTable) -> str | None:
         #
         # No table lookup here, though a contested tag is emitted under a mangled
         # class and this looks like the place that would need to know. It is not:
-        # the only input that reaches this branch is an *opaque* ``typedef struct
-        # Op OpRef;`` under libclang, which declares no record and so has no class
-        # to find. A defined record's alias never arrives spelled ``struct Foo``
+        # the only inputs that reach this branch are the *opaque* forms --
+        # ``typedef struct Op OpRef;`` and ``typedef union U URef;`` under
+        # libclang -- which declare no record and so have no class to find. A defined record's alias never arrives spelled ``struct Foo``
         # at all -- libclang strips the keyword when it builds the typedef's
         # underlying type, and tree-sitter delivers it bare -- so both route
         # through ``type_to_ctypes`` instead. A lookup was added here first and
