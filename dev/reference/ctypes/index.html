@@ -1502,6 +1502,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#packed-records-the-writer-could-not-reproduce" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packed records the writer could not reproduce
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1979,6 +1990,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#packed-records-the-writer-could-not-reproduce" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packed records the writer could not reproduce
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2339,6 +2361,40 @@ of both the spelling the backend chose and the order of the sections.</p>
 <a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="n">_geometry</span><span class="o">.</span><span class="n">distance</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">POINTER</span><span class="p">(</span><span class="n">Point</span><span class="p">),</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">POINTER</span><span class="p">(</span><span class="n">Point</span><span class="p">)]</span>
 <a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">_geometry</span><span class="o">.</span><span class="n">distance</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_int</span>
 </code></pre></div>
+<h2 id="packed-records-the-writer-could-not-reproduce">Packed records the writer could not reproduce<a class="headerlink" href="#packed-records-the-writer-could-not-reproduce" title="Permanent link">&para;</a></h2>
+<p>A packed record's C layout is not always expressible in ctypes. The writer
+records what C says each packed record looks like and emits a check that runs
+when the module is imported, comparing that against where ctypes actually put
+each field.</p>
+<p>The check runs on import rather than at generation because ctypes has changed
+its bit-field layout across versions -- <code>_pack_</code> selects the MSVC rules from
+CPython 3.14, where earlier versions used the System V ones -- so a verdict
+computed when the module was written is about the wrong interpreter as soon as
+somebody else imports it.</p>
+<p>Two things mark an affected record. Its class carries a <code># HEADERKIT:</code> comment
+if the generating interpreter already saw the problem, and the module defines:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">#: Packed records whose layout this interpreter does not reproduce. Empty</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1">#: when every one of them checks out; absent when the header had none.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">HEADERKIT_UNVERIFIED_RECORDS</span> <span class="o">=</span> <span class="n">_hk_unverified_records</span><span class="p">()</span>
+</code></pre></div>
+<p>The name is defined whenever the header held at least one packed record. An
+empty tuple means every one of them was verified <strong>on the importing
+interpreter</strong>; the name is absent only when there were no packed records at
+all. Read it with a default:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">mybindings</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">unverified</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">mybindings</span><span class="p">,</span> <span class="s2">"HEADERKIT_UNVERIFIED_RECORDS"</span><span class="p">,</span> <span class="p">())</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">if</span> <span class="n">unverified</span><span class="p">:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="k">raise</span> <span class="ne">SystemExit</span><span class="p">(</span><span class="sa">f</span><span class="s2">"layout not reproduced for: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">unverified</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p><code>from mybindings import HEADERKIT_UNVERIFIED_RECORDS</code> raises <code>ImportError</code> on a
+module with no packed records. Absent means none.</p>
+<p>The check also binds two private helpers, <code>_HK_PACKED_EXPECTED</code> and
+<code>_hk_unverified_records</code>. Both are renamed out of the way if the header
+declares something of the same name, so a declaration always wins. The public
+name cannot move -- consumers read it to decide whether the bindings are
+trustworthy -- so a header declaring <code>HEADERKIT_UNVERIFIED_RECORDS</code> is refused
+with an error rather than generated with the check under a different name.</p>
 
 
 
