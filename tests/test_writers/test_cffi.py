@@ -328,16 +328,23 @@ class TestAnonymousStructField:
 
 
 class TestPackedStruct:
-    def test_packed_struct_has_comment(self):
+    def test_packed_struct_names_the_argument_the_reader_must_pass(self):
+        """The comment has to be actionable, because nothing else reports the
+        problem. cffi rejects ``__attribute__((packed))`` in either position,
+        so the record is emitted unpacked and cdef lays it out that way in
+        silence: measured with cffi, a record that is 6 bytes in C comes back
+        as 12 without ``packed=True``."""
         s = Struct("Packed", [Field("x", CType("int"))], is_packed=True)
         result = decl_to_cffi(s)
-        assert result == "/* packed */\nstruct Packed {\n    int x;\n};"
+        assert "HEADERKIT: packed record" in result
+        assert "packed=True" in result
+        assert result.endswith("struct Packed {\n    int x;\n};")
 
     def test_non_packed_struct_no_comment(self):
         s = Struct("Normal", [Field("x", CType("int"))])
         result = decl_to_cffi(s)
         assert result == "struct Normal {\n    int x;\n};"
-        assert "/* packed */" not in result
+        assert "HEADERKIT: packed record" not in result
 
 
 class TestCallingConventionCffi:
