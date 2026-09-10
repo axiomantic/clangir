@@ -16,13 +16,15 @@ sizes are the same on every platform the project supports.
 import ctypes
 import re
 import sys
+import textwrap
 import warnings
 
 import pytest
 
 from headerkit.backends import get_backend
-from headerkit.ir import Struct
+from headerkit.ir import CType, Field, Header, Struct
 from headerkit.writers import get_writer
+from headerkit.writers.ctypes import header_to_ctypes
 from tests.skip_policy import BACKEND_INSTALL, LIBCLANG_INSTALL, TREESITTER_INSTALL, missing_toolchain
 
 #: CPython before 3.14 opens a fresh storage unit whenever a bit-field's
@@ -978,6 +980,199 @@ def test_a_packed_record_with_aggregate_members_is_reproduced_and_not_flagged(
     assert ctypes.alignment(cls) == c_alignof, label
     for name, offset in c_offsets.items():
         assert getattr(cls, name).offset == offset, f"{label}.{name}"
+
+
+#: Records a packed one refers to by name. Declared alongside every case below,
+#: because a named member is a *reference* to a class the module emits
+#: elsewhere -- which is exactly what distinguishes it from an anonymous one.
+_NAMED_RECORD_PREAMBLE = textwrap.dedent("""\
+    struct N1 { unsigned char x; unsigned int y; };
+    struct N2 { unsigned short p; };
+    struct N3 { unsigned char q; struct N1 inner; };
+""")
+
+# label, packed record source, C sizeof, C alignof, {field: byte offset} --
+# every figure measured with a compiled C probe.
+_NAMED_RECORD_MEMBER_CASES = [
+    (
+        "named-record",
+        "struct __attribute__((packed)) S { unsigned char a; struct N1 n; unsigned char b; };",
+        10,
+        1,
+        {"a": 0, "n": 1, "b": 9},
+    ),
+    (
+        "named-record-after-a-bitfield",
+        "struct __attribute__((packed)) S { unsigned short f : 12; struct N2 n; unsigned char b; };",
+        5,
+        1,
+        {"n": 2, "b": 4},
+    ),
+    (
+        "two-named-records",
+        "struct __attribute__((packed)) S { struct N1 n; struct N2 m; unsigned char b; };",
+        11,
+        1,
+        {"n": 0, "m": 8, "b": 10},
+    ),
+    (
+        "array-of-named-records",
+        "struct __attribute__((packed)) S { unsigned char a; struct N1 arr[2]; unsigned char b; };",
+        18,
+        1,
+        {"a": 0, "arr": 1, "b": 17},
+    ),
+    (
+        "named-record-nested-inside-another",
+        "struct __attribute__((packed)) S { unsigned char f0 : 3; struct N3 deep; unsigned char b; };",
+        14,
+        1,
+        {"deep": 1, "b": 13},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "c_sizeof", "c_alignof", "c_offsets"),
+    _NAMED_RECORD_MEMBER_CASES,
+    ids=[case[0] for case in _NAMED_RECORD_MEMBER_CASES],
+)
+def test_a_packed_record_with_named_record_members_is_reproduced_and_not_flagged(
+    label: str, source: str, c_sizeof: int, c_alignof: int, c_offsets: dict[str, int]
+) -> None:
+    """A member declared as a record the header also declares is measurable.
+
+    An anonymous inner record is built as the enclosing body walks it, so it
+    was already sized. A named one arrives as nothing but the class name the
+    module will emit it under, which the ctypes scalar table cannot resolve --
+    so the enclosing record was reported unverified while reproducing C exactly.
+    It is the commonest aggregate shape there is, and a report nobody can act on
+    is what teaches a reader to ignore the reports they can.
+
+    Both halves are asserted, as for every other corpus here: the record has to
+    match C *and* carry no report.
+    """
+    code = get_writer("ctypes").write(get_backend("libclang").parse(_NAMED_RECORD_PREAMBLE + source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    cls = namespace["S"]
+
+    assert "S" not in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ()), f"{label} reproduces C but was reported"
+    assert ctypes.sizeof(cls) == c_sizeof, label
+    assert ctypes.alignment(cls) == c_alignof, label
+    for name, offset in c_offsets.items():
+        assert getattr(cls, name).offset == offset, f"{label}.{name}"
+
+
+def test_a_bitfield_before_a_named_record_member_keeps_its_packed_offset() -> None:
+    """Sizing the member is what keeps the running offset trackable.
+
+    A member the writer cannot size stops the offset dead, and everything after
+    it is then spelled from an unknown position. That is not only a reporting
+    problem: a compiled C probe puts this record at 10 bytes, and it generated
+    11 while the named member could not be sized -- reported, so never silent,
+    but wrong. Sizing the member fixes the layout as well as the report.
+    """
+    source = "struct __attribute__((packed)) S { unsigned char f0 : 3; struct N1 n; unsigned short f1 : 3; };"
+    code = get_writer("ctypes").write(get_backend("libclang").parse(_NAMED_RECORD_PREAMBLE + source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    cls = namespace["S"]
+
+    assert ctypes.sizeof(cls) == 10
+    assert cls.n.offset == 1
+    assert "S" not in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ())
+
+
+def test_a_record_referring_to_itself_by_value_is_reported_not_recursed_forever() -> None:
+    """The record must be importable and must name itself as unverified.
+
+    C forbids a record containing itself by value, but this writer resolves
+    class *names* rather than validating C, and the tree-sitter backend does no
+    type checking at all -- so the shape does arrive. Two things then have to
+    hold, and only the second was ever asserted.
+
+    The generator must terminate: the probe memo is seeded before recursing, so
+    a table entry leading back to itself ends as "cannot size" rather than
+    recursing without end.
+
+    And the module must actually *report* it. Emitting the member renders the
+    class inside its own body, which is a ``NameError`` before anything in the
+    module runs -- so the record was never reported to anyone, because nothing
+    could import it to read the report. Asserting the class name appears in the
+    source could not have caught that: the name is in the source either way.
+    """
+    looping = Struct(
+        "Loop",
+        [Field("a", CType("unsigned char")), Field("self", CType("struct Loop"))],
+        is_packed=True,
+    )
+    code = header_to_ctypes(Header("rec.h", [looping]))
+
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    assert "Loop" in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ()), (
+        "a record whose layout cannot be reproduced must say so where code can read it"
+    )
+    # The member is left out rather than emitted unbound, and the class says so.
+    assert "self" not in dict(namespace["Loop"]._fields_)
+    assert "HEADERKIT: member(s) self" in code
+
+
+def test_a_zero_width_bitfield_in_a_packed_record_fills_from_the_packed_offset() -> None:
+    """``unsigned int : 0`` reaches the next unit boundary from *packing's* offset.
+
+    Every other decision in the body routes through the packed offset; this one
+    read the natural one, so the fill was the wrong width wherever the two had
+    diverged -- which is any packed record with a member packing moved. A
+    compiled C probe puts this record at 8 bytes; it generated 6.
+
+    Nothing reported it, and nothing could: the writer's self-check compares a
+    model of the emitted spelling against a measurement of the emitted
+    spelling, so an error in *choosing* the spelling is written into both sides
+    and cancels. Only a compiled C probe sees it, which is why this test pins
+    the size against one rather than against the writer's own opinion.
+    """
+    source = (
+        "union U { unsigned char c; unsigned int j; };\n"
+        "struct __attribute__((packed)) S { unsigned short m0 : 12; union U m1; unsigned int : 0; };"
+    )
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+
+    assert ctypes.sizeof(namespace["S"]) == 8
+    assert "S" not in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ())
+
+
+def test_padding_placed_elsewhere_than_modelled_is_not_reported_as_a_divergence() -> None:
+    """Where a pad lands is not a fact about the record; where a member lands is.
+
+    C names no padding, so a pad ctypes puts somewhere other than the writer
+    modelled is a disagreement about nothing -- unless it moves a member, and
+    then that member is caught on its own terms. Comparing pads reported
+    records that reproduce C exactly, which is the noise this check exists not
+    to make.
+
+    What is asserted is the invariant, not a size: this record reproduces C on
+    CPython 3.10 and 3.13 and does not on 3.14, so pinning 5 bytes everywhere
+    would be asserting the interpreter. Either it matches C or it is reported;
+    silently wrong is the outcome ruled out. The pad-exclusion itself is
+    checked directly, and that does hold everywhere.
+    """
+    source = "struct __attribute__((packed)) S { unsigned short f0 : 9; unsigned int : 0; unsigned char f1 : 3; };"
+    code = get_writer("ctypes").write(get_backend("libclang").parse(source, "rec.h"))
+    namespace: dict[str, object] = {}
+    exec(compile(code, "<generated>", "exec"), namespace)
+    cls = namespace["S"]
+
+    # Measured with a compiled C probe: 5 bytes with ``f1`` at bit 32.
+    matches_c = ctypes.sizeof(cls) == 5 and cls.f1.offset * 8 + (cls.f1.size & 0xFFFF) == 32
+    reported = "S" in namespace.get("HEADERKIT_UNVERIFIED_RECORDS", ())
+    assert matches_c or reported, f"laid out as {ctypes.sizeof(cls)} bytes, C says 5, and nothing said so"
+
+    # The expectation the module carries names members only, on every version.
+    assert not any(name.startswith("_pad") for name in namespace["_HK_PACKED_EXPECTED"]["S"][2])
 
 
 def test_a_record_nested_deeper_than_the_alignment_walk_says_so() -> None:

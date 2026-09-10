@@ -173,6 +173,36 @@ class _TypeTable:
     record_classes: Mapping[str, str] = field(default_factory=dict)
     scalars: Mapping[str, str] = field(default_factory=dict)
     contested_records: Mapping[str, str] = field(default_factory=dict)
+    record_decls: Mapping[str, Struct] = field(default_factory=dict)
+    #: Memoized ``(ctypes type, C size in bits)`` per emitted class name, or
+    #: None where the record could not be built. Probing is on demand because
+    #: most records in a header are never a member of a packed one, and it is
+    #: memoized because those that are tend to be members of several.
+    _probes: dict[str, tuple[type, int] | None] = field(default_factory=dict, repr=False, compare=False)
+
+    def record_probe(self, class_name: str) -> tuple[type, int] | None:
+        """Size a member declared as a record this header also declares.
+
+        Without this a packed record holding ``struct N n;`` is unmeasurable
+        purely because the writer cannot get from the emitted class *name* back
+        to the declaration, and so is reported unverified while reproducing C
+        exactly. That is the commonest aggregate shape there is, and a report
+        nobody can act on is what teaches a reader to ignore the ones they can.
+        """
+        if not self.record_decls:
+            # ``_EMPTY_TYPES`` is a module-level instance shared by every call
+            # with no header context. Nothing resolves through it, so there is
+            # nothing to memoize -- and memoizing anyway would key process-wide
+            # state on whatever spellings happened to pass through.
+            return None
+        if class_name not in self._probes:
+            # Seeded before recursing so a record reachable from itself resolves
+            # to "cannot size" rather than recursing without end.
+            self._probes[class_name] = None
+            decl = self.record_decls.get(class_name)
+            if decl is not None:
+                self._probes[class_name] = _probe_record(decl, self)
+        return self._probes[class_name]
 
 
 #: The table for a call with no header context: nothing resolves, every name is
@@ -518,13 +548,18 @@ def _ctypes_member_type(expr: str, nested: dict[str, type] | None = None) -> typ
     writer passes through for a struct- or enum-typed member, which is not
     valid Python either.
     """
-    if nested and expr in nested:
-        return nested[expr]
     base, *lengths = expr.split(" * ")
-    scalar = _ctypes_scalar(base)
-    if scalar is None:
+    # Explicitly "not found", not "falsy": a ctypes type object's truth value
+    # is not the property this needs, and if one ever became falsy the member
+    # would silently degrade to unsizeable -- stopping the running offset and
+    # spuriously reporting the record, which is the class this resolution
+    # exists to close.
+    resolved = (nested or {}).get(base)
+    if resolved is None:
+        resolved = _ctypes_scalar(base)
+    if resolved is None:
         return None
-    member: Any = scalar
+    member: Any = resolved
     for length in lengths:
         # ``c_ubyte * 4 * 4`` is a two-dimensional array and folds the same way.
         if not length.strip().isdigit():
@@ -664,6 +699,16 @@ class _StructBody:
         #: gives each. A record containing one is measurable only with both.
         self.nested_types: dict[str, type] = {}
         self.nested_c_bits: dict[str, int] = {}
+        #: Members omitted because no ctypes spelling exists for them. Emitting
+        #: one anyway is worse than leaving it out: a record naming itself by
+        #: value renders as its own class inside its own body, which is a
+        #: ``NameError`` before anything in the module runs.
+        self.unrepresentable: list[str] = []
+        #: Entries in ``flat_entries`` that are padding rather than members.
+        #: C gives padding no identity, so where ctypes puts a pad is not a
+        #: fact about the record -- only its effect on the members after it is,
+        #: and those are compared directly.
+        self.flat_pad_names: set[str] = set()
         self.pad_index = 0
         self.flat_pad_index = 0
         self.padding_bits = 0
@@ -723,8 +768,10 @@ class _StructBody:
         return name
 
     def _next_flat_pad(self) -> str:
+        """Name the next byte-granular padding entry, and remember it is padding."""
         name = f"_pad{self.flat_pad_index}"
         self.flat_pad_index += 1
+        self.flat_pad_names.add(name)
         return name
 
     def _add_both(self, entry: str, layout: tuple[str, str, int | None]) -> None:
@@ -774,11 +821,16 @@ class _StructBody:
         info = _ctypes_scalar_bits(expr)
         if width == 0:
             # ``int : 0`` reserves no bits; it moves the next member to a fresh
-            # storage unit. Reaching that boundary needs the current offset.
-            if info is None or self.bit_pos is None:
+            # storage unit. Reaching that boundary needs the current offset --
+            # and in a packed record that is the packed one. Reading the
+            # natural offset here made the fill the wrong width whenever the
+            # two had diverged, which is every packed record where a member
+            # sits at an offset packing moved.
+            offset = self.packed_offset
+            if info is None or offset is None:
                 return False
             unit = info[0]
-            fill = (unit - self.bit_pos % unit) % unit
+            fill = (unit - offset % unit) % unit
             if fill == 0:
                 return True
             width = fill
@@ -909,6 +961,23 @@ class _StructBody:
         """
         return self.bit_pos if self.bit_pos is not None else self.padding_bits
 
+    def _register_record_member(self, expr: str) -> None:
+        """Make a member declared as a named record measurable, if it can be.
+
+        An anonymous inner record is registered by ``add_anonymous`` as it is
+        built. A named one is only a *reference* to a class emitted elsewhere in
+        the module, so it is resolved through the header's type table instead --
+        the same treatment, arrived at by a different route.
+        """
+        base = expr.split(" * ")[0]
+        if base in self.nested_types or _ctypes_scalar(base) is not None:
+            return
+        probe = self.types.record_probe(base)
+        if probe is None:
+            return
+        self.nested_types[base] = probe[0]
+        self.nested_c_bits[base] = probe[1]
+
     def add_anonymous(self, f: Field, index: int) -> bool:
         """Emit a C11 transparent member as a nested class plus an _anonymous_ entry."""
         inner = f.anonymous_struct
@@ -989,8 +1058,14 @@ class _StructBody:
         position = 0
         widest = 0
         for name, expr, width in self.flat_layout:
-            if width is None and expr in self.nested_c_bits:
-                info: tuple[int, int] | None = (self.nested_c_bits[expr], 8)
+            if width is None and expr.split(" * ")[0] in self.nested_c_bits:
+                base, *lengths = expr.split(" * ")
+                span_bits = self.nested_c_bits[base]
+                for length in lengths:
+                    if not length.strip().isdigit():
+                        return None
+                    span_bits *= int(length.strip())
+                info: tuple[int, int] | None = (span_bits, 8)
             elif width is None:
                 info = _ctypes_member_bits(expr, self.nested_types)
             else:
@@ -1007,7 +1082,12 @@ class _StructBody:
             starts[name] = position
             position += span
         total = widest if self.is_union else position
-        return _round_up(total, 8), 8, starts
+        # Padding is left out of the returned offsets for the same reason the
+        # comparison skips it: C names no padding, so a pad's position is not a
+        # fact this can be checked against. It stays in the walk above, because
+        # where the *members* land depends on it.
+        members = {name: bit for name, bit in starts.items() if name not in self.flat_pad_names}
+        return _round_up(total, 8), 8, members
 
     def packed_divergence(self) -> tuple[str, int] | None:
         """The first field the emitted spelling misplaces, as ``(name, C bit offset)``.
@@ -1030,9 +1110,26 @@ class _StructBody:
         Reported for the first name that disagrees; the record's own size and
         alignment count as a disagreement too, attributed to the first field so
         the diagnostic always names something the reader can look at.
+
+        **What this cannot catch.** ``packed_c_layout`` models the emitted
+        spelling and ``_measure_ctypes_layout`` measures the emitted spelling;
+        this compares the two. An error made while *choosing* the spelling -- a
+        pad of the wrong width, a carrier that should not have been narrowed --
+        is written into both sides and cancels out, so the comparison is blind
+        to it by construction. This catches a spelling ctypes lays out
+        differently from C. It cannot catch a spelling that is the wrong
+        spelling, and no amount of agreement between these two is evidence
+        about that. Only a compiled C probe is.
+
+        That is not hypothetical: a zero-width unnamed bit-field computed its
+        fill from the natural running offset rather than the packed one, and
+        sixteen shapes were generated at the wrong size with nothing reported,
+        because both sides of this comparison agreed on the wrong pad.
         """
         if not self.is_packed:
             return None
+        if self.unrepresentable:
+            return self.unrepresentable[0], -1
         if not self.flat_layout:
             return None
         expected = self.packed_c_layout()
@@ -1051,6 +1148,13 @@ class _StructBody:
         exp_size, exp_align, exp_starts = expected
         got_size, got_align, got_starts = measured
         for name, _expr, _width in self.flat_layout:
+            if name in self.flat_pad_names:
+                # Padding is a spelling device. C does not name it, so a pad
+                # ctypes places elsewhere is a divergence about nothing --
+                # unless it moves a member, and then that member is caught
+                # here on its own. Comparing pads reported records that
+                # reproduce C exactly.
+                continue
             if got_starts.get(name) != exp_starts.get(name):
                 return name, exp_starts[name]
         if (got_size, got_align) != (exp_size, exp_align):
@@ -1063,6 +1167,7 @@ class _StructBody:
         self.has_member = True
         self._note_member_align(expr)
         if f.bit_width is None:
+            self._register_record_member(expr)
             self._add_both(_field_to_ctypes_tuple(f, self.types), (f.name, expr, None))
             self._advance_plain(expr)
             return
@@ -1096,7 +1201,17 @@ def _alignment_entries(body: _StructBody, *, include_padding: bool) -> list[str]
 def _collect_body(decl: Struct, types: _TypeTable) -> _StructBody | None:
     """Accumulate the class body for ``decl``, or None if it cannot be represented."""
     body = _StructBody(decl.is_union, types, decl.is_packed)
+    own_class = next((name for name, other in types.record_decls.items() if other is decl), None)
     for index, f in enumerate(decl.fields):
+        if own_class is not None and f.name and not f.is_padding and f.bit_width is None:
+            # A member of the record's own type, by value. C forbids it, but
+            # this writer resolves class names rather than validating C, and
+            # tree-sitter does not type-check -- so the shape does arrive. It
+            # has no ctypes spelling at any size, so it is left out and said
+            # so, rather than emitted as a name that is not yet bound.
+            if type_to_ctypes(f.type, types).split(" * ")[0] == own_class:
+                body.unrepresentable.append(f.name)
+                continue
         if f.is_padding:
             if not body.add_padding(f):
                 return None
@@ -1164,6 +1279,12 @@ def _record_body(
         return [f"class {class_name}({base_class}):", "    pass"]
 
     lines = [f"class {class_name}({base_class}):"]
+    if body.unrepresentable:
+        omitted = ", ".join(body.unrepresentable)
+        lines.append(f"    # HEADERKIT: member(s) {omitted} are of this record's own type by")
+        lines.append("    # value, which has no ctypes spelling at any size, and are left out.")
+        lines.append("    # This record's layout is NOT the C layout. Verify it against your C")
+        lines.append("    # compiler before relying on it.")
 
     if not body.has_member:
         # Whether an unnamed bit-field contributes its declared type's alignment
@@ -1226,7 +1347,10 @@ def _record_body(
             # What C says this record looks like, for the module to re-check
             # under whatever interpreter imports it. None where the writer
             # could not derive it, which is itself the answer.
-            expectations[class_name] = body.packed_c_layout()
+            # A record missing a member cannot be checked against C's layout of
+            # the record that *has* it, so it is recorded as unjudgeable rather
+            # than judged against the layout of something else.
+            expectations[class_name] = None if body.unrepresentable else body.packed_c_layout()
         divergence = body.packed_divergence()
         if divergence is not None:
             name, c_bit = divergence
@@ -2053,6 +2177,11 @@ def _type_table(header: Header) -> _TypeTable:
         records=record_spellings,
         record_classes=record_classes,
         scalars=_scalar_typedef_names(header),
+        record_decls={
+            record_classes[_record_qualified_name(d)]: d
+            for d in header.declarations
+            if isinstance(d, Struct) and _record_qualified_name(d) in record_classes
+        },
         contested_records={
             str(d.name): record_classes[_record_qualified_name(d)]
             for d in header.declarations

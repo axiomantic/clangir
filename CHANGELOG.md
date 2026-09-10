@@ -34,6 +34,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `check-release-prep.yml` fails loudly when it cannot read the base ref, instead of reporting a reassuring result it did not measure. Neither step declared a `shell:`, so GitHub ran them under `bash -e {0}` with no `pipefail`; in `git show "origin/$BASE_REF:pyproject.toml" | grep ... | sed ...` the exit status comes from `sed`, so a `fatal: invalid object name` was discarded and the step printed `Version bumped:  -> 0.9.9` and exited 0. The changelog step degraded identically, reporting "CHANGELOG.md has not been modified" off an empty diff. Both steps now declare `shell: bash`, set `-euo pipefail`, and verify the base ref resolves before reading it; a missing version line likewise now emits a diagnostic rather than exiting 1 with no output. A parent branch auto-deleted after merge is the ordinary end of a stacked pull request's life, so this path is reached in normal use rather than only pathologically.
 - CI: the changelog check matches with a `case` statement rather than a pipe into `grep -q`. `grep -q` exits on its first match and closes the pipe; because `CHANGELOG.md` sorts near the top of `git diff --name-only`, on a diff exceeding the 64K pipe buffer the writer was still writing, took SIGPIPE, and `pipefail` reported that as the pipeline's status -- so the check warned that the changelog was untouched when it had in fact been modified. Measured at 24012 and 48012 bytes (correct) against 72012 and 240012 bytes (wrong), with the same input passing under the pre-`pipefail` code, placing the flip at roughly 1300 changed paths. The `case` form has no pipe by construction and is correct at every size tested, with warn-only semantics and exit 0 preserved on a genuine miss.
 
+## [0.42.3] - 2026-09-10
+
+### Fixed
+
+- `ctypes` writer: a packed record holding a member declared as a *named* record -- `struct N n;` -- is no longer reported unverified when it reproduces C exactly, and is no longer laid out wrongly when a bit-field precedes it.
+
+  Such a member arrives as nothing but the class name the module will emit the record under, which the ctypes scalar table cannot resolve, so the writer could not size it. An anonymous inner record was already sized as the enclosing body walked it; a named one is a *reference* to a class emitted elsewhere, and is now resolved through the header's type table instead -- the same treatment reached by a different route. Arrays of such records and records nested inside them resolve the same way, and a table entry that leads back to itself ends as "cannot size" rather than recursing without end.
+
+  The consequences were two, not one. An unsizeable member also stops the running bit offset, so everything after it was spelled from an unknown position: `struct __attribute__((packed)) { unsigned char f0 : 3; struct N n; unsigned short f1 : 3; }` measures 10 bytes with a compiled C probe and generated 11.
+
+- `ctypes` writer: a zero-width unnamed bit-field in a packed record computes its fill from the packed running offset rather than the natural one. Every other decision in the record body already routed through the packed offset; this one did not, so the fill was the wrong width wherever the two had diverged -- which is any packed record with a member packing moved. `struct __attribute__((packed)) { unsigned short m0 : 12; union U m1; unsigned int : 0; }` measures 8 bytes with a compiled C probe and generated 6, with nothing reported.
+
+  Nothing could have reported it. The writer's self-check models the emitted spelling on one side and measures the emitted spelling on the other, so an error made while *choosing* the spelling is written into both sides and cancels. It can catch a spelling ctypes lays out differently from C; it cannot catch a spelling that is the wrong spelling. That limit is now recorded beside the check.
+
+- `ctypes` writer: padding is no longer compared as though C named it. A pad chunk that ctypes places somewhere other than the writer modelled is a disagreement about nothing unless it moves a member, and a moved member is caught on its own terms. Comparing pads reported records that reproduce C exactly.
+
+- `ctypes` writer: a member of the record's own type by value is left out with a comment saying so, rather than emitted as the class inside its own body -- which was a `NameError` before anything in the module ran, so the record was never reported to anyone because nothing could import it to read the report. C forbids the shape, but the tree-sitter backend does not type-check and parses it.
+
+  Measured over a **4864-shape sweep** against a compiled C probe on CPython 3.10.20, 3.13.14 and 3.14.6. The alphabet is named deliberately: scalar bit-fields of `unsigned char`/`short`/`int` at widths 3-20, plain trailing members, unions, byte and integer arrays including two-dimensional ones, anonymous nested records, **named** nested records, arrays of them, records nested inside them, and **zero-width unnamed bit-fields** alone and following each aggregate kind. The previous 4096-shape figure was measured over an alphabet with no zero-width bit-field in it, and the shapes that expose the fill defect were generation errors before this release -- they produced no importable module at all, so they were counted in no category rather than counted as correct. A category counted as zero because its members could not be measured is not the same as a category that is empty.
+
+  Transitions on 3.10 and 3.13, every row classified in both states: 312 shapes that could not be generated are now generated and reproduce C; 216 that reproduced C stopped being reported; 216 that were laid out wrongly became correct; 200 that could not be generated are now generated, still not reproducible, and reported. On 3.14: 288, 216, 216 and 224 respectively. **No shape on any interpreter is laid out differently from C without being reported** -- zero before, zero after.
+
+### Known limitation
+
+- A packed record whose member is a record declared inside a C++ namespace still emits the C spelling -- `("n", struct Inner)` -- which is not valid Python, so the module does not import. Identical before and after this release. The fix above resolves a member through the header's record table, and that table carries the qualified name for a namespaced record but does not offer the spelling a member site uses to reach it. Records declared at file scope are unaffected.
+
 ## [0.42.0] - 2026-09-10
 
 ### Added
@@ -1012,7 +1038,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for ruff, mypy, and standard checks
 - LLVM license compliance for vendored bindings
 
-[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/axiomantic/headerkit/compare/v0.42.0...HEAD
+[0.42.3]: https://github.com/axiomantic/headerkit/compare/v0.42.0...v0.42.3
 [0.42.0]: https://github.com/axiomantic/headerkit/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/axiomantic/headerkit/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/axiomantic/headerkit/compare/v0.40.0...v0.40.1
