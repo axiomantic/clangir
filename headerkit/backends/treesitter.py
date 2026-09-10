@@ -1764,6 +1764,39 @@ class TreeSitterBackend:
         # off the source text would misread ``enum E { classic }``.
         is_scoped = any(child.type in ("class", "struct") for child in node.children)
 
+        # ``enum E : unsigned char`` puts the underlying type in the grammar's
+        # ``base`` field, on scoped and unscoped enums alike. Reading the field
+        # keeps this structural; taking it off the source text would be the
+        # regex-over-AST that AGENTS.md forbids, and would misread a ``:`` in an
+        # attribute or a bit-field. Absent field means the header declared none,
+        # which is the same thing the libclang backend records as None.
+        base_node = node.child_by_field_name("base")
+        underlying_type = _node_text(base_node).strip() if base_node else None
+        # The C grammar has no ``base`` field at all -- ``enum E : long long`` is
+        # C23, which both major compilers accepted as an extension long before --
+        # so a width the header declared reaches this point as no underlying type.
+        # That is indistinguishable from a plain ``enum E`` unless the clause's
+        # own tokens are looked for, and a consumer reading the resulting ``None``
+        # as "declared none" sizes the enum from its enumerators: four bytes where
+        # the compiler laid out one for ``: char``.
+        #
+        # How the clause survives parsing varies by width, so both of its traces
+        # are looked for. ``: char`` and ``: int`` parse *cleanly* -- a ``:``
+        # child and a type node, no error anywhere -- while ``: unsigned char``
+        # keeps the ``:`` and adds an ``ERROR``, and ``: short`` and
+        # ``: long long`` are swallowed whole, leaving an ``ERROR`` and no ``:``
+        # at all. Testing for the error node alone would have missed the two that
+        # parse cleanly, which are the narrow ones, where being wrong reads as
+        # plausible: a four-byte member for a one-byte enum.
+        #
+        # None of them is reconstructed. Only some carry recoverable text, and a
+        # backend that resolved the easy widths and not the rest would produce a
+        # module that differs from libclang's in a way that depends on which type
+        # was written. Unknown is reported for all of them, and the writer refuses.
+        underlying_type_known = base_node is not None or not any(
+            child.type in ("ERROR", ":") for child in node.children
+        )
+
         values: list[EnumValue] = []
         if body_node:
             current_int = 0
@@ -1802,6 +1835,8 @@ class TreeSitterBackend:
             location=loc,
             is_scoped=is_scoped,
             cpp_name=cpp_name,
+            underlying_type=underlying_type,
+            underlying_type_known=underlying_type_known,
         )
 
         # An opaque `enum E : int;` and its later definition are one entity. Emitting
@@ -1868,6 +1903,12 @@ class TreeSitterBackend:
         tokens = text.split()
         quals: list[str] = []
         name_parts: list[str] = []
+        # Recorded here, before the aggregate keyword is dropped below, because
+        # afterwards it is unrecoverable: ``struct Gauge r;`` and ``Gauge s;``
+        # both become the bare name, and where a tag and an ordinary identifier
+        # share a spelling those are an eight-byte record and a one-byte integer.
+        # Reading it off the stripped result later would be guessing.
+        is_elaborated = any(token in ("struct", "enum", "class", "union") for token in tokens)
 
         for token in tokens:
             if token in _FOLDABLE_TYPE_QUALIFIERS or token in _SIGNEDNESS_SPECIFIERS:
@@ -1885,7 +1926,7 @@ class TreeSitterBackend:
             type_name = "int"
         else:
             type_name = text
-        return CType(name=type_name, qualifiers=quals)
+        return CType(name=type_name, qualifiers=quals, is_elaborated=is_elaborated)
 
 
 _BACKEND_INSTANCE = TreeSitterBackend()

@@ -2954,8 +2954,35 @@ class ClangASTConverter:
             location=self._get_location(cursor),
             is_scoped=bool(self.is_cplus and cursor.is_scoped_enum()),
             cpp_name=cpp_name,
+            underlying_type=self._enum_fixed_underlying_type(cursor),
         )
         self.declarations.append(enum)
+
+    @staticmethod
+    def _enum_fixed_underlying_type(cursor: Any) -> str | None:
+        """The underlying type an enum *declares*, or None when it declares none.
+
+        ``cursor.enum_type`` is always populated: for an enum with no fixed
+        underlying type it reports whichever integer type the compiler chose,
+        which is a property of this host rather than of the header. Recording
+        that would make the IR -- and every binding generated from it --
+        disagree with the tree-sitter backend, which can only see what the
+        source wrote. So the token stream decides whether there is anything to
+        record, and ``enum_type`` supplies the spelling once there is.
+
+        The declaration head is scanned for a bare ``:`` before the body or the
+        terminating ``;``. libclang tokenises ``::`` as one token, so a
+        qualified name in an attribute cannot be mistaken for the clause.
+        """
+        for token in cursor.get_tokens():
+            spelling = token.spelling
+            if spelling in ("{", ";"):
+                return None
+            if spelling == ":":
+                enum_type = getattr(cursor, "enum_type", None)
+                type_spelling = getattr(enum_type, "spelling", None)
+                return str(type_spelling) if type_spelling else None
+        return None
 
     def _process_function(self, cursor: Any) -> None:
         """Process a function or function template declaration."""
@@ -3206,7 +3233,13 @@ class ClangASTConverter:
                     # If struct name == typedef name, we've already handled it above
                     # Only create separate typedef if names differ
                     if struct_name and struct_name != name:
-                        underlying_type: TypeExpr = CType(name=struct_name)  # Use just the name, not "struct name"
+                        # The tag is dropped from the name, so the flag is the
+                        # only remaining record that the source wrote ``struct
+                        # Gauge`` rather than a bare ``Gauge``. Without it the
+                        # writer cannot tell this alias from one naming an
+                        # ordinary identifier of the same spelling, and refuses
+                        # a ``typedef struct Gauge GaugeRef;`` that main bound.
+                        underlying_type: TypeExpr = CType(name=struct_name, is_elaborated=True)
                         attrs, is_deprecated = self._get_attributes(cursor)
                         typedef = Typedef(
                             name=name,
@@ -3565,6 +3598,16 @@ class ClangASTConverter:
             result = self._convert_type(named_type)
             if result is not None:
                 self._merge_quals(result, quals)
+            # An ELABORATED node carries the spelling the source actually used --
+            # ``struct Gauge`` when written elaborated and ``Gauge`` when written
+            # bare -- in C and C++ alike. Resolving to the named type discards
+            # that, and it is the only place it exists: where a tag and an
+            # ordinary identifier share a name, it is the whole difference
+            # between an eight-byte record and a one-byte integer.
+            if isinstance(result, CType):
+                result.is_elaborated = any(
+                    token in ("struct", "union", "enum") for token in clang_type.spelling.split()
+                )
             return result
 
         # Handle record (struct/union) types
@@ -3572,16 +3615,22 @@ class ClangASTConverter:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
+            # The name synthesised here *is* an elaborated specifier, so the
+            # flag states what the spelling is rather than inferring it. Some
+            # libclang builds route an elaborated member through this arm and
+            # emit no ELABORATED node at all -- the macOS runner is one -- and
+            # without this it reaches the IR spelled ``struct Gauge`` while
+            # claiming nothing is known about its spelling.
             if decl.kind == CursorKind.UNION_DECL:
-                return CType(name=f"union {name}", qualifiers=quals)
-            return CType(name=f"struct {name}", qualifiers=quals)
+                return CType(name=f"union {name}", qualifiers=quals, is_elaborated=True)
+            return CType(name=f"struct {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle enum types
         if kind == TypeKind.ENUM:
             decl = clang_type.get_declaration()
             quals = self._extract_quals(clang_type)
             name = self._normalize_anon_name(decl) or self._require_anon_name(decl)
-            return CType(name=f"enum {name}", qualifiers=quals)
+            return CType(name=f"enum {name}", qualifiers=quals, is_elaborated=True)
 
         # Handle typedef types
         if kind == TypeKind.TYPEDEF:
@@ -3589,7 +3638,28 @@ class ClangASTConverter:
             member_alias = self._resolve_member_alias(clang_type, decl)
             if member_alias is not None:
                 return member_alias
-            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type))
+            # A typedef name is an ordinary identifier, never an elaborated type
+            # specifier -- true in C and C++ alike.
+            #
+            # One of AT LEAST FOUR capture points, and which of them a given
+            # type takes depends on the libclang build as well as on the header.
+            # The set is not closed: any ``CType`` this backend builds without
+            # the flag leaves it ``None``, which the writer treats as "not
+            # recorded" and refuses on a contested name -- loud, never a wrong
+            # width. A fifth site is a missing capture, not a new failure mode.
+            # Where an ELABORATED node exists it is authoritative and every use
+            # routes through it; where it does not -- the macOS CI runner --
+            # an elaborated member arrives at the RECORD arm above and a bare
+            # typedef use arrives here.
+            #
+            # None is redundant, and no single machine can show that. On a host
+            # that emits ELABORATED the other two arms are unreachable, so
+            # deleting either leaves the whole suite green; on the runner it is
+            # the ELABORATED assignment that is dead code. The IR assertions in
+            # ``TestElaboratedSpellingIsRecorded`` are what pin them, and they
+            # pin whichever arm the host actually takes -- the RECORD arm was
+            # added only after that test failed on macOS with ``None is True``.
+            return CType(name=decl.spelling, qualifiers=self._extract_quals(clang_type), is_elaborated=False)
 
         # Handle C++ reference types
         if kind == TypeKind.LVALUEREFERENCE:

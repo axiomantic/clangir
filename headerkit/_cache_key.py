@@ -16,7 +16,18 @@ from pathlib import Path
 
 # Bump when IR dataclass structure changes in a way that invalidates
 # cached JSON. This is NOT the headerkit version.
-_IR_SCHEMA_VERSION = "3"
+#
+# Adding a field counts, and the reason is asymmetric enough to be worth stating:
+# the deserialiser fills an absent key with the dataclass default, so a document
+# written before the field existed comes back carrying that default as though a
+# parser had reported it. Where the default refuses -- ``CType.is_elaborated`` is
+# ``None`` -- that is safe. Where it resolves -- ``Enum.underlying_type_known`` is
+# ``True`` -- a warm cache turns a refusal into a silently wrong width.
+#
+# ``test_cache_key.py`` fingerprints the IR dataclasses and fails when this
+# constant has not moved with them, so the reminder is a check rather than a
+# comment nobody reads.
+_IR_SCHEMA_VERSION = "4"
 
 
 @dataclass
