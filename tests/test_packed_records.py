@@ -1277,6 +1277,7 @@ def test_diff_writer_reports_a_record_becoming_packed() -> None:
         "record converter. Pre-existing and not specific to packing; the suffix form "
         "and #pragma pack both work for unions."
     ),
+    raises=Exception,
     strict=True,
 )
 def test_treesitter_handles_a_prefix_attribute_on_a_union() -> None:

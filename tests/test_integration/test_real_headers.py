@@ -849,7 +849,15 @@ class TestCPython:
     build time, so parsing is expected to fail on most systems.
     """
 
-    @pytest.mark.xfail(reason="Python.h requires platform-specific pyconfig.h")
+    # `raises` is not decoration. Without it a non-strict xfail swallows EVERY
+    # exception the body can raise -- a missing header download included, which
+    # is how a failed download became an invisible xfail at exit 0, quieter than
+    # the skip it replaced. `pytest.fail.Exception` derives from BaseException,
+    # so naming `Exception` here excludes it and lets it through as a failure.
+    @pytest.mark.xfail(
+        raises=Exception,
+        reason="Python.h requires platform-specific pyconfig.h",
+    )
     def test_parse(self, backend, cpython_headers):
         _skip_if_unavailable(cpython_headers, "CPython")
         inc_dir = cpython_headers / "Include"

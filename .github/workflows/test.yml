@@ -12,12 +12,13 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    # asdf-nim reads GITHUB_TOKEN directly for release lookups and rate limits,
-    # as the plugin's own CI example does.
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # One Nim release for the whole matrix, named once so the two provisioning
-      # paths below cannot drift apart.
+      # paths below cannot drift apart. GITHUB_TOKEN is deliberately NOT here:
+      # job-level env reaches `pip install`, `pytest`, and every artifact the
+      # suite compiles and executes -- which on a pull request is code the pull
+      # request authored. Only the two Nim steps need it, and they take it
+      # themselves.
       NIM_VERSION: '2.2.12'
     strategy:
       # false, for the same reason -x is gone from the pytest invocation below:
@@ -104,6 +105,9 @@ jobs:
           tool_versions: |
             nim ${{ env.NIM_VERSION }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          # asdf-nim reads this directly for release lookups and rate limits.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # asdf puts SHIMS on PATH, and a shim resolves its version by walking up
       # from the CURRENT WORKING DIRECTORY for a .tool-versions file. The Nim
       # gates compile in a pytest tmp_path outside the repo, so the shim found

@@ -25,6 +25,7 @@ from headerkit.ir import (
 )
 from headerkit.writers import get_writer
 from headerkit.writers.nim import NimWriter, write_nim
+from tests.skip_policy import NIM_INSTALL, require_program
 
 
 class TestNimWriter:
@@ -574,8 +575,6 @@ class TestNimWriter:
         """Test that generated Nim examples compile cleanly with the Nim compiler."""
         import subprocess
         from pathlib import Path
-
-        from tests.skip_policy import NIM_INSTALL, require_program
 
         nim_bin = require_program("nim", install=NIM_INSTALL)
 
